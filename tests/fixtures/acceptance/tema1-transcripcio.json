@@ -1,0 +1,55 @@
+{
+  "fixture": "task45-classroom-transcript",
+  "note": "Transcript of a real-style UAB lecture (Spanish). Consumed by MockASRProvider(segments=...); no audio is actually decoded.",
+  "language": "es",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 16.0,
+      "speaker": "profesor",
+      "language": "es",
+      "confidence": 0.92,
+      "text": "Hoy empezamos el Tema 1: fundamentos de algoritmia."
+    },
+    {
+      "start": 16.0,
+      "end": 40.0,
+      "speaker": "profesor",
+      "language": "es",
+      "confidence": 0.9,
+      "text": "Un algoritmo es una secuencia finita de instrucciones que transforma una entrada en una salida."
+    },
+    {
+      "start": 40.0,
+      "end": 66.0,
+      "speaker": "profesor",
+      "language": "es",
+      "confidence": 0.88,
+      "text": "La complejidad temporal mide como crece el numero de operaciones con el tamano de la entrada."
+    },
+    {
+      "start": 66.0,
+      "end": 96.0,
+      "speaker": "profesor",
+      "language": "es",
+      "confidence": 0.85,
+      "text": "En el algoritmo de Dijkstra, la inicializacion del vector de distancias antes que la seleccion del nodo minimo."
+    },
+    {
+      "start": 96.0,
+      "end": 124.0,
+      "speaker": "profesor",
+      "language": "es",
+      "confidence": 0.9,
+      "text": "La notacion O grande describe una cota superior asintotica del coste."
+    },
+    {
+      "start": 124.0,
+      "end": 150.0,
+      "speaker": "profesor",
+      "language": "es",
+      "confidence": 0.87,
+      "text": "Recordad que la busqueda binaria requiere que el array este ordenado."
+    }
+  ]
+}

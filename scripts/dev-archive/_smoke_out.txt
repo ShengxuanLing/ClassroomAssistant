@@ -1,0 +1,9 @@
+D:\Project\Clases\scripts\task21_module_smoke.py:90: SyntaxWarning: "\u" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\u"? A raw string is also an option.
+  make_pdf([text_page_latin1(b) for b in [b"Hello", b"Introducci\u00f3n".encode("latin-1").decode("latin-1"), b"End"]])
+Traceback (most recent call last):
+<unknown>:2: SyntaxWarning: "\u" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\u"? A raw string is also an option.
+<unknown>:1: SyntaxWarning: "\u" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\u"? A raw string is also an option.
+  File "D:\Project\Clases\scripts\task21_module_smoke.py", line 90, in <module>
+    make_pdf([text_page_latin1(b) for b in [b"Hello", b"Introducci\u00f3n".encode("latin-1").decode("latin-1"), b"End"]])
+                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'bytes' object has no attribute 'encode'. Did you mean: 'decode'?

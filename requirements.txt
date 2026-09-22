@@ -1,0 +1,37 @@
+# Classroom Assistant - Python dependencies
+
+# Core: stdlib only for the data-model / index / knowledge layers.
+
+# Task 18: local ASR runtime (faster-whisper, CTranslate2).
+# The first run downloads the model through Hugging Face Hub into
+# ~/.cache/huggingface (never committed; see .gitignore).
+# Audio decoding uses PyAV (``av``), which bundles its own FFmpeg
+# libraries - no system FFmpeg install or ffmpeg binary is required.
+faster-whisper>=1.0,<2.0
+
+# Task 18 model pin (faster-whisper 1.1.0 is the verified version).
+ctranslate2>=4.0,<5.0
+
+# Task 21: PDF/DOCX document input & parsing layer.
+pypdf>=3.0,<7.0
+python-docx>=1.0,<2.0
+
+# Task 21 note: audio segmentation imports ``av`` (PyAV) and ``numpy``
+# directly.  Both arrive transitively with faster-whisper / ctranslate2,
+# but they are declared here explicitly so a clean install cannot end up
+# with a broken audio path.
+av>=10.0
+numpy>=1.24
+
+# Task 36: real local OCR (no cloud API, no GPU stack, CPU by default).
+# rapidocr-onnxruntime ships its PP-OCR ONNX models inside the wheel, so
+# the first OCR call needs no download and works fully offline.
+#
+# IMPORTANT - Python version constraint:
+#   rapidocr-onnxruntime 1.3.x+ declares ``Requires-Python <3.13``.
+#   The only release installable on Python 3.13/3.14 is 1.2.3, hence the
+#   exact pin.  Verified on Python 3.14.7 / Windows x64.
+# Optional acceleration: install ``onnxruntime-gpu`` instead of
+# ``onnxruntime`` and pass a CUDA provider to the engine.  CPU is the
+# default and requires nothing extra.
+rapidocr-onnxruntime==1.2.3

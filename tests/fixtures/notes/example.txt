@@ -1,0 +1,5 @@
+﻿第一行：这是中文笔记。
+第二行：Esta es una línea en español.
+第三行：Una línia en català.
+第四行：The fourth line is in English.
+第五行：光合作用过程非常重要。

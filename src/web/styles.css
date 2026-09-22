@@ -1,0 +1,607 @@
+/* 课堂助手 Web UI (Task 39)
+ *
+ * 无构建链：一个手写 CSS 文件，跟随系统浅色 / 深色偏好。
+ * 目标是"读得清、点得到"，不做视觉炫技。
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #d9dee5;
+  --border-strong: #b9c1cc;
+  --text: #1c2024;
+  --text-muted: #5c6570;
+  /* 2026-09-21: 由 #2f6fed 压到 #2c68df。原值在 --surface 上是 4.55:1 合格,
+   * 但链接会落在 --bg (4.24:1) 和 --surface-2 (4.06:1) 上 —— 都低于 AA 的
+   * 4.5:1。新值最差 4.51:1, 同时白字压它的对比度从 4.55 升到 5.06 (主按钮
+   * 与品牌块一起受益)。色相不变, 肉眼几乎看不出差别。 */
+  --accent: #2c68df;
+  --accent-soft: #e8f0ff;
+  --ok: #167a4a;
+  --ok-soft: #e3f5ea;
+  --warn: #96601a;
+  --warn-soft: #fdf1dd;
+  --bad: #b02a2a;
+  --bad-soft: #fbe8e8;
+  --info: #2b5c8a;
+  --info-soft: #e7f1fa;
+
+  /* 强调色 / 成功色**当背景用**时应该压什么前景色。
+   *
+   * 为什么必须单独开变量 (2026-09-21): 深色模式把 --accent / --ok 调成了
+   * **浅色** —— 因为这两个变量同时当着文字色用 (a { color: var(--accent) }、
+   * .pill-ok { color: var(--ok) })。但 .brand-mark / button.primary /
+   * .stepper li.done::after 仍然假设它们是深色底, 于是白字压浅底:
+   * 实测 1.67:1 (对勾) 与 2.39:1 (主按钮 / 品牌块), 远低于 WCAG AA 正文
+   * 要求的 4.5:1。浅色模式下这两个变量本来就是深色, 白字没问题。
+   *
+   * 所以修法是给"当背景用"的场景开新变量, 而不是把 --accent 改深 ——
+   * 改深了链接就看不见了。 */
+  --on-accent: #ffffff;
+  --on-ok: #ffffff;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.05);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --surface: #1e2126;
+    --surface-2: #262a31;
+    --border: #343a43;
+    --border-strong: #4a525d;
+    --text: #e7eaee;
+    --text-muted: #a2abb7;
+    --accent: #7aa7ff;
+    --accent-soft: #23324d;
+    --ok: #6ede9f;
+    --ok-soft: #1d3328;
+    --warn: #e8bd74;
+    --warn-soft: #3a2f1c;
+    --bad: #ff9a9a;
+    --bad-soft: #3d2323;
+    --info: #8ec2f0;
+    --info-soft: #1e2d3d;
+    /* 见 :root 里的说明 —— 深色模式下 --accent / --ok 是浅色, 压在它们
+     * 上面的前景必须转深, 否则对比度只有 1.67:1 / 2.39:1。 */
+    --on-accent: #16181c;
+    --on-ok: #16181c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", "Noto Sans SC",
+        "Microsoft YaHei", Roboto, sans-serif;
+}
+
+code, pre, .mono { font-family: var(--mono); font-size: 0.9em; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* 只给屏幕阅读器的文本 —— 视觉上不可见, 但仍然会被朗读。
+ *
+ * 用于 <caption class="sr-only"> (见 app.js 的 tableCaption()): 表格需要
+ * 一个名字, 而卡片已经在表格**外面**用 <h2> 显示同一个名字, 不该重复画
+ * 第二遍。用 clip 而不是 display:none —— display:none 的内容不会被朗读。 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+.skip-link {
+  position: absolute; left: -9999px;
+}
+.skip-link:focus {
+  left: 8px; top: 8px; z-index: 50;
+  background: var(--surface); padding: 8px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------- topbar */
+
+.topbar {
+  display: flex; align-items: center; gap: 20px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 20;
+  flex-wrap: wrap;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; color: inherit; }
+.brand:hover { text-decoration: none; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center; font-weight: 700;
+}
+.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+.brand-text small { color: var(--text-muted); font-size: 11px; }
+
+.topnav { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.topnav a {
+  padding: 5px 10px; border-radius: var(--radius-sm);
+  color: var(--text-muted); font-size: 14px;
+}
+.topnav a:hover { background: var(--surface-2); text-decoration: none; color: var(--text); }
+
+/* 顶栏两组之间的分隔符 (P3-3)。刻意不是 `border-left` —— 它要参与 flex 的
+   gap 计算, 而且折行后仍应贴在它右边那一组的前面。aria-hidden 见 index.html。 */
+.topnav-sep {
+  width: 1px; height: 16px; margin: 0 6px;
+  background: var(--border-strong); flex: none;
+}
+
+.topbar-meta { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+.pill {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.pill-muted { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+.pill-ok { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+.pill-warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.pill-bad { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+.pill-info { background: var(--info-soft); color: var(--info); border-color: var(--info); }
+.pill-accent { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+/* Task 63: 学生今日首页的次级信息块与内联标记 */
+.badge {
+  display: inline-block; padding: 2px 7px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+  background: var(--warn-soft); color: var(--warn);
+  border: 1px solid var(--warn);
+}
+.subblock {
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.subblock:first-of-type { border-top: 0; padding-top: 0; }
+.subblock-head { margin-bottom: 4px; }
+
+/* Processing stepper (Task 57.1) */
+.stepper { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 4px 0 0; padding: 0; }
+.stepper li { position: relative; padding-left: 22px; font-size: 13px; color: var(--text-muted); }
+.stepper li .dot {
+  position: absolute; left: 0; top: 3px; width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid var(--border); background: var(--surface);
+}
+.stepper li.done { color: var(--text); }
+.stepper li.done .dot { background: var(--ok); border-color: var(--ok); }
+.stepper li.done::after {
+  content: "✓"; position: absolute; left: 1px; top: 1px; font-size: 11px; color: var(--on-ok); line-height: 13px;
+}
+.stepper li.pending .dot { border-color: var(--border); }
+
+.banner {
+  padding: 9px 20px; font-size: 14px;
+  background: var(--warn-soft); color: var(--warn);
+  border-bottom: 1px solid var(--border);
+}
+.banner.banner-bad { background: var(--bad-soft); color: var(--bad); }
+
+/* ----------------------------------------------------------------- shell */
+
+.shell {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 20px;
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+.sidebar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  position: sticky; top: 72px;
+}
+.sidebar-title {
+  margin: 0 0 8px; font-size: 12px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+}
+.course-list { list-style: none; margin: 0 0 14px; padding: 0; }
+.course-list li { margin-bottom: 2px; }
+.course-list a {
+  display: block; padding: 6px 8px; border-radius: var(--radius-sm);
+  color: var(--text); font-size: 14px;
+}
+.course-list a:hover { background: var(--surface-2); text-decoration: none; }
+.course-list a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.sidebar-note { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--border); }
+
+.view { min-width: 0; }
+
+/* --------------------------------------------------------------- content */
+
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+h3 { font-size: 14px; margin: 0 0 6px; }
+
+.page-head { margin-bottom: 16px; }
+.page-head .crumbs { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+.page-head .subtitle { color: var(--text-muted); font-size: 14px; margin: 0; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+.card > :last-child { margin-bottom: 0; }
+.card-head {
+  display: flex; align-items: baseline; gap: 10px;
+  justify-content: space-between; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.card-head h2 { margin: 0; }
+.card-head h3 { margin: 0; font-size: 16px; }
+
+/* Task 68 多课程: 当前选中的那门课。只加左边框 —— 不用颜色编码"重要性",
+   选了哪门课是**用户的选择**, 不是这门课更好。 */
+.card-current { border-left: 3px solid var(--accent); }
+
+/* 计数徽章与真相轴各占一行, 窄屏也能折行而不是溢出。 */
+.mc-counts, .mc-axis {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  align-items: center; margin: 8px 0;
+}
+.mc-axis > .tiny { margin-right: 2px; }
+
+.grid { display: grid; gap: 14px; }
+.grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.grid-3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.grid-4 { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+
+.stat {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.stat .stat-label { font-size: 12px; color: var(--text-muted); }
+.stat .stat-value { font-size: 22px; font-weight: 700; line-height: 1.25; }
+.stat .stat-hint { font-size: 12px; color: var(--text-muted); }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 13px; }
+.tiny { font-size: 12px; }
+.nowrap { white-space: nowrap; }
+.break-all { overflow-wrap: anywhere; }
+.right { text-align: right; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row-between { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.spacer { flex: 1 1 auto; }
+
+table.data {
+  width: 100%; border-collapse: collapse; font-size: 14px;
+}
+table.data th, table.data td {
+  text-align: left; padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  /* 单元格里会出现文件名 / content_hash / material_id 这类**超长且无空格**
+     的 token。不给折行规则的话, 一个 64 字符的哈希就能把整张表撑出视口,
+     页面出现横向滚动条 (Task 47.8: long text / narrow viewport)。 */
+  overflow-wrap: anywhere;
+}
+table.data th {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-muted); font-weight: 600;
+}
+table.data tbody tr:hover { background: var(--surface-2); }
+table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* 窄格里单行截断 + 省略号 (全文走 title 浮层)。max-width:0 是 fixed-layout
+   下让 ellipsis 真正生效的关键 —— 没它 td 会按内容撑开, 不触发截断。 */
+table.data td.ellipsis {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  padding: 14px; border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm); color: var(--text-muted); font-size: 14px;
+}
+
+.original {
+  background: var(--surface-2);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 9px 12px; margin: 6px 0;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.original .lang-tag { font-size: 11px; color: var(--text-muted); }
+
+button, .btn {
+  font: inherit; font-size: 13px; cursor: pointer;
+  padding: 6px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text);
+}
+button:hover:not(:disabled), .btn:hover { background: var(--surface-2); text-decoration: none; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+button.danger { border-color: var(--bad); color: var(--bad); }
+
+input[type="text"], input[type="number"], input[type="date"], select, textarea {
+  font: inherit; font-size: 14px; padding: 6px 9px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); max-width: 100%;
+}
+label.field { display: block; font-size: 13px; margin-bottom: 10px; }
+label.field > span { display: block; color: var(--text-muted); margin-bottom: 3px; }
+label.field input, label.field select, label.field textarea { width: 100%; }
+
+/* ------------------------------------------------------------- trace UI */
+
+.trace { list-style: none; margin: 0; padding: 0; }
+.trace > li { position: relative; padding-left: 26px; padding-bottom: 16px; }
+.trace > li::before {
+  content: ""; position: absolute; left: 7px; top: 6px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.trace > li::after {
+  content: ""; position: absolute; left: 11px; top: 17px; bottom: 0;
+  width: 1px; background: var(--border-strong);
+}
+.trace > li:last-child { padding-bottom: 0; }
+.trace > li:last-child::after { display: none; }
+.trace > li.trace-broken::before {
+  background: var(--bad); box-shadow: 0 0 0 1px var(--bad);
+}
+.trace-node {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px;
+}
+.trace-node .node-kind {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; font-size: 13px; }
+.kv dt { color: var(--text-muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* 分组的 KV (dashboard 知识健康度面板)。
+ *
+ * 为什么是**两列网格**而不是一列分组: 单列分组只是把 9 项切成 4 段, 标签与
+ * 数字仍然贴着卡片左边, 右侧留一大片空白 —— 用户报的"全挤在左边"没有解决。
+ * 两列之后内容铺满卡宽, 四组落成 2×2, 视觉也平衡 (结构 / 证据支持度 一行,
+ * 人工审核 / 覆盖 一行)。
+ *
+ * 固定两列而非 auto-fit: 卡片在全宽布局下会变得很宽, auto-fit + minmax 会
+ * 铺出 5~7 列, 每列只有两三个字。窄屏 (<=560px) 收成一列。*/
+.kv-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 22px;
+  align-items: start;
+}
+@media (max-width: 560px) {
+  .kv-groups { grid-template-columns: minmax(0, 1fr); }
+}
+.kv-group-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin: 0 0 5px;
+}
+.kv-group .kv { font-size: 12px; gap: 2px 12px; }
+/* dt 默认是 max-content 且没有折行规则 (全局 .kv 只给 dd 加了)。两列之后
+ * 每列只剩 ~200px, 西语标签 ("Respaldado por evidencia" / "Confirmado por
+ * revisión") 比中文长一倍 —— 给 dt 补折行规则, 免得窄列里溢出卡片。*/
+.kv-group .kv dt { color: var(--text-muted); overflow-wrap: anywhere; }
+.kv-group .kv dd { font-variant-numeric: tabular-nums; }
+
+/* 材料表的补充说明块 (D1 警告 + D4 零证据提示)。
+ *
+ * 结构: 说明**不再**塞进 "状态" 格, 而是自成一个 `tr.material-note`
+ * (colspan=3) 挂在对应材料行的下面。原因: 这张表是 table-layout: fixed,
+ * 状态列被钉死在 160px, 而这段说明约 150 字符 —— 在 160px 里要折 5~8 行,
+ * 把整行撑成一根细长条。占满卡宽后只折 1~2 行。
+ * 材料页 / 课程页用的是非 fixed 表格 (列宽自动分配), 不受此影响, 那边仍
+ * 沿用原来的行内写法。*/
+.material-detail {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.material-detail .pill { margin-right: 5px; vertical-align: middle; }
+.material-detail + .material-detail { margin-top: 3px; }
+
+/* 说明行与它所属的材料行要"看起来是一伙的": 先去掉材料行自己的底边
+ * (否则中间横一条线, 说明行像另一条材料), 再由说明行的底边把这一组收口。
+ * 只有带说明的材料行才会加 `material-row` 类, 所以这条不会误伤普通行。*/
+table.data tbody tr.material-row > td { border-bottom: 0; }
+
+/* 说明行本体: 浅底 + 收窄上下留白, 让它贴着上一行而不是另起一块。
+ * 底边保留 (由默认规则给), 用来和"下一条材料"分开。左内边距与普通格一致,
+ * 这样说明文字与文件名左对齐。*/
+table.data tbody tr.material-note > td {
+  background: var(--surface-2);
+  padding-top: 0;
+  padding-bottom: 9px;
+}
+.material-note .material-detail { margin-top: 0; }
+/* 说明行是附注, 不是可点的数据行 —— 悬停不做高亮, 免得与"下一条材料"
+ * 的悬停反馈混淆 (td 自带底色, 会盖住 tr:hover 的底色, 这里显式钉住)。*/
+table.data tbody tr.material-note:hover > td { background: var(--surface-2); }
+
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+.toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 60;
+  max-width: 420px; padding: 11px 14px;
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  font-size: 14px;
+}
+.toast.toast-ok { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.toast.toast-warn { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+.toast.toast-bad { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+
+/* 常驻任务坞 (左下角, 与右下角 toast 错开; 路由切换不碰它)。 */
+.task-dock {
+  position: fixed; left: 18px; bottom: 18px; z-index: 60;
+  max-width: 380px; display: flex; flex-direction: column; gap: 6px;
+}
+.task-item {
+  padding: 8px 12px; border-radius: var(--radius); box-shadow: var(--shadow);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  font-size: 13px; display: flex; gap: 8px; align-items: baseline;
+}
+.task-item .task-label { overflow-wrap: anywhere; }
+.task-item.task-running { border-color: var(--warn); }
+.task-item.task-done { border-color: var(--ok); }
+.task-item.task-failed { border-color: var(--bad); }
+.task-item .task-spin { animation: task-pulse 1.2s ease-in-out infinite; }
+@keyframes task-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.footer {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  padding: 16px 20px 28px; max-width: 1400px; margin: 0 auto;
+  font-size: 12px; color: var(--text-muted);
+}
+
+/* ---- 知识点页密度 (列表 + 详情) ---------------------------------------- */
+
+.data.compact th, .data.compact td { padding: 5px 8px; font-size: 13px; }
+.data.compact .tiny { font-size: 11px; }
+table.data.fixed { table-layout: fixed; width: 100%; }
+table.data.fixed th { white-space: nowrap; }
+td.kp-title { overflow-wrap: break-word; }
+td.kp-title .break-all { overflow-wrap: anywhere; }
+/* 原文术语列 (views/knowledge.js): 用户数据中 original_terms 常装完整
+   短语/材料标题 (例 "FORMATO DE ENTREGA Propuesta escrita Document..."),
+   而 .pill 默认 white-space: nowrap 会把整张表撑出卡片宽度 —— 标题列被
+   截断成单字符 ("PRESENTACIÓN ... F")。这里放宽 nowrap, 让 pill 内的
+   文字在容器宽度内断词; 容器自身允许任意断词, 单 token 也能折。 */
+.terms-cell { overflow-wrap: anywhere; }
+.terms-cell .pill { white-space: normal; }
+.kv.compact { gap: 2px 12px; font-size: 13px; }
+details.fold { margin-top: 6px; }
+details.fold > summary { cursor: pointer; font-size: 12px; color: var(--text-muted); }
+details.fold > summary:hover { color: var(--text); }
+
+/* ---- Task 41: 作答控件 ---------------------------------------------- */
+
+.choices { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+
+label.choice {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px); background: var(--surface-2, transparent);
+  cursor: pointer; font-size: 14px;
+}
+label.choice:hover { border-color: var(--border-strong); }
+label.choice input { flex: 0 0 auto; margin: 0; }
+
+details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
+
+#evaluation-panel .kv { margin-top: 4px; }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { position: static; }
+  /* 窄视口下多列表格 (溯源链 / 材料 / 练习) 放不进一栏。让**卡片自己**横向
+     滚动, 而不是把整个页面撑宽 —— 后者会让导航和正文一起跑出屏幕。 */
+  .card { overflow-x: auto; }
+}
+
+/* ---- Task 65: 错题与薄弱知识点中心 -------------------------------------- */
+
+.toggle-row { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+
+.mistake-group { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px);
+  padding: 8px 12px; margin-bottom: 10px; }
+.mistake-group > summary { margin: 0 0 6px; }
+
+.nested-group { margin: 8px 0 8px 4px; padding-left: 10px;
+  border-left: 2px solid var(--border); }
+.nested-group h3, .nested-group h4 { margin: 6px 0; font-size: 14px; }
+
+.action-list { list-style: none; padding-left: 0; }
+.action-list > li { margin-bottom: 10px; }
+
+.evidence-item { border-top: 1px solid var(--border); padding: 8px 0; }
+.evidence-item:first-of-type { border-top: none; }
+
+/* ---- 补齐: 若干语义钩子在 app.js 里已使用但此前没有样式 ------------------
+ *
+ * 这三个类名是历史欠账, 不是新功能:
+ *   .path-chain / .path-node — Task 41 的 status.md 声明已加入本文件, 实际未落地;
+ *   .block-label            — Task 60 的会话页小节标题;
+ *   .conflict               — Task 62 的冲突并列展示块。
+ * 它们此前只是"没有样式", 页面仍可读, 因此一直没有被测出来。
+ */
+
+.path-chain { list-style: none; margin: 0; padding: 0; counter-reset: path; }
+.path-chain > li { margin-bottom: 12px; }
+.path-chain > li:last-child { margin-bottom: 0; }
+
+.path-node {
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+}
+.path-node > .trace-node { border-left: none; }
+
+.block-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin: 14px 0 6px;
+}
+
+.conflict {
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--warn-soft);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.conflict:last-child { margin-bottom: 0; }
+.conflict p { margin: 0 0 6px; }
+.conflict ul { margin: 0 0 8px; padding-left: 18px; }
+
+/* ---- Task 66: 今天的学习流程 -------------------------------------------- */
+
+.learn-task { border: 1px solid var(--border-strong); border-radius: var(--radius-sm, 6px);
+  padding: 12px; background: var(--surface-2); }
+.learn-task h3 { margin: 0 0 8px; font-size: 15px; }
+
+.learn-axes { margin: 8px 0; }
+.learn-axes dt { color: var(--text-muted); }
+
+.learn-grounding { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+.learn-grounding:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+
+.learn-progress .num { font-variant-numeric: tabular-nums; }
+
+.learn-next { border-left: 3px solid var(--accent); padding-left: 10px; margin-top: 10px; }
+.learn-next p { margin: 0 0 6px; }

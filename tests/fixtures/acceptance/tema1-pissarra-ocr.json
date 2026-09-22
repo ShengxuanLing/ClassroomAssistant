@@ -1,0 +1,62 @@
+{
+  "fixture": "task45-board-ocr",
+  "note": "Board OCR lines (Catalan). Consumed by ScriptedOCREngine; the board photo is never actually decoded.",
+  "language": "ca",
+  "segments": [
+    {
+      "text": "Tema 1: Fonaments d'algorismica",
+      "confidence": 0.9,
+      "page": 1,
+      "bounding_box": {
+        "x": 30.0,
+        "y": 32.0,
+        "width": 840.0,
+        "height": 42.0
+      }
+    },
+    {
+      "text": "Algorisme = sequencia finita d'instruccions",
+      "confidence": 0.91,
+      "page": 1,
+      "bounding_box": {
+        "x": 30.0,
+        "y": 94.0,
+        "width": 840.0,
+        "height": 42.0
+      }
+    },
+    {
+      "text": "Complexitat temporal: O(n), O(n log n), O(n^2)",
+      "confidence": 0.92,
+      "page": 1,
+      "bounding_box": {
+        "x": 30.0,
+        "y": 156.0,
+        "width": 840.0,
+        "height": 42.0
+      }
+    },
+    {
+      "text": "Dijkstra: inicialitzacio -> seleccio del node minim",
+      "confidence": 0.93,
+      "page": 1,
+      "bounding_box": {
+        "x": 30.0,
+        "y": 218.0,
+        "width": 840.0,
+        "height": 42.0
+      }
+    },
+    {
+      "text": "Cerca binaria: cal un array ordenat",
+      "confidence": 0.94,
+      "page": 1,
+      "bounding_box": {
+        "x": 30.0,
+        "y": 280.0,
+        "width": 840.0,
+        "height": 42.0
+      }
+    }
+  ]
+}

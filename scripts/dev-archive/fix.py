@@ -1,0 +1,8 @@
+f=open(r"D:\\Project\\Clases\\src\\models.py","r",encoding="utf-8")
+content=f.read()
+f.close()
+content=content.replace("content = \"\n\".join", "content = \"\\\\n\".join")
+f=open(r"D:\\Project\\Clases\\src\\models.py","w",encoding="utf-8")
+f.write(content)
+f.close()
+print("fixed")

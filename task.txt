@@ -1,0 +1,1727 @@
+# TASK-77 — Automatic AI Material Processing & Real-World Multimodal Pilot
+
+## 0. 任务定位
+
+TASK-76 已完成 AI Understanding Layer 的基础建设：
+
+```text
+Evidence
+→ deterministic chunking
+→ AI Provider
+→ structured candidates
+→ evidence grounding
+→ dedup / merge / conflict
+→ confidence policy
+→ KnowledgePoint
+→ Review
+```
+
+但目前存在一个关键产品缺口：
+
+> AI 分析仍然需要用户手动点击 `AI Analyze` 才会执行。
+
+这与 Classroom Assistant 的最终产品目标不一致。
+
+本任务的目标不是继续增加抽象层或测试数量，而是完成真正的：
+
+```text
+上传学习材料
+→ 自动识别
+→ 自动处理
+→ 自动 AI 分析
+→ 自动总结
+→ 自动提取 KnowledgePoint
+→ 自动建立 Evidence Trace
+→ 自动进入知识库
+→ 低置信度 / 冲突进入 Review
+```
+
+最终用户不应该再承担“自己读原文 → 自己总结 → 自己添加知识点”的主要工作。
+
+---
+
+# 1. 最终产品目标
+
+用户上传：
+
+- PDF
+- DOCX
+- TXT
+- 图片
+- 课堂录音
+
+系统自动执行：
+
+```text
+Material Upload
+      ↓
+Material Registration
+      ↓
+Deterministic Ingestion
+      ↓
+Evidence Creation
+      ↓
+AI Analysis
+      ↓
+Summary
+      ↓
+Topic Extraction
+      ↓
+KnowledgePoint Extraction
+      ↓
+Evidence Grounding
+      ↓
+Validation
+      ↓
+Deduplication
+      ↓
+Conflict Detection
+      ↓
+Confidence Classification
+      ↓
+┌──────────────────────────────┐
+│                              │
+│ High Confidence              │ Low Confidence / Conflict
+│        ↓                     │          ↓
+│ Auto Accept                  │ Review Center
+│        ↓                     │          ↓
+│ Knowledge Base               │ Human Decision
+│                              │
+└──────────────────────────────┘
+```
+
+用户只需要在有问题的地方介入。
+
+---
+
+# 2. 核心验收标准
+
+本任务最重要的验收不是测试数量，而是：
+
+> 使用一份真实 UAB 课程材料，在不手动创建 KnowledgePoint 的情况下，从上传开始自动完成知识提取。
+
+必须能够完成：
+
+```text
+真实 PDF
+→ Upload
+→ Processing
+→ AI Analysis
+→ Summary
+→ KnowledgePoint
+→ Evidence Trace
+```
+
+并且：
+
+```text
+用户没有手动创建 KnowledgePoint
+```
+
+如果这个流程不能真实完成，则 TASK-77 不能标记为 COMPLETE。
+
+---
+
+# 3. 第一阶段：分析现有 Material Pipeline
+
+开始修改前，必须先完整追踪：
+
+```text
+register_material()
+process_material()
+Evidence creation
+Knowledge extraction
+Workspace
+API route
+Materials UI
+```
+
+找出当前真实调用链。
+
+重点确认：
+
+```text
+process_material()
+```
+
+是否是所有材料处理的统一入口。
+
+禁止直接猜测入口。
+
+输出一份内部分析记录：
+
+```text
+docs/task-77-pipeline-analysis.md
+```
+
+至少记录：
+
+```text
+1. Material registration entry
+2. Material processing entry
+3. Evidence creation
+4. Existing deterministic extraction
+5. AI analyze entry
+6. KnowledgePoint persistence
+7. Review persistence
+8. Material UI refresh path
+```
+
+---
+
+# 4. 自动触发 AI
+
+这是本任务第一核心修改。
+
+当前：
+
+```text
+process_material()
+    ↓
+deterministic processing
+    ↓
+完成
+```
+
+改为：
+
+```text
+process_material()
+    ↓
+deterministic ingestion
+    ↓
+Evidence created
+    ↓
+AI enabled?
+    ├── NO → finish
+    └── YES
+          ↓
+      AI analysis
+          ↓
+      Knowledge extraction
+          ↓
+      Review / auto accept
+```
+
+必须保持 Feature Flag：
+
+```text
+CLASSROOM_AI_ENABLED=true
+```
+
+当关闭：
+
+```text
+CLASSROOM_AI_ENABLED=false
+```
+
+必须保持 TASK-76 以前的行为。
+
+---
+
+# 5. 不要让 AI 阻塞基础材料处理
+
+必须区分：
+
+```text
+Material ingestion
+```
+
+和：
+
+```text
+AI understanding
+```
+
+AI 服务失败不能导致：
+
+```text
+Material = failed
+Evidence = lost
+```
+
+正确状态应该是：
+
+```text
+Material
+    ↓
+Ingestion: SUCCESS
+    ↓
+Evidence: SAFE
+    ↓
+AI: FAILED
+    ↓
+Retry available
+```
+
+例如：
+
+```text
+Material status:
+READY
+
+AI status:
+FAILED
+
+Reason:
+HTTP 429
+```
+
+不能把整个 Material 标记成无法使用。
+
+---
+
+# 6. Processing State
+
+扩展现有 processing state。
+
+至少能够区分：
+
+```text
+UPLOADED
+EXTRACTING
+EVIDENCE_READY
+AI_ANALYZING
+KNOWLEDGE_BUILDING
+REVIEW_REQUIRED
+COMPLETED
+FAILED
+```
+
+如果当前 domain model 已经存在相应状态：
+
+> 优先扩展现有模型，不重复创建第二套状态系统。
+
+---
+
+# 7. UI Processing Experience
+
+用户上传文件之后，不能只是：
+
+```text
+Uploading...
+```
+
+应该能够看到：
+
+```text
+Material uploaded
+
+✓ File received
+✓ Content extracted
+✓ Evidence created
+✓ AI analysis started
+✓ 6 / 10 sections analyzed
+✓ Knowledge points identified
+○ Validation
+○ Finalization
+```
+
+完成：
+
+```text
+Analysis complete
+
+Topics: 5
+Knowledge Points: 17
+Auto accepted: 13
+Needs review: 3
+Conflicts: 1
+```
+
+---
+
+# 8. 自动 Summary
+
+AI 分析完成后，材料页面必须直接显示摘要。
+
+至少包括：
+
+```text
+Summary
+Key Topics
+Key Concepts
+Important Definitions
+Important Formulas
+Examples
+```
+
+但必须遵守现有 domain model。
+
+不要简单把整个 AI response JSON 塞进一个 TEXT 字段。
+
+如果现有模型无法合理表达某一项：
+
+1. 先确认是否真的需要持久化；
+2. 如果需要，做最小 domain extension；
+3. 添加 migration / recovery / regression test。
+
+---
+
+# 9. 自动 KnowledgePoint
+
+这是最重要的用户价值。
+
+上传：
+
+```text
+Calculus II — Integration.pdf
+```
+
+系统应该自动得到类似：
+
+```text
+Integration by Parts
+Substitution Method
+Partial Fraction Decomposition
+Improper Integrals
+Fundamental Theorem of Calculus
+```
+
+每个 KnowledgePoint 至少需要：
+
+```text
+title
+description / summary
+type
+confidence
+source material
+evidence
+source location
+review state
+```
+
+不得出现：
+
+```text
+KnowledgePoint
+    ↓
+no Evidence
+```
+
+---
+
+# 10. Evidence Trace
+
+点击任意自动 KnowledgePoint：
+
+```text
+KnowledgePoint
+    ↓
+Evidence
+    ↓
+Material
+    ↓
+Page / paragraph / timestamp
+```
+
+必须能够追溯。
+
+例如：
+
+```text
+KnowledgePoint:
+Integration by Parts
+
+Source:
+Calculus II.pdf
+
+Evidence:
+Page 23
+
+Original:
+...
+```
+
+对于音频：
+
+```text
+00:13:42 — 00:14:38
+```
+
+---
+
+# 11. Auto-Accept Policy
+
+沿用 TASK-76 的 confidence policy。
+
+默认：
+
+```text
+confidence >= 0.90
+    → AUTO_ACCEPT
+
+0.70 <= confidence < 0.90
+    → REVIEW_REQUIRED
+
+confidence < 0.70
+    → REJECT / REVIEW
+```
+
+不要重新发明第二套 confidence system。
+
+如果 TASK-76 已经实现 policy：
+
+> 直接复用。
+
+---
+
+# 12. Review Center
+
+自动分析产生的：
+
+```text
+low confidence
+conflict
+possible duplicate
+unsupported claim
+```
+
+必须进入现有 Review Center。
+
+用户看到：
+
+```text
+AI suggested KnowledgePoint
+
+Title:
+...
+
+Confidence:
+0.78
+
+Evidence:
+...
+
+[Accept]
+[Reject]
+[Keep Unverified]
+```
+
+冲突：
+
+```text
+Existing KnowledgePoint
+vs
+New Evidence
+
+Evidence A
+Evidence B
+
+[Resolve]
+```
+
+禁止 AI 自动替用户解决事实冲突。
+
+---
+
+# 13. Duplicate KnowledgePoint
+
+真实课程材料经常重复讲同一概念。
+
+例如：
+
+```text
+Lecture 1:
+Derivative
+
+Lecture 3:
+Derivative
+```
+
+不能产生：
+
+```text
+Derivative
+Derivative
+```
+
+必须沿用 TASK-76：
+
+```text
+candidate
+→ semantic dedup
+→ existing KnowledgePoint
+→ attach Evidence
+```
+
+如果不确定：
+
+```text
+Review
+```
+
+---
+
+# 14. Idempotency
+
+重复执行：
+
+```text
+Analyze
+Analyze
+Analyze
+```
+
+不能产生：
+
+```text
+KnowledgePoint × N
+Evidence × N
+Summary × N
+```
+
+必须保证：
+
+```text
+same material
+same pipeline
+same model
+same prompt
+```
+
+可以安全重复执行。
+
+如果某一个 chunk 失败：
+
+```text
+90% complete
+10% failed
+```
+
+Retry 时只需要处理失败部分。
+
+---
+
+# 15. AI Cache / Persistence
+
+TASK-76 当前：
+
+> report cache in-memory
+
+本任务需要评估是否已经成为真实用户体验问题。
+
+目标：
+
+```text
+服务器 restart
+    ↓
+Material
+    ↓
+KnowledgePoints remain
+```
+
+必须保留。
+
+如果 Summary 在重启后消失：
+
+必须评估是否应该持久化。
+
+优先级：
+
+```text
+KnowledgePoint persistence
+Evidence persistence
+Review persistence
+Summary persistence
+```
+
+不要为了缓存而引入 Redis / 外部数据库。
+
+仍然保持 local-first。
+
+---
+
+# 16. Real API Provider
+
+TASK-76 已经提供 OpenAI-compatible Provider。
+
+本任务必须真正测试：
+
+```text
+CLASSROOM_AI_BASE_URL
+CLASSROOM_AI_API_KEY
+CLASSROOM_AI_MODEL
+```
+
+使用环境变量。
+
+禁止：
+
+```python
+API_KEY = "..."
+```
+
+禁止：
+
+```text
+.env
+```
+
+进入 git。
+
+---
+
+# 17. Real API Smoke Test
+
+增加：
+
+```text
+tests/test_live_ai_smoke.py
+```
+
+默认：
+
+```text
+SKIP
+```
+
+只有：
+
+```text
+CLASSROOM_AI_LIVE_TEST=true
+```
+
+并且：
+
+```text
+CLASSROOM_AI_API_KEY
+CLASSROOM_AI_BASE_URL
+CLASSROOM_AI_MODEL
+```
+
+全部存在时执行。
+
+必须验证：
+
+```text
+1. provider connection
+2. structured output
+3. knowledge extraction
+4. evidence grounding
+5. confidence
+```
+
+如果 API 返回：
+
+```text
+401
+403
+429
+500
+timeout
+malformed JSON
+```
+
+必须产生明确可诊断结果。
+
+---
+
+# 18. API Key 安全
+
+再次检查：
+
+```text
+source code
+git diff
+logs
+operation log
+exceptions
+UI
+tests
+reports
+```
+
+不得出现：
+
+```text
+API Key
+Authorization header
+Bearer token
+```
+
+完整内容。
+
+错误信息只能：
+
+```text
+AI authentication failed
+```
+
+不能：
+
+```text
+Authorization: Bearer sk-...
+```
+
+---
+
+# 19. PDF Real Test
+
+使用真实 UAB 课程 PDF。
+
+要求：
+
+```text
+Upload
+↓
+Automatic processing
+↓
+No manual AI Analyze
+↓
+Summary
+↓
+KnowledgePoints
+```
+
+记录：
+
+```text
+file size
+page count
+processing duration
+chunk count
+AI calls
+KnowledgePoint count
+review count
+failure count
+```
+
+不要把课程原文或敏感内容直接写入报告。
+
+---
+
+# 20. Real Acceptance Test
+
+这是 TASK-77 的核心测试。
+
+选择一份真实课程材料。
+
+例如：
+
+```text
+UAB course material
+```
+
+测试过程必须：
+
+```text
+1. Create / select course
+2. Upload material
+3. Do NOT manually create KnowledgePoint
+4. Wait for processing
+5. Open Knowledge Explorer
+6. Verify generated KnowledgePoints
+7. Open one KnowledgePoint
+8. Verify Evidence Trace
+9. Open material summary
+10. Check Review queue
+```
+
+必须记录：
+
+```text
+Automatic KnowledgePoint count
+Evidence-linked count
+Review count
+Conflict count
+```
+
+---
+
+# 21. 不允许人工补救验收
+
+特别注意：
+
+如果：
+
+```text
+AI generated 2 KnowledgePoints
+```
+
+然后 Codex：
+
+```text
+手动插入 10 个 KnowledgePoint
+```
+
+来让测试看起来通过：
+
+> TASK-77 FAIL。
+
+验收必须保证：
+
+```text
+KnowledgePoints = AI pipeline generated
+```
+
+而不是人工 fixture。
+
+---
+
+# 22. Image Pipeline
+
+TASK-76 当前设计：
+
+```text
+Image
+→ OCR
+→ text
+→ LLM
+```
+
+本任务先保证这个链路自动执行。
+
+如果 provider 支持 Vision：
+
+可以增加：
+
+```text
+Image bytes
+→ Vision
+→ structured analysis
+```
+
+但不得为了 Vision 强制增加大量依赖。
+
+优先支持：
+
+```text
+OCR fallback
+Vision optional
+```
+
+---
+
+# 23. Audio Pipeline
+
+优先使用已有 transcription infrastructure：
+
+```text
+Audio
+→ Whisper / existing transcription
+→ timestamped transcript
+→ Evidence
+→ LLM
+→ KnowledgePoints
+```
+
+必须保持 timestamp。
+
+例如：
+
+```text
+KnowledgePoint:
+Integration by Parts
+
+Source:
+lecture.mp3
+
+Evidence:
+00:13:42 - 00:14:38
+```
+
+---
+
+# 24. Multilingual
+
+必须支持：
+
+```text
+zh
+es
+ca
+```
+
+原始 Evidence 不翻译。
+
+例如：
+
+```text
+Original:
+Derivada d'una funció
+
+KnowledgePoint:
+原始术语保留
++
+当前 UI 语言解释
+```
+
+禁止：
+
+```text
+把原始 Evidence 自动覆盖成中文
+```
+
+---
+
+# 25. Course Isolation
+
+AI 分析材料时：
+
+```text
+Material A
+Course A
+```
+
+不能产生：
+
+```text
+KnowledgePoint → Course B
+```
+
+必须验证：
+
+```text
+course_id
+session_id
+material_id
+evidence_id
+knowledge_point_id
+```
+
+整个链路保持一致。
+
+---
+
+# 26. Student Isolation
+
+AI 分析材料：
+
+> 不允许修改任何 Student Learning State。
+
+必须测试：
+
+```text
+before
+student state
+after
+student state
+```
+
+完全一致。
+
+AI Knowledge extraction 不应该自动：
+
+```text
+mark mastered
+mark weak
+create mistake
+submit exercise
+```
+
+---
+
+# 27. Automatic Trigger Failure
+
+测试：
+
+```text
+AI enabled
+AI unavailable
+```
+
+预期：
+
+```text
+Material ingestion:
+SUCCESS
+
+Evidence:
+PERSISTED
+
+AI:
+FAILED
+
+Retry:
+AVAILABLE
+```
+
+然后：
+
+```text
+AI restored
+↓
+Retry
+↓
+KnowledgePoint generated
+```
+
+---
+
+# 28. AI Disabled Regression
+
+测试：
+
+```text
+CLASSROOM_AI_ENABLED=false
+```
+
+上传材料。
+
+必须仍然能够：
+
+```text
+register
+process
+extract Evidence
+```
+
+不能因为 TASK-77 而强制依赖 AI。
+
+---
+
+# 29. UI Error Handling
+
+AI 失败时：
+
+不要显示：
+
+```text
+500 Internal Server Error
+```
+
+应该显示：
+
+```text
+AI analysis failed.
+
+Your material and evidence are safe.
+
+Reason:
+Authentication failed / Rate limit / Timeout
+
+[Retry Analysis]
+```
+
+---
+
+# 30. Processing Concurrency
+
+考虑：
+
+```text
+用户同时上传 5 个文件
+```
+
+不能：
+
+```text
+5 个 AI jobs
+互相覆盖 state
+```
+
+必须保证：
+
+```text
+Material A → AI Job A
+Material B → AI Job B
+```
+
+如果当前项目是同步架构，不要擅自引入 Celery / Redis。
+
+可以先实现：
+
+```text
+controlled sequential processing
+```
+
+或者项目已有的本地任务机制。
+
+---
+
+# 31. API Rate Limit
+
+遇到：
+
+```text
+429
+```
+
+不能疯狂 retry。
+
+至少：
+
+```text
+bounded retry
+backoff
+```
+
+并最终进入：
+
+```text
+AI_FAILED
+```
+
+用户可以手动 Retry。
+
+---
+
+# 32. Timeout
+
+AI request 必须有 timeout。
+
+不能无限等待：
+
+```text
+requests.post(...)
+```
+
+没有 timeout。
+
+推荐：
+
+```text
+connect timeout
+read timeout
+```
+
+具体值根据现有 architecture 设置，不要随意设置极端数字。
+
+---
+
+# 33. Prompt Version
+
+必须保留：
+
+```text
+pipeline_version
+prompt_version
+model
+provider
+```
+
+例如：
+
+```text
+pipeline_version = "1.1"
+prompt_version = "knowledge-extraction-v2"
+```
+
+以后升级 Prompt 时：
+
+```text
+re-analyze
+```
+
+可以识别旧结果。
+
+---
+
+# 34. Real Material Quality Evaluation
+
+不要只验证：
+
+```text
+KnowledgePoint count > 0
+```
+
+必须人工检查至少 5 个自动生成 KnowledgePoint：
+
+每个检查：
+
+```text
+1. 标题是否合理
+2. 总结是否正确
+3. 是否真的来自材料
+4. Evidence 是否正确
+5. 是否重复
+6. 是否遗漏明显核心知识
+7. 是否产生幻觉
+```
+
+把结果写入：
+
+```text
+docs/task-77-real-material-evaluation.md
+```
+
+不要把主观评价伪装成自动测试。
+
+---
+
+# 35. 自动总结质量
+
+真实材料至少检查：
+
+```text
+Summary
+```
+
+是否：
+
+- 覆盖主要主题
+- 没有明显虚构
+- 没有脱离 Evidence
+- 没有把例子误认为结论
+- 没有把教师口头表达错误地提升为正式知识
+- 保留专业术语
+
+---
+
+# 36. KnowledgePoint 质量
+
+至少检查：
+
+```text
+Core concepts
+Definitions
+Formulas
+Relationships
+Examples
+```
+
+是否被合理区分。
+
+不要把：
+
+```text
+“本节我们来看积分”
+```
+
+识别成 KnowledgePoint。
+
+不要把：
+
+```text
+例题答案
+```
+
+自动当作通用知识点。
+
+---
+
+# 37. 不要重新设计整个产品
+
+本任务不是：
+
+```text
+rewrite Classroom Assistant
+```
+
+不要修改：
+
+- Student architecture
+- Exercise architecture
+- Review architecture
+- Course architecture
+
+除非 AI integration 确实需要最小兼容修改。
+
+---
+
+# 38. Testing Requirements
+
+新增：
+
+```text
+tests/test_ai_auto_pipeline.py
+```
+
+至少覆盖：
+
+```text
+auto trigger
+AI disabled
+AI success
+AI failure
+retry
+idempotency
+duplicate
+conflict
+review
+course isolation
+student isolation
+summary
+API errors
+```
+
+已有：
+
+```text
+tests/test_ai_understanding.py
+```
+
+不得删除。
+
+---
+
+# 39. Real E2E
+
+至少：
+
+```text
+upload → process → auto AI → KP
+```
+
+验证一次。
+
+如果有浏览器环境：
+
+```text
+Browser E2E
+```
+
+如果 Windows 无法运行 browser E2E：
+
+继续使用：
+
+```text
+Node + DOM harness
+```
+
+但必须补充真实服务 HTTP E2E。
+
+---
+
+# 40. Full Regression
+
+最终必须执行：
+
+```bash
+pytest -m "not integration"
+```
+
+以及：
+
+```bash
+python -m compileall src tests
+```
+
+以及项目现有：
+
+```text
+ui_render_check
+ui_audit
+E2E
+```
+
+TASK-77 新增测试全部通过。
+
+---
+
+# 41. 不允许通过删除测试解决问题
+
+禁止：
+
+```text
+delete failing test
+skip failing test
+xfail failing test
+weaken assertion
+```
+
+除非明确证明：
+
+```text
+test expectation is objectively invalid
+```
+
+并在报告中解释。
+
+---
+
+# 42. 文档
+
+必须更新：
+
+```text
+docs/status.md
+```
+
+新增：
+
+```text
+docs/task-77-real-material-evaluation.md
+docs/task-77-report.md
+```
+
+如果 architecture 发生变化：
+
+```text
+docs/architecture.md
+```
+
+同步更新。
+
+---
+
+# 43. 最终报告
+
+必须包含：
+
+## 43.1 Old Pipeline
+
+```text
+upload
+→ ingestion
+→ Evidence
+→ manual KnowledgePoint
+```
+
+## 43.2 New Pipeline
+
+```text
+upload
+→ ingestion
+→ Evidence
+→ automatic AI
+→ summary
+→ KnowledgePoint
+→ review
+```
+
+## 43.3 Files Changed
+
+完整列出。
+
+## 43.4 Database Changes
+
+明确：
+
+```text
+none
+```
+
+或者完整说明 migration。
+
+## 43.5 AI Provider
+
+说明：
+
+```text
+Fake Provider
+OpenAI-compatible Provider
+```
+
+## 43.6 Automatic Trigger
+
+明确：
+
+```text
+process_material()
+→ AI
+```
+
+是否已完成。
+
+## 43.7 Multimodal
+
+分别说明：
+
+```text
+PDF
+DOCX
+TXT
+Image
+Audio
+```
+
+状态：
+
+```text
+IMPLEMENTED
+VERIFIED
+ENVIRONMENT-BLOCKED
+KNOWN LIMITATION
+```
+
+## 43.8 Real API
+
+明确：
+
+```text
+LIVE API:
+PASS / BLOCKED
+```
+
+不能把 SKIP 写成 PASS。
+
+## 43.9 Real Material
+
+明确：
+
+```text
+REAL MATERIAL:
+PASS / FAIL
+```
+
+## 43.10 Automatic KnowledgePoint
+
+明确：
+
+```text
+manual creation:
+0
+AI generated:
+N
+```
+
+## 43.11 Evidence Grounding
+
+明确：
+
+```text
+grounded:
+N/N
+```
+
+## 43.12 Review
+
+明确：
+
+```text
+auto accepted:
+N
+
+review:
+N
+
+conflict:
+N
+```
+
+## 43.13 Regression
+
+完整输出：
+
+```text
+pytest:
+compileall:
+UI:
+E2E:
+```
+
+---
+
+# 44. 最终 Definition of Done
+
+TASK-77 只有满足以下条件才能标记：
+
+```text
+COMPLETE
+```
+
+### 必须全部满足
+
+```text
+[ ] process_material 自动触发 AI
+[ ] AI disabled 时旧 pipeline 正常
+[ ] AI failure 不损坏 Evidence
+[ ] Retry 正常
+[ ] AI idempotency 正常
+[ ] Summary 自动生成
+[ ] KnowledgePoint 自动生成
+[ ] KnowledgePoint 全部 Evidence-grounded
+[ ] Dedup 正常
+[ ] Conflict 进入 Review
+[ ] Low confidence 进入 Review
+[ ] Course isolation
+[ ] Student state 不变
+[ ] API Key 安全
+[ ] PDF 自动分析
+[ ] Image pipeline 自动分析
+[ ] Audio pipeline 自动分析
+[ ] Real API smoke test
+[ ] Real UAB material test
+[ ] 用户无需手动创建 KnowledgePoint
+[ ] UI 显示处理进度
+[ ] UI 显示 Summary
+[ ] UI 显示自动 KnowledgePoints
+[ ] Review Center 可处理结果
+[ ] Full regression 通过
+```
+
+---
+
+# 45. 最重要的最终验收
+
+最终不要用：
+
+```text
+FakeAIProvider
+```
+
+作为唯一验收。
+
+必须至少有一次：
+
+```text
+真实 API
++
+真实 UAB 学习材料
++
+真实 Classroom Assistant
+```
+
+完成：
+
+```text
+Upload
+ ↓
+Automatic Processing
+ ↓
+Automatic AI Analysis
+ ↓
+Automatic Summary
+ ↓
+Automatic KnowledgePoint
+ ↓
+Evidence Trace
+ ↓
+Review
+```
+
+并且：
+
+```text
+Manual KnowledgePoint Creation = 0
+```
+
+这才算 TASK-77 真正完成。
+
+---
+
+# 46. 产品最终目标
+
+TASK-77 完成后，用户应该可以做到：
+
+```text
+我今天上完一节课。
+
+我把：
+PPT
+PDF
+课堂录音
+课堂照片
+
+全部丢进 Classroom Assistant。
+
+然后系统自己：
+
+识别
+→ 转录
+→ 阅读
+→ 理解
+→ 总结
+→ 提取知识点
+→ 建立证据
+→ 整理知识库
+→ 标记需要我确认的内容。
+
+我不再需要：
+逐页读原文
+自己总结
+自己创建 KnowledgePoint
+自己手动建立 Evidence。
+```
+
+最终产品原则：
+
+> **机器负责理解和整理，人负责确认不确定内容。**
+
+而不是：
+
+> **机器负责把原文显示出来，人负责完成真正的学习资料整理工作。**
+
+TASK-77 的目标就是完成这次产品角色转换。

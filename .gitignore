@@ -1,0 +1,52 @@
+__pycache__/
+*.py[cod]
+.cache/
+*.pyc
+
+# --- P0-3 工程卫生补充 (2026-09-20) ---
+.venv/
+.python-version
+.env
+.env.local
+# 本机 AI 凭证（实值，只活在用户机器上，永不进仓库）
+scripts/ai-env.bat
+
+# 运行期生成的数据库边车文件 (WAL / 共享内存) —— 它们不是真相源, 必须排除
+classroom-data/database/*.shm
+classroom-data/database/*.wal
+*.sqlite-shm
+*.sqlite-wal
+
+# 运行期进程元数据 (如 launcher.pid)
+classroom-data/.run/
+
+# 运行期产物: 备份归档 / 临时 / 运行日志 (含本仓库根的 logs/)
+classroom-data/backups/*.zip
+classroom-data/temp/
+classroom-data/logs/
+logs/
+
+# 本地数据真相源 (活 SQLite 库 + 用户真实课程材料) —— git 只管代码, 数据走备份
+classroom-data/
+
+# 自带的可移植 Python 解释器 (整个 CPython 发行版, 可重装, 不进版本控制)
+/Python/
+
+# 根目录遗留的活数据库 (旧布局历史文件)
+/database/*.sqlite
+/database/*.sqlite-*
+
+# AI 工具会话状态 (频繁变动, 弄脏工作区)
+/.workbuddy-ai/
+/.freebuff/
+
+# 仓库根的临时 / 中间缓存目录 (跑测试、跑脚本时生成, 不是交付物)
+/temp/
+/cache/
+*.log
+
+# 测试 / 编辑器 / 系统
+.pytest_cache/
+.idea/
+.DS_Store
+Thumbs.db

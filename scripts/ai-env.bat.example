@@ -1,0 +1,17 @@
+@echo off
+REM Template: copy to ai-env.bat in the same directory (that name is
+REM gitignored), then replace the placeholders with real values.
+REM Values must NOT be wrapped in angle brackets.
+REM start.bat auto-loads ai-env.bat when present; double-click start afterwards.
+REM NOTE: keep this file ASCII-only if you copy it to ai-env.bat, because
+REM cmd.exe parses batch files in the ANSI codepage and UTF-8 comments
+REM can mis-execute on some machines.
+
+set "CLASSROOM_AI_ENABLED=true"
+set "CLASSROOM_AI_API_KEY=<YOUR_API_KEY>"
+set "CLASSROOM_AI_BASE_URL=https://<redacted-host>/v1"
+set "CLASSROOM_AI_MODEL=<YOUR_MODEL>"
+REM JSON_MODE: uncomment and set false only if the gateway errors on
+REM response_format json_object (plain text + strict schema validation
+REM instead). Default true.
+REM set "CLASSROOM_AI_JSON_MODE=false"

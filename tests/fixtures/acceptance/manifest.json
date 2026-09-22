@@ -1,0 +1,71 @@
+{
+  "fixture": "task45-acceptance-dataset",
+  "course": {
+    "name": "Estructura de Dades i Algorismes",
+    "code": "EDA201",
+    "language": "ca"
+  },
+  "session": {
+    "session_number": 1,
+    "date": "2026-09-15",
+    "title": "Tema 1 - Fonaments d'algorismica"
+  },
+  "transcript": {
+    "filename": "tema1-transcripcio.json",
+    "language": "es",
+    "speaker_label": "profesor"
+  },
+  "board_ocr": {
+    "filename": "tema1-pissarra-ocr.json",
+    "language": "ca"
+  },
+  "materials": [
+    {
+      "filename": "tema1-guia-docent.pdf",
+      "role": "handout",
+      "language": "es",
+      "attach_to_session": true,
+      "expected": "COMPLETED"
+    },
+    {
+      "filename": "tema1-apunts-alumne.docx",
+      "role": "student_notes",
+      "language": "es",
+      "attach_to_session": true,
+      "expected": "COMPLETED",
+      "note": "contains the reversed Dijkstra step order"
+    },
+    {
+      "filename": "tema1-classe.wav",
+      "role": "audio",
+      "language": "es",
+      "attach_to_session": true,
+      "expected": "COMPLETED",
+      "note": "text comes from tema1-transcripcio.json"
+    },
+    {
+      "filename": "tema1-pissarra.png",
+      "role": "board_image",
+      "language": "ca",
+      "attach_to_session": true,
+      "expected": "COMPLETED",
+      "note": "text comes from tema1-pissarra-ocr.json"
+    },
+    {
+      "filename": "tema1-resum-alumne.md",
+      "role": "student_summary",
+      "language": "ca",
+      "attach_to_session": false,
+      "expected": "COMPLETED",
+      "note": "deliberately outside the session -> uncovered knowledge"
+    },
+    {
+      "filename": "tema1-fallit.pdf",
+      "role": "broken_document",
+      "language": "es",
+      "attach_to_session": true,
+      "expected": "FAILED",
+      "note": "failure isolation: must not break the other materials"
+    }
+  ]
+}

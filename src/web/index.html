@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>课堂助手 · Classroom Assistant</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#view">跳到主内容</a>
+
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <span class="brand-mark">课</span>
+      <span class="brand-text">
+        <strong>课堂助手</strong>
+        <small>Classroom Assistant</small>
+      </span>
+    </a>
+    <!-- 分两组 (P3-3)。原先 12 项平铺、靠 flex-wrap 折成 2–3 行, 而且四个
+         名字都含"复习"的入口 (待审核 / 考前复习 / 复习中心 / 复习包) 挨在一起
+         —— 用户无法从名字判断区别。2026-09-21 删掉「复习中心」后剩 11 项,
+         现在按**用途**分成两组, 中间放一个纯装饰的分隔符:
+
+           第一组「现在要做什么」: 概览 → 今日 → 考前复习 → 复习包 → 待审核
+           第二组「管理什么」:     我的课程 → 材料 → 知识点 → 学生 → 练习 → 错题本
+
+         概览 (`#/`) 从第三位提到第一位 —— 它是首页, 排在「今日」「考前复习」
+         之后与它的角色不符。
+
+         分隔符是 <span> 且 aria-hidden: `markActiveNav()` 只扫 `.topnav a`,
+         它不该被当成一个可高亮项; 对屏幕阅读器它也不承载任何语义。
+         这份 href 顺序必须与 scripts/ui_render_check.js 的 TOPNAV 逐项一致。 -->
+    <nav class="topnav">
+      <a href="#/" data-i18n="nav.overview">概览</a>
+      <a href="#/today" data-i18n="nav.today">今日</a>
+      <a href="#/review" data-i18n="nav.reviewMode">考前复习</a>
+      <a href="#/review-pack" data-i18n="nav.reviewPack">复习包</a>
+      <a href="#/reviews" data-i18n="nav.reviews">待审核</a>
+      <span class="topnav-sep" aria-hidden="true"></span>
+      <a href="#/courses" data-i18n="nav.myCourses">我的课程</a>
+      <a href="#/materials" data-i18n="nav.materials">材料</a>
+      <a href="#/knowledge" data-i18n="nav.knowledge">知识点</a>
+      <a href="#/students" data-i18n="nav.students">学生</a>
+      <a href="#/exercises" data-i18n="nav.exercises">练习</a>
+      <a href="#/mistakes" data-i18n="nav.mistakes">错题本</a>
+    </nav>
+    <div class="topbar-meta">
+      <!-- 两个 <select> 都**不再**写 aria-label。
+           它们各自被包在 <label> 里, 而那个 <label> 的文本就是旁边那个
+           data-i18n 的 <span> —— 浏览器/屏幕阅读器据此算出的可访问名已经是
+           翻译过的界面文案。原先硬编码的 aria-label="Course" /
+           "UI language" 反而**覆盖**掉它, 于是 es / ca 界面下屏幕阅读器读出
+           英文 (2026-09-21 修)。顺带满足 WCAG 2.5.3: 可访问名与可见标签一致。 -->
+      <label class="lang-picker course-picker">
+        <span data-i18n="mc.switch">切换课程</span>
+        <select id="course-switch"></select>
+      </label>
+      <label class="lang-picker">
+        <span data-i18n="ui.language">界面语言</span>
+        <select id="ui-language">
+          <option value="zh">中文</option>
+          <option value="es">Español</option>
+          <option value="ca">Català</option>
+        </select>
+      </label>
+      <span id="pill-health" class="pill pill-muted">连接中…</span>
+      <span id="pill-modes" class="pill pill-muted"></span>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="shell">
+    <aside id="sidebar" class="sidebar">
+      <p class="sidebar-title" data-i18n="nav.courses">课程</p>
+      <ul id="course-list" class="course-list">
+        <li class="muted small">加载中…</li>
+      </ul>
+      <p class="sidebar-note small muted" data-i18n="sidebar.note">
+        数据来源：本机 /api。所有原文（西语 / 加泰语 / 中文）按原样显示，不做改写。
+      </p>
+    </aside>
+
+    <main id="view" class="view" tabindex="-1">
+      <p class="muted">加载中…</p>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <span id="footer-app">课堂助手</span>
+    <span class="muted" data-i18n="footer.trace">Evidence-first · 所有知识点均可追溯至原始材料</span>
+  </footer>
+
+  <!-- 常驻任务坞: 长任务 (处理/AI 分析/整节处理/上传) 的状态挂在这里, 路由
+    切换不重建它, 用户切到别的模块也能看到进度与结局。 -->
+  <div id="task-dock" class="task-dock" aria-live="polite" hidden></div>
+
+  <!--
+    零构建: 手写 Vanilla JS, 无框架、无打包器、无 npm 依赖。
+    多个 <script> 共享同一个全局作用域, 因此跨文件互相调用是安全的;
+    但**顶层**初始化有顺序依赖 —— 顺序不可调换:
+
+      api.js    API 客户端 (API_BASE / ApiError / api)
+      i18n.js   界面语言 (UI_LANGUAGES / pickInitialLang / I18N / TRANSLATIONS / t)
+                —— 必须在 app.js 之前: app.js 的 state 初始化会调用 pickInitialLang()
+      app.js    核心工具 (esc / pill / toast) + 共享 state + 路由 + 启动
+      views/*   各页面渲染函数
+  -->
+  <script src="/api.js"></script>
+  <script src="/i18n.js"></script>
+  <script src="/app.js"></script>
+  <script src="/views/dashboard.js"></script>
+  <script src="/views/learn.js"></script>
+  <script src="/views/review.js"></script>
+  <script src="/views/knowledge.js"></script>
+  <script src="/views/materials.js"></script>
+  <script src="/views/courses.js"></script>
+  <script src="/views/students.js"></script>
+  <script src="/views/exercises.js"></script>
+  <script src="/views/mistakes.js"></script>
+  <script src="/views/review-pack.js"></script>
+</body>
+</html>
