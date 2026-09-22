@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Secret guard (real key must never be tracked)
+        shell: pwsh
+        run: |
+          $tracked = git ls-files scripts/ai-env.bat
+          if ($tracked) { Write-Error "scripts/ai-env.bat is tracked; it must stay gitignored"; exit 1 }
+          $hits = git grep -I -n "sk-p0i" -- . 2>$null
+          if ($hits) { Write-Error "suspected real key literal in tree"; exit 1 }
+          Write-Output "secret guard OK"
+      - name: Run tests (default suite, no integration)
+        run: python -m pytest -q -m "not integration" -p no:cacheprovider

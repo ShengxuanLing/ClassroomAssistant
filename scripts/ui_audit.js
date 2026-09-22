@@ -2422,35 +2422,53 @@ async function audit() {
     check('guia docent card carries the source line',
       out.includes('guia docent PDF (extret 2026-09-22)'));
 
-    // 页头精简摘要: 替代教师/学期/课程语言三行, 且自带「查看详情」按钮。
-    check('course head shows the guia brief instead of the three kv rows',
-      out.includes('guia-brief-main') && !out.includes('6 ECTS') === false);
-    check('guia brief lists credits, year and degree',
-      out.includes('6 ECTS') && out.includes('2026/2027') &&
+    // 页头精简信息: 标签式字段行替代教师/学期/课程语言三行 + 「查看详情」按钮。
+    check('course head shows the guia brief field rows',
+      out.includes('guia-brief') && out.includes('6 ECTS'));
+    check('guia brief lists contact, team, year and degree as labeled fields',
+      out.includes('Marc Castello Bueno') &&
+      out.includes('Miquel Àngel Vargas Garcia') &&
+      out.includes('2026/2027') &&
       out.includes('Gestió de Ciutats Intel·ligents i Sostenibles'));
-    check('guia brief lists the contact and the teaching team',
-      out.includes('Marc Castello Bueno') && out.includes('Miquel Àngel Vargas Garcia'));
+    check('guia brief renders the mailto link as a real link (no double-escape)',
+      out.includes('href="mailto:marc.castello.bueno@uab.cat"') &&
+      !out.includes('&lt;a href='));
     check('guia brief has the open-details button',
       out.includes('data-action="open-guia"'));
     check('course head no longer renders the teacher/semester kv rows when guia exists',
       !/<dt>Profesor\/a<\/dt>/.test(out) && !/<dt>Professor\/a<\/dt>/.test(out) &&
-      !/<dt>教师<\/dt>/.test(out));
+      !/<dt>教师<\/dt><dd>—<\/dd>/.test(out));
 
-    // 折叠: 卡片必须默认收起 (无 open 属性), 全文藏在 details 里。
-    check('guia details is collapsed by default',
-      /<details class="guia-fold">/.test(out) &&
-      !/<details class="guia-fold" open/.test(out));
-    const zhSandboxDetails = zhSandbox.document.querySelector('#guia-docent details');
-    check('guia details element exists and starts closed',
-      zhSandboxDetails !== null && zhSandboxDetails.open === false);
-    check('guia full text lives inside the details element',
-      zhSandboxDetails !== null &&
-      zhSandboxDetails.innerHTML.includes('La projecció UTM'));
-    // 「查看详情」按钮真的能展开 (接线存在, 不模拟真实点击 —— 点击冒烟
-    // 属于本脚本固化边界里明确未覆的部分)。
-    check('wireGuiaBrief is wired after pageCourse renders',
-      typeof zhSandbox.wireGuiaBrief === 'function' &&
-      zhSandbox.document.querySelector('[data-action="open-guia"]') !== null);
+    // 弹窗: 默认隐藏 (hidden 类), 全文在 .modal-body 里。
+    // DOM 桩的 querySelector 恒返回 null (固化边界, 见 makeSandbox), 所以
+    // 接线检查走静态源码断言 —— 与 session_id 接线检查 (本文件末段) 同一模式。
+    const coursesSource =
+      WEB_SOURCES.filter((s) => s.name === 'views/courses.js')[0].code;
+    check('guia modal is hidden by default (hidden class, no open state)',
+      out.includes('class="modal-mask hidden"') &&
+      !out.includes('class="modal-mask"'));
+    check('guia modal carries dialog semantics',
+      out.includes('role="dialog"') && out.includes('aria-modal="true"'));
+    // 全文 (大纲小节) 必须在 modal-body 开标记之后、modal 收尾之前。
+    check('guia full text lives inside the modal body',
+      coursesSource.indexOf('"modal-body"') >= 0 &&
+      coursesSource.indexOf('"modal-body"') <
+      coursesSource.indexOf("guiaSection(t('guia.syllabus')") &&
+      coursesSource.indexOf("guiaSection(t('guia.syllabus')") <
+      coursesSource.indexOf('guia_source'));
+    check('wireGuiaBrief wires open, close, mask click and Escape',
+      coursesSource.includes("modal.classList.remove('hidden')") &&
+      coursesSource.includes("modal.classList.add('hidden')") &&
+      coursesSource.includes("event.target === modal") &&
+      coursesSource.includes("'Escape'") &&
+      coursesSource.includes('wireGuiaBrief();'));
+    // CSS 层守卫 (真实回归: .hidden 写在 .modal-mask 之前, 同优先级被
+    // display: flex 覆盖, 弹窗关不上) —— .hidden 的 display:none 必须
+    // 出现在 .modal-mask 的 display:flex 之后。
+    const idxHiddenRule = CSS.indexOf('.hidden { display: none; }');
+    const idxMaskRule = CSS.indexOf('.modal-mask {');
+    check('styles.css: .hidden rule comes after .modal-mask (must win the cascade)',
+      idxHiddenRule >= 0 && idxMaskRule >= 0 && idxHiddenRule > idxMaskRule);
 
     // es/ca: 小节标题走 guia.* 词条; 内容是加泰语原文 (无 CJK),
     // 所以整页 CJK 检查 = 界面标题漏译检测。
@@ -2460,7 +2478,7 @@ async function audit() {
       check('guia docent card renders in ' + lang,
         localizedOut.includes('id="guia-docent"'));
       check('guia docent localized title in ' + lang,
-        localizedOut.includes(lang === 'es' ? 'Guia docente' : 'Guia docent</span>'));
+        localizedOut.includes(lang === 'es' ? 'Guia docente' : 'Guia docent</h2>'));
       check('guia docent has no untranslated CJK in ' + lang,
         !/[\u4e00-\u9fff]/.test(localizedOut),
         'CJK leaked: ' + firstCjk(localizedOut));
