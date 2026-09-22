@@ -8096,25 +8096,35 @@ Known limitation (explicit, not hidden)
    `knowledge_score` 都只是**展示**字段，不参与排序」，全仓 grep 也确认没有权重
    逻辑消费它。它现在的价值是"让人一眼看出这条知识点有几条证据在撑"。
 
-## 修复 — 概览页「知识健康度」挤在左边 + 材料状态说明糊成一坨（2026-09-22）
+## 修复 — 概览页「知识健康度」挤在左边 + 材料说明挤在窄列里（2026-09-22）
 
 Goal
 ----------------------------------------
 用户看着 `#/`（概览）页截图报两处视觉问题，都出在 dashboard：
 
 1. **「知识健康度」面板内容全挤在左边。** 9 项指标（知识点 / 主题 / 关系 /
-   证据已支持 / 尚未验证 / 证据冲突 / 人工已确认 / 待人工审核 / 覆盖）写在
+   覆盖 / 证据已支持 / 尚未验证 / 证据冲突 / 人工已确认 / 待人工审核）写在
    同一个 `<dl class="kv">` 里，标签与数字都紧贴卡片左缘，右侧空出一大片；
    9 行之间也没有任何语义分组，读起来是一条无层次的长列。
-2. **「材料」卡的状态列糊成一坨。** `COMPLETED` 徽章下方紧接
-   `NO_TEXT_EXTRACTED` 徽章 + 一段警告说明 + 一段零证据说明，四行文字用
-   `<br>` 硬折在同一格里，字重相近、没有间距，用户无法一眼区分
-   「状态」与「说明」。
+2. **「材料」卡的状态列被说明文字撑成一根细长条。** `COMPLETED` 徽章下面紧接
+   `NO_TEXT_EXTRACTED` 徽章 + 警告说明 + 零证据说明，全部用 `<br>` 硬折在
+   同一个状态格里。那张表是 `table-layout: fixed`，状态列被钉死在 180px ——
+   实测（见「改前/改后实测」）说明文字块高 **164px、10 个行盒**，把整个状态格
+   撑到 **203px**，材料卡被顶到 **303px**。
 
 两处都是 **D1/D4（2026-09-20）与真相轴统一（2026-09-21）之后的遗留视觉债**：
 内容本身是对的，排版没有跟上。上一轮 `docs/ui-review-2026-09-21.md` 的
 21 项**没有记录这两条**（那份清单聚焦功能 / 链接 / a11y / 对比度），所以
 这是用户目视发现的新问题。
+
+**材料这条是分两步修好的，第二步才是真因。** 第一版只把 `<br>` 换成
+`.material-detail` 块（状态列 180px → 240px），形状从"糊成一坨"变成"一列
+整齐的小字"—— 但仍然是**在一个被钉死的窄列里折 5~8 行**，材料行依旧细长。
+把预览快照放大看过之后才确认：真正的矛盾不是"块不块"，而是**说明文字有
+~150 字符，却只能在一个 160~180px 的固定列里排版**。所以第二版把说明搬到
+**独立的整宽说明行**（`<tr class="material-note"><td colspan="3">`）。
+本区块记录的是**最终形态**，第一版的两处取值（240px、块级塞在状态格里）
+已被取代。
 
 设计取舍
 ----------------------------------------
@@ -8136,7 +8146,8 @@ Goal
 | 人工审核 | 人工已确认 / 待人工审核 | 真相轴 2（`rev.*`）|
 
 **两条真相轴仍然分开**，没有合并成"健康总分" —— 这是项目在
-`src/web/i18n.js::mc.axesNote` 里写死的语义，本次不动。
+`src/web/i18n.js::mc.axesNote` 里写死的语义，本次不动。面板的**信息量没变**，
+仍是原来那 9 项。
 
 **「覆盖」为什么并进"结构"组，而不是单独成第四组。** 第一版实现是四组
 （覆盖单独一组），组名走 `dashboard.health.coverage`、字段名走 `t('覆盖')`，
@@ -8147,34 +8158,64 @@ Goal
 快照抓出来的** —— 自动断言当时只看"四组是否存在"，没看"组名与字段名是否
 同名"；现已补上一条专门断言（见守卫表）。
 
-**为什么材料行的说明要包块，而不是继续用 `<br>`。** 全局的
-`warningRow()` / `zeroEvidenceHint()` 返回 `<br>` 开头的内联串，在材料页 /
-课堂页那种宽表里够用；但 dashboard 的状态列原本只有 180px，`<br>` 折出来的
-四行会与上面的 pill 糊在一起。dashboard 因此改用本地
-`dashboardWarnRow()` / `dashboardEmptyRow()`：**文案映射与判据完全复用**
-（`warningText()` / `evidenceCountOf()` / 同一份 `t()` 表），只把容器换成
-`.material-detail` 块（上间距 5px、12px、`overflow-wrap: anywhere`）。
-全局那两个函数**没有改动**，材料页 / 课堂页的渲染逐字节不变。
+**为什么材料说明要搬到独立的整宽说明行，而不是继续留在状态格里。**
+根因是 `table-layout: fixed`：这张表的列宽由 `<colgroup>` 钉死，状态列
+160px，而说明文字约 150 字符。`overflow-wrap: anywhere` 能保证不溢出，却
+会把 150 字符折成 **~9 行**（实测 164px），整个状态格 203px、材料卡 303px ——
+用户看到的"细长条"就是这个。改法是把说明从"某一格的内容"变成"这一行材料
+的附注"：
 
-顺带两处微调：状态列宽 `180px → 240px`（给说明文字更多折行空间）；
-材料类型后缀加 `·` 分隔（原来 `x.pdf text` 空格相接，看起来像文件名的一部分）。
-另给 `.kv-group .kv dt` 补了 `overflow-wrap: anywhere` —— 西语标签
-（`Respaldado por evidencia` / `Confirmado por revisión`）比中文长一倍，
-两列之后每列只剩 ~200px，dt 默认 `max-content` 且没有折行规则（全局 `.kv`
-只给 `dd` 加了）。
+- **结构**：`<tr class="material-row">`（材料行，CSS 去掉底边）+ 
+  `<tr class="material-note"><td colspan="3">`（说明行，整宽 910px）；
+- **视觉归属**：说明行浅底（`--surface-2`）、上内边距收 0、底边收口，
+  让"材料行 + 说明行"看起来是一组，而不是两条材料；
+- **文案来源与判据完全复用**：仍是本地 `dashboardWarnRow()` /
+  `dashboardEmptyRow()`，内部走全局 `warningText()` / `evidenceCountOf()` /
+  同一份 `t()` 表，**没有第二份文案真源**；
+- 全局 `warningRow()` / `zeroEvidenceHint()` 与材料页 / 课堂页的渲染代码
+  **一个字节没动**（那两张是非 fixed 表格，列宽自动分配，不受此影响）。
+
+顺带一处微调：材料类型后缀加 `·` 分隔（原来 `x.pdf text` 空格相接，看起来
+像文件名的一部分）。另给 `.kv-group .kv dt` 补了 `overflow-wrap: anywhere` ——
+西语标签（`Respaldado por evidencia` / `Confirmado por revisión`）比中文长
+一倍，两列之后每列只剩 ~200px，dt 默认 `max-content` 且没有折行规则
+（全局 `.kv` 只给 `dd` 加了）。
+
+改前 / 改后实测（浏览器布局引擎报数，不是估算）
+----------------------------------------
+用无头 Edge（`--headless --dump-dom`）在预览快照里跑一段只读测量脚本，
+取 `getBoundingClientRect()` 与 `Range.getClientRects()` 的真实值。
+"改前"= 把 `dashboard.js` 临时改回**用户截图时的原状**（状态格内
+`pill + warningRow() + zeroEvidenceHint()`，状态列 180px），量完逐字节还原
+（sha256 `67ae79610146698e` 前后一致）。视口 1280×2600，浅色主题。
+
+| 指标 | 改前 | 改后 |
+|---|---|---|
+| 状态列宽 | 180 px | 160 px |
+| 状态格高 | **203 px** | **37 px**（只剩一个 pill）|
+| 说明文字块高 | 164 px | — |
+| 说明行高 | — | 51 px |
+| 说明可用宽度 | 180 px | **910 px** |
+| 说明文字行盒数 | **10**（含警告 pill 自身 1 个 → 约 9 行）| **2 行** |
+| 材料表高 | 234 px | 119 px |
+| **材料卡高** | **303 px** | **188 px**（−115 px，−38%）|
+
+即：说明文字从"180px 宽里折约 9 行、把状态格撑到 203px"，变成"910px 宽里
+2 行、51px 高的独立说明行"。这是**量出来的**，不是目测。
 
 交付文件
 ----------------------------------------
 - `src/web/views/dashboard.js` —— 知识健康度改为 `.kv-groups` 内三个
   `.kv-group`（各带 `dashboard.health.*` 小标题，"覆盖"并入"结构"组）；
-  材料状态列改用 `dashboardWarnRow()` / `dashboardEmptyRow()` 块级渲染；
-  状态列 240px；类型后缀加 `·`。
+  材料表新增独立说明行（`material-row` + `material-note[colspan=3]`）；
+  类型后缀加 `·`。
 - `src/web/styles.css` —— 新增 `.kv-groups`（固定两列网格 + `<=560px`
-  单列）、`.kv-group-label`、`.kv-group .kv`（含 dt 折行）、`.material-detail`。
+  单列）、`.kv-group-label`、`.kv-group .kv`（含 dt 折行）、`.material-detail`、
+  `tr.material-row > td`（去底边）、`tr.material-note > td`（浅底 + 收上边距）。
 - `src/web/i18n.js` —— 新增 3 个 key × 3 语（`dashboard.health.structure` /
   `.validation` / `.review`），共 9 条；删除 1 个冗余 key × 3 语
   （`dashboard.health.coverage`）。
-- `scripts/ui_audit.js` —— 新增 13 条断言（见下）；新增
+- `scripts/ui_audit.js` —— 新增 18 条断言（见下）；新增
   `--preview <lang> --out <file>` 模式。
 - `scripts/README.md` —— 记录 `--preview` 用法。
 
@@ -8183,13 +8224,14 @@ HTML 快照：真实 `src/web/index.html` 骨架 + 内联 `styles.css` + **真�
 结果**（走与 `--dump` 同一条 `renderPage()` 路径），剥掉全部 `<script>`，
 顶部有一条标注写明"静态快照（非实时应用）"。夹具用最坏情况
 （`COMPLETED` + `NO_TEXT_EXTRACTED` + 0 证据），这样知识健康度分组与材料
-状态列两处改动**同时**可见。它**不参与任何断言、不影响门禁**，只是把真实
+说明行两处改动**同时**可见。它**不参与任何断言、不影响门禁**，只是把真实
 渲染结果交给人的眼睛看 —— 本项目的 `ui_audit.js` 明确声明不解析 CSS 布局
-（见其头部「未覆」清单），所以 CSS 网格的实际像素只能靠人看。
-**它已经兑现了价值**：上面那条"组名 = 字段名"的重复缺陷就是看 es 快照时
-发现的，自动断言当时没抓到。
+（见其头部「未覆」清单），所以 CSS 网格与折行的实际像素只能靠人看。
+**它已经兑现了两次价值**：① "组名 = 字段名"的重复缺陷是看 es 快照时发现的；
+② 第一版"块级塞在状态格里"仍然细长，也是把快照放大后确认的 —— 两次自动
+断言都没抓到。
 
-守卫（`scripts/ui_audit.js`，388 → 401，+13）
+守卫（`scripts/ui_audit.js`，388 → 406，+18）
 ----------------------------------------
 | 断言 | 抓什么 |
 |---|---|
@@ -8201,32 +8243,55 @@ HTML 快照：真实 `src/web/index.html` 骨架 + 内联 `styles.css` + **真�
 | `groups sit in the .kv-groups grid container` | 容器存在（少了它 CSS 网格不生效，三组退回贴左边） |
 | `css defines the 2-column .kv-groups grid` | CSS 两列规则在位 |
 | `css collapses .kv-groups to one column on narrow screens` | 窄屏收一列在位 |
-| dashboard 材料行 × 3（`COMPLETED` pill 在前 / warning 包在 `.material-detail` / 零证据提示包在 `.material-detail`） | 状态列块级结构 |
+| `status cell holds the COMPLETED pill alone` | 状态格里只有状态 pill |
+| `status cell no longer carries the note` | **说明不许再挤回状态格**（本次要修的形状） |
+| `material row is marked for its attached note` | 材料行带 `material-row`（CSS 靠它去底边） |
+| `note row spans all three columns` | 说明行 `colspan=3` 真的占满整宽 |
+| `warning is wrapped in .material-detail` | 警告在说明行里、且是块级 |
+| `zero-evidence hint is wrapped in .material-detail` | 零证据提示也在（两块都在） |
+| `css drops the bottom border of a material row that has a note` | 材料行去底边（否则说明行像另一条材料） |
+| `css gives the note row a tinted, tightened cell` | 说明行浅底 + 收上边距（视觉归属） |
 
-**变异测试（7 个变异，全部精准命中，源码逐字节还原）**
+**变异测试（13 个变异，全部精准命中，源码逐字节还原）**
+
+知识健康度（第一轮）：
 
 | 变异 | 结果 |
 |---|---|
 | A：三组塌回一个 `<dl class="kv">` | 3 failed（kv-groups 计数 / group labels / ungrouped dl） |
-| B：材料行退回全局 `warningRow()` / `zeroEvidenceHint()` | 2 failed（warning wrapped / zero-evidence wrapped） |
 | C1：删掉 `.kv-groups` 容器 | 1 failed（grid container） |
 | C2：CSS 两列改回单列 | 1 failed（2-column grid） |
 | C3：CSS 删掉 560px 窄屏规则 | 1 failed（collapses to one column） |
 | D1：结构组组名改成与组内 dt 同名 | 1 failed（no group label repeats） |
 | D2：把"覆盖"重新装回独立组（组名 = 字段名） | 1 failed（no group label repeats） |
 
+材料说明行（第二轮，一次性脚本 `cache/mutate_note_row.py`，跑完已清理）：
+
+| 变异 | 结果 |
+|---|---|
+| M1：说明行退回状态格（colspan 结构整个撤销） | 1 failed（status cell no longer carries the note） |
+| M2：材料行丢掉 `material-row` 标记 | 1 failed（material row is marked） |
+| M3：`colspan` 从 3 缩成 1 | 1 failed（note row spans all three columns） |
+| M4：说明行不再带零证据提示（只剩警告块） | 1 failed（zero-evidence hint wrapped） |
+| M5：CSS 不再去掉材料行底边 | 1 failed（css drops the bottom border） |
+| M6：CSS 说明行丢掉浅底 | 1 failed（css gives the note row a tinted cell） |
+
+另有一个**第一轮的变异 B**（材料行退回全局 `warningRow()` /
+`zeroEvidenceHint()`）在第二轮被 M1 覆盖（M1 就是这个变异的更完整版本）。
+
 变异 B 顺带修掉一个**测试自身的缺陷**：`cellTail.match(...)` 在"一个都没匹配到"
 时返回 `null` 而不是空数组，直接取 `.length` 会抛 `TypeError` 把整份 audit
 崩掉 —— **崩溃看起来像基础设施故障，实际是断言该报红**。已归一成 `|| []`
-再计数。变异脚本是一次性验证工具，跑完即清理（`cache/` 按项目规范不长期保留）；
-上表就是它们的**结果记录**，含每个变异被哪几条断言抓住。
+再计数。变异 / 测量脚本都是一次性验证工具，跑完即清理（`cache/` 已进 `.gitignore`，
+按项目规范不长期保留）；上面两张表就是它们的**结果记录**，含每个变异被
+哪几条断言抓住、以及改前/改后的确切数字。**路径只作溯源，文件已不在。**
 
 Test Summary
 ----------------------------------------
 - Base (before this change): 前端 `ui_render_check.js` 250 / `ui_audit.js` 388；
   Python `5368 passed, 5 skipped, 50 deselected`
-- Final: 前端 `ui_render_check.js` **250**（未动）/ `ui_audit.js` **401**（+13）；
-  Python **`5367 passed, 6 skipped, 50 deselected`**（19m02s，integration 口径）
+- Final: 前端 `ui_render_check.js` **250**（未动）/ `ui_audit.js` **406**（+18）；
+  Python **`5367 passed, 6 skipped, 50 deselected`**（20m19s，integration 口径）
 - Failed: **0**
 
 **关于 `passed 5368→5367` / `skipped 5→6`（差 1 条，已查清，不是本次改动）**
@@ -8250,31 +8315,41 @@ skipped，而非增删。用 `-rs` 拿到完整 skip 名单，逐条归因：
 （`grep -c "src/web" tests/<file>.py` 皆为 0）；而真正读前端源码的
 `tests/support.py` / `test_persistence_layering.py` / `test_web_source_manifest.py` /
 `test_web_ui.py` 里**一条 skip 都没有**。单独跑后三者 → **105 passed, 0 skipped**。
-即：本次改动与 skip 数量变化**无因果关系**。
+即：本次改动与 skip 数量变化**无因果关系**。第二轮改动（材料说明行）之后
+重跑全量，结果仍是 `5367 passed, 6 skipped` —— 与第一轮一致，未引入新 skip。
 
 Validation
 ----------------------------------------
-- 前端门禁：`ui_render_check.js` → `OK (250 checks)`；`ui_audit.js` → `OK (401 checks)`。**PASS**
+- 前端门禁：`ui_render_check.js` → `OK (250 checks)`；`ui_audit.js` → `OK (406 checks)`。**PASS**
 - 三语渲染：`dashboard.health.*` 三键齐备；es 预览小标题实测为
   `Estructura` / `Validación` / `Revisión`。**PASS**
-- 变异测试：7 个变异全部被对应断言抓住（见上表）。**PASS**
-- 静态结构：预览快照 `html`/`head`/`body`/`main`/`aside`/`table` 开闭配对；
-  `div` 配对、`dl` 配对；`.kv-groups` × 1、`.kv-group` × 3、
-  `.material-detail` × 2。**PASS**
+- 变异测试：13 个变异全部被对应断言抓住（见上表）。**PASS**
+- **真实浏览器验证（本轮新增，补上第一轮 Known limitation #1）**：无头 Edge
+  渲染预览快照，1280×2600 浅色 + 520×3000 窄屏两档，深色（系统偏好）与浅色
+  （注入 `:root` 覆盖）各一版；并用布局引擎报数得到改前/改后对比表。实测确认：
+  ① 两列网格真的铺满卡宽、三组按 2+1 落位；② 说明行真的占满 910px、2 行；
+  ③ 520px 下 `.kv-groups` 真的收成一列、说明行仍不溢出；④ 材料卡 303 → 188px。
+  **PASS**
+- 静态结构：预览快照 `html`/`head`/`body`/`main`/`aside`/`table`/`thead`/`tbody`/
+  `dl`/`div`/`tr`/`td`/`colgroup` 开闭**全部配对**（zh / es 各 1 份）；
+  `.kv-groups` × 1、`.kv-group` × 3、`.material-detail` × 2、`.material-row` × 1、
+  `.material-note` × 1。**PASS**
 - 语法：`node --check` 三个改动 JS 全部 OK。**PASS**
 - 编译：`compileall -q src tests` → EXIT 0。**PASS**
 - 全量回归：见 Test Summary（5367 passed / 0 failed / 6 skipped 全部环境相关）。**PASS**
-- 视觉：`scripts/ui_audit.js --preview zh --out cache/preview-dashboard-zh.html`
-  → 32571 bytes；`--preview es` → 32815 bytes（均为 UTF-8 真实字节数，由
+- 视觉快照：`scripts/ui_audit.js --preview zh --out cache/preview-dashboard-zh.html`
+  → 33867 bytes；`--preview es` → 34111 bytes（均为 UTF-8 真实字节数，由
   `Buffer.byteLength` 得出 —— 初版误用 `shell.length`（UTF-16 码元数）并把
   结果标成 bytes，中文下差出约 4KB，已修）。**PASS**
 
 Known limitation (explicit, not hidden)
 ----------------------------------------
-1. **未做真实浏览器验证。** 本机 Windows，浏览器自动化工具不支持（见
-   `ui_audit.js` 头部「未覆」清单）。CSS 网格与折行的**实际像素**没有被断言
-   过 —— 本脚本不解析 `styles.css` 的布局结果。`--preview` 快照是把真实渲染
-   结果交给人的眼睛看，**不是**自动断言。
+1. **浏览器验证是一次性脚本，不是门禁。** 无头 Edge 跑的是**静态快照**
+   （固定夹具：一份 `COMPLETED + NO_TEXT_EXTRACTED + 0 证据` 的材料），不是
+   跑起真实服务、喂真实数据的端到端验证；而且测量脚本与截图都不参与
+   `ui_audit.js` 的断言，**下次改动不会自动重跑**。`ui_audit.js` 依旧不解析
+   `styles.css` 的布局结果（头部「未覆」清单未变）。所以 CSS 回归仍靠人工
+   目视 + `--preview` 快照。
 2. **三组在两列网格里有一格留白。** 第一行放"结构 + 证据支持度"，第二行只有
    "人工审核"，右下为空。这是 3 组 + 2 列的算术结果，不是缺陷；若将来补上
    第四个语义组（例如把 `review_summary` 的 `rejected` / `kept_unverified`
@@ -8283,10 +8358,15 @@ Known limitation (explicit, not hidden)
 3. **`.kv` 的其余 20 处使用点未动。** 它们是详情页的字段列表（值多为长
    文本），"标签左 / 值右"的紧凑写法在那里是合适的。本次只针对 dashboard
    的统计面板。
-4. **状态列 240px 与 560px 断点是经验值。** 没有针对每个视口宽度逐一调过；
-   更窄的视口由 `overflow-wrap: anywhere` 与卡片横向滚动兜底。
-5. **`--preview` 模式不参与门禁。** 它只是"给人看"的出口；它的正确性由人工
-   目视保证，脚本只保证不崩（已验证生成的 HTML 结构配对正确）。
-6. **材料行说明文字本身没有缩短。** 那段文案（`warn.emptySuccessHint` +
+4. **说明行的 160px 状态列宽与 560px 断点是经验值。** 没有针对每个视口宽度
+   逐一调过；已实测 1280px 与 520px 两档正常，更窄的视口由
+   `overflow-wrap: anywhere` 与卡片横向滚动兜底。
+5. **说明文字本身没有缩短。** 那段文案（`warn.emptySuccessHint` +
    `warn.empty.NO_TEXT_EXTRACTED`）是 i18n 表里的三语条目，本次只改容器不改
-   文案 —— 缩短它会影响三语与既有断言，属另一件事。
+   文案 —— 缩短它会影响三语与既有断言，属另一件事。**两段说明在语义上确有
+   重叠**（都建议"扫描件转图片走 OCR"），那是 D1 与 D4 两条规则各自触发的
+   结果，材料页 / 课堂页同样如此，本次未动。
+6. **材料页 / 课堂页的"逐字节不变"是推断，不是断言。** 依据是：`app.js` 与
+   `views/materials.js`、`views/courses.js` 本次**未编辑**（`node --check`
+   通过），且 `ui_audit.js` 里"三处一致"的 4 条断言 × 3 个站点全部通过。
+   没有 golden 文件做字节级 diff。
