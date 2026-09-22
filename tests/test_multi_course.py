@@ -1133,7 +1133,46 @@ class TestUi:
         assert "setCourse(courseId)" in js
         assert "__courseSwitchWired" in js
 
-    def test_switcher_navigates_to_the_course_page(self):
+    def test_switcher_delegates_to_switch_course(self):
+        """切换器只换课程上下文, 不再无条件跳课程详情 (2026-09-22 解耦)。
+
+        根因: change 处理器原来是 ``setCourse()`` + ``location.hash =
+        '#/courses/<id>'`` —— 在 11 个顶层功能页换课都会被踢到课程详情。
+        现在它只调 ``switchCourse()`` (去留由当前路由决定); 课程详情族的
+        换 URL 收口在 ``switchCourse()`` 内部, 与修复前同为 ``location.hash
+        =`` (push 语义不变)。
+        """
+        js = _app_js()
+        assert "async function switchCourse(courseId)" in js
+        assert "switchCourse(courseId)" in js
+        handler = re.search(
+            r"picker\.addEventListener\('change', \(\) => \{(.*?)\}\);",
+            js, re.S,
+        )
+        assert handler, "顶栏切换器的 change 处理器找不到了"
+        body = handler.group(1)
+        assert "switchCourse(courseId)" in body, body
+        assert "window.location.hash" not in body, body
+        assert "setCourse(courseId)" not in body, body
+
+    def test_sidebar_marks_switch_links(self):
+        """侧边栏课程项带 ``data-course-switch``, 由文档级委托拦截。
+
+        ``href`` 保留课程详情地址 (修饰键/中键打开与无 JS 的 fallback);
+        纯左键点击被拦截后只换 context、不导航 (见 switchCourse)。
+        """
+        js = _app_js()
+        assert "data-course-switch" in js
+        assert "closest('a[data-course-switch]')" in js
+        assert "event.preventDefault()" in js
+
+    def test_course_detail_stays_reachable(self):
+        """解耦后课程详情仍可进入 —— 「查看详情」与深链都在。
+
+        「我的课程」卡片按钮、侧边栏 href fallback、switchCourse 的详情族
+        分支三处仍构造 ``#/courses/<id>``; 可达性另由
+        tests/test_web_ui_invariants.py 逐条求值守着, 这里只锁住构造点还在。
+        """
         assert "'#/courses/' + encodeURIComponent(courseId)" in _app_js()
 
     def test_switcher_is_cleared_when_there_are_no_courses(self):

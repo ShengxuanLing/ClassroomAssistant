@@ -1,13 +1,144 @@
 /*
  * 概览页 (``#/``) 与考前复习模式 (``#/today``)。
+ *
+ * 页面层级 (2026-09-22, 任务书 §2):
+ *   概览 / 今日 = **全局页** —— 默认按**全部课程**聚合, 不跟随左侧选中的
+ *   当前课程; 顶栏选择器在这两页上只是本页的**查看范围**筛选 (state.scope)。
+ *   选一门课时给出单课程视图, 回到「全部课程」时恢复聚合。
  */
 'use strict';
 
+// ---------------------------------------------------------------- 聚合层
+//
+// 为什么聚合只吃 ``/api/my-courses`` 的行 (任务书 §14): 后端每行已经是
+// **带 course_id 的独立查询** (multi_course.py: "没有一处是全局查再筛"),
+// 汇总就是把这些真实数字相加。前端**不再**为聚合重复调用单课程接口,
+// 也绝不硬编码任何数字。
+
+/** 聚合图表的列。取值域 = 后端 COUNT_KEYS 的展示子集 (概览页口径)。 */
+const OV_STAT_KEYS = [
+  ['sessions', '课堂'], ['materials', '材料'], ['knowledge_points', '知识点'],
+  ['pending_review', '待审核'], ['students', '学生'], ['exercises', '练习'],
+];
+
+/** 把 my-courses 的课程行 + totals 聚合成概览页需要的形状。 */
+function aggregateDashboardData(myCourses) {
+  const rows = (myCourses.courses || []).slice().sort((a, b) =>
+    String(a.course_id).localeCompare(String(b.course_id)));
+  const totals = myCourses.totals || {};
+  return {
+    courseCount: (myCourses.courses || []).length,
+    rows: rows,
+    // 优先用后端算好的 totals (单一事实源); 后端没给时才在现有行上求和 ——
+    // 两条路都只消费真实数据, 没有任何一条是"编出来"的。
+    totals: {
+      counts: (totals.counts && Object.keys(totals.counts).length)
+        ? totals.counts
+        : OV_STAT_KEYS.reduce((acc, entry) => {
+            acc[entry[0]] = rows.reduce(
+              (sum, row) => sum + Number(((row.counts || {})[entry[0]]) || 0), 0);
+            return acc;
+          }, {}),
+      evidence_total: Number(totals.evidence_total || 0),
+      gaps: Number(totals.gaps || 0),
+    },
+  };
+}
+
+/** 概览的一张统计格。 */
+function ovStat(label, value, hint) {
+  return '<div class="stat"><div class="stat-label">' + esc(label) + '</div>' +
+    '<div class="stat-value">' + esc(value) + '</div>' +
+    (hint ? '<div class="stat-hint">' + esc(hint) + '</div>' : '') + '</div>';
+}
+
+/** 课程概况的一行: 课程名 + 关键计数徽章 (任务书 §4 的形状)。 */
+function ovCourseRow(row, isCurrent) {
+  const counts = row.counts || {};
+  return '<a class="ov-row' + (isCurrent ? ' ov-row-current' : '') +
+    '" href="#/courses/' + encodeURIComponent(row.course_id) + '">' +
+    '<div class="ov-row-head"><strong>' + esc(row.name || row.code || '') + '</strong>' +
+    (isCurrent ? ' <span class="pill pill-ok">' + esc(t('mc.current')) + '</span>' : '') +
+    '<span class="tiny muted">' + esc(t('mc.count.sessions')) + ' ' +
+    esc(fmtNumber(counts.sessions || 0)) + '</span></div>' +
+    '<div class="ov-row-counts">' +
+    ['materials', 'knowledge_points', 'pending_review', 'exercises']
+      .map((key) => '<span class="pill pill-muted">' + esc(t('mc.count.' + key)) + ' ' +
+        esc(fmtNumber(counts[key] || 0)) + '</span>')
+      .join(' ') +
+    '</div></a>';
+}
+
+/** 全部课程口径的概览页 (任务书 §3-§4)。 */
+async function pageDashboardGlobal() {
+  const data = await api('/my-courses', {
+    query: { lang: state.lang, preferred: state.courseId || undefined },
+  });
+  const agg = aggregateDashboardData(data);
+  const counts = agg.totals.counts;
+
+  setView(
+    '<div class="page-head"><h1>' + t('概览') + '</h1>' +
+    '<p class="subtitle">' + esc(t('scope.all')) + ' · ' +
+    esc(agg.courseCount) + ' ' + esc(t('ov.coursesUnit')) + '</p>' +
+    '</div>' +
+
+    '<div class="grid grid-4" style="margin-bottom:16px">' +
+    OV_STAT_KEYS.map((entry) =>
+      ovStat(t('mc.count.' + entry[0]), fmtNumber(counts[entry[0]] || 0))).join('') +
+    ovStat(t('mc.gaps'), fmtNumber(agg.totals.gaps || 0)) +
+    ovStat(t('mc.evidence'), fmtNumber(agg.totals.evidence_total || 0)) +
+    '</div>' +
+
+    '<div class="card"><div class="card-head"><h2>' + esc(t('ov.overview')) + '</h2>' +
+    '<a class="small" href="#/courses">' + esc(t('mc.open')) + ' →</a></div>' +
+    (agg.rows.length
+      ? agg.rows.map((row) =>
+          ovCourseRow(row, row.course_id === state.courseId)).join('')
+      : emptyState(t('mc.empty'))) +
+    '<p class="tiny muted">' + esc(t('ov.summaryNote')) + '</p>' +
+    '</div>'
+  );
+}
+
+/** 单课程口径的概览页 (state.scope 指到一门课时的筛选视图, 任务书 §6)。 */
+async function pageDashboardCourse(courseId) {
+  const data = await api('/dashboard', { query: { course_id: courseId } });
+  if (data.course_id && data.course_id !== state.courseId) setCourse(data.course_id);
+  pageDashboardCourseBody(data);
+}
 async function pageDashboard() {
   markActiveNav('#/');
-  const data = await api('/dashboard', { query: { course_id: state.courseId } });
-  if (data.course_id && data.course_id !== state.courseId) setCourse(data.course_id);
+  // 概览是全局页: 默认 "全部课程"; 顶栏选择器 (state.scope) 可以把它筛成
+  // 单课程。scope 指向的课程必须还在课程列表里, 否则回退到全部 —— 失效的
+  // 筛选不应该是"卡住的页面"。
+  const scope = currentScope();
+  if (scope && __courseCache.length &&
+      !__courseCache.some((c) => c.course_id === scope)) {
+    setScope('all');
+  }
+  const effective = currentScope();
+  if (!effective) {
+    if (!__courseCache.length) {
+      // 课程列表还没加载 (loadSidebar 之前 / 失败): 退回"当前课程"口径的旧
+      // 请求, 仍然能渲染出有意义的一屏, 而不是空白或报错。
+      await pageDashboardCourse(state.courseId);
+      return;
+    }
+    await pageDashboardGlobal();
+    return;
+  }
+  await pageDashboardCourse(effective);
+}
 
+/**
+ * 单课程概览的**渲染体** (入参 = ``/api/dashboard`` 的响应)。
+ *
+ * 与取数分开成两个函数: ``pageDashboardCourse()`` 从 scope 筛选进入时,
+ * 课程列表已经加载过; 而 route() 首屏 (loadSidebar 之前的兜底) 也可能直接
+ * 拿着当前课程进来 —— 两种入口共用同一个渲染, 只有一次取数。
+ */
+function pageDashboardCourseBody(data) {
   if (!data.courses.length) {
     // 零课程 = 新用户的第一屏。
     //
@@ -80,7 +211,11 @@ async function pageDashboard() {
   setView(
     '<div class="page-head">' +
     '<h1>' + t('概览') + '</h1>' +
-    '<p class="subtitle">' + t('课程 ') + '<strong>' + esc(courseLabel(courseId)) + '</strong> · ' +
+    '<p class="subtitle">' +
+    // scope 筛选视图: 明确这是"某一门课"的概览, 并给出回到全部的出口。
+    (currentScope()
+      ? esc(courseLabel(courseId)) + ' · <a href="#/">' + esc(t('scope.viewAll')) + '</a>'
+      : '') +
     esc(data.courses.length) + t(' 门课程 · v') + esc(data.version) + '</p>' +
     '</div>' +
 
@@ -252,8 +387,17 @@ async function pageDashboard() {
 
 async function pageToday() {
   markActiveNav('#/today');
+  // 今日 = 全局页 (2026-09-22): 默认**不传 course_id** —— 后端按全部课程聚合
+  // (student_today_view.py 的既有能力); state.scope 只作本页筛选 (任务书 §11)。
+  // scope 失效 (课程被删) 时归位到全部, 而不是卡在 404 上。
+  const scope = currentScope();
+  if (scope && __courseCache.length &&
+      !__courseCache.some((c) => c.course_id === scope)) {
+    setScope('all');
+  }
+  const effective = currentScope();
   const query = {};
-  if (state.courseId) query.course_id = state.courseId;
+  if (effective) query.course_id = effective;
   const data = await api('/student-today', { query });
 
   const counts = data.counts || {};
@@ -282,20 +426,54 @@ async function pageToday() {
     '#/courses/' + encodeURIComponent(courseId) + '/knowledge/' + encodeURIComponent(kpId);
 
   // ---- Today's Classes ------------------------------------------------
-  const classesHtml = classes.length
-    ? '<table class="data">' + tableCaption(t('today.classesCard')) + '<thead><tr><th scope="col">' + t('class.session') + '</th><th scope="col">' +
+  //
+  // 全部课程口径下按课程分组 (任务书 §9): 只显示**今天真的有课**的课程,
+  // 没课的课程不出空卡片; 单课程筛选时仍是一张平表 (课程名在副标题里)。
+  // 分组是**渲染层**对后端已给数据的重组, 不发第二个请求。
+  function groupedClassesHtml() {
+    if (data.course_id) {
+      return classesTable(classes);
+    }
+    const byCourse = [];
+    const index = {};
+    for (const row of classes) {
+      const key = row.course_id || '';
+      if (index[key] === undefined) {
+        index[key] = byCourse.length;
+        byCourse.push({
+          course_id: row.course_id,
+          course_name: row.course_name || '',
+          sessions: [],
+        });
+      }
+      byCourse[index[key]].sessions.push(row);
+    }
+    return byCourse.map((group) => (
+      '<div class="today-group"><h3>' + esc(group.course_name || '') + '</h3>' +
+      classesTable(group.sessions) + '</div>'
+    )).join('');
+  }
+
+  /** 今日课堂表 (分组内外共用同一张表结构, 无第二份列定义)。 */
+  function classesTable(rows) {
+    return '<table class="data">' + tableCaption(t('today.classesCard')) + '<thead><tr><th scope="col">' + t('class.session') + '</th><th scope="col">' +
       t('common.status') + '</th><th scope="col" class="num">' + t('course.knowledge') +
       '</th><th scope="col" class="num">' + t('course.pendingReview') +
       '</th></tr></thead><tbody>' +
-      classes.map((s) => (
+      rows.map((s) => (
         '<tr><td><a href="#/courses/' + encodeURIComponent(s.course_id) + '/sessions/' +
         encodeURIComponent(s.session_id) + '">' + esc(s.title || t('(无标题)')) + '</a>' +
-        '<div class="tiny muted">' + esc(s.course_name || '') +
-        (s.date ? ' · ' + esc(s.date) : '') + '</div></td>' +
+        '<div class="tiny muted">' +
+        (data.course_id ? esc(s.course_name || '') : '') +
+        (s.date ? (data.course_id ? ' · ' : '') + esc(s.date) : '') + '</div></td>' +
         '<td>' + pill(sessionStatusLabel(s.status), s.status) + '</td>' +
         '<td class="num">' + esc((s.counts || {}).knowledge_points || 0) + '</td>' +
         '<td class="num">' + esc((s.counts || {}).pending_review || 0) + '</td></tr>'
-      )).join('') + '</tbody></table>'
+      )).join('') + '</tbody></table>';
+  }
+
+  const classesHtml = classes.length
+    ? groupedClassesHtml()
     : emptyState(t('today.noSessions'));
 
   // ---- Your Study (来自 StudyPlan, 不重新生成) --------------------------
@@ -423,10 +601,12 @@ async function pageToday() {
   setView(
     '<div class="page-head"><h1>' + t('today.studentTitle') + '</h1>' +
     '<p class="subtitle mono small">' + esc(data.date || '—') + ' · ' +
-    esc(t('today.subtitle')) +
+    // 全部课程 / 单课程筛选: 与真实请求口径一致 (跟着 data.course_id 走,
+    // 而不是猜)。筛选视图给一个回全部的出口。
     (data.course_id
-      ? ' · <a href="#/today">' + t('today.allCourses') + '</a>'
-      : ' · ' + t('today.allCourses')) +
+      ? esc(courseLabel(data.course_id)) + ' · <a href="#/today">' +
+        esc(t('scope.viewAll')) + '</a>'
+      : esc(t('today.allCourses'))) +
     '</p>' +
     // Task 66: 「开始今天的学习」入口。词条 today.startStudy 早在 Task 56
     // 就写好了三语版本 —— 但**从来没有任何渲染代码用过它**, 于是这条
@@ -450,7 +630,7 @@ async function pageToday() {
 
     '<div class="grid grid-2">' +
 
-    // 63.11 - Today's Classes
+    // 63.11 - Today's Classes: 全部课程口径下按课程分组渲染。
     '<div class="card"><div class="card-head"><h2>' + t('today.classesCard') + '</h2>' +
     (counts.classes_today
       ? '<span class="small muted">' + esc(counts.classes_today) + '</span>'

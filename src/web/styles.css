@@ -269,6 +269,37 @@ h3 { font-size: 14px; margin: 0 0 6px; }
 }
 .mc-axis > .tiny { margin-right: 2px; }
 
+/* 2026-09-22 全局概览的课程概况 (ov.*): 每门课一行, 名称/课堂数在首行,
+   计数徽章在次行。整行是进课程详情的链接 —— hover 反馈让"可点"可见。 */
+.ov-row {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.ov-row:hover { background: var(--surface-2); }
+.ov-row-current { border-left: 3px solid var(--accent); }
+.ov-row-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.ov-row-counts {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-top: 6px;
+}
+
+/* 今日页按课程分组的分组头。没课的课程不出组 —— 空态只在整体没课时出现。 */
+.today-group { margin-bottom: 12px; }
+.today-group:last-child { margin-bottom: 0; }
+.today-group h3 {
+  margin: 0 0 6px; font-size: 15px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+
 .grid { display: grid; gap: 14px; }
 .grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
 .grid-3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
@@ -420,14 +451,18 @@ label.field input, label.field select, label.field textarea { width: 100%; }
 
 /* guia docent 卡片 (课程页, metadata.guia_* 驱动)。
  *
- * 基本信息 facts 用 4 列网格而不是通用 .kv 两列 —— 这里全是短值
- * (6 / 2026/2027 / FB / 2), 四列铺满卡宽, 两列会留一半空白。
- * 窄屏收两列。小节标题 (h3) 用大写小字号分隔条样式, 与 .kv-group-label
- * 同一视觉词汇。嵌套列表 (Bloc > 条目) 去默认缩进, 只留一层项目符号。 */
-.guia-facts { grid-template-columns: repeat(4, max-content) minmax(0, 1fr); gap: 4px 18px; }
+ * 弹窗顶部基本信息用两组成对的 dt/dd —— 标准两列×2 网格:
+ * label 列 auto (跟随内容), 值列 minmax(0, 1fr) (可收缩, 长值如学位名
+ * 自然换行, 不挤压同行其它字段)。奇数个字段时最后一行自动落位。
+ * 窄屏收单组两列。小节标题 (h3) 用大写小字号分隔条样式,
+ * 与 .kv-group-label 同一视觉词汇。嵌套列表 (Bloc > 条目) 去默认缩进,
+ * 只留一层项目符号。 */
+.guia-facts { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 4px 18px; }
 .guia-facts span { display: contents; }
+.guia-facts dt { overflow-wrap: anywhere; }
+.guia-facts dd { min-width: 0; }
 @media (max-width: 720px) {
-  .guia-facts { grid-template-columns: repeat(2, max-content) minmax(0, 1fr); }
+  .guia-facts { grid-template-columns: auto minmax(0, 1fr); }
 }
 .guia-section-title {
   font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
@@ -439,28 +474,50 @@ label.field input, label.field select, label.field textarea { width: 100%; }
 .guia-list li { margin: 2px 0; font-size: 13px; }
 .guia-source { margin-top: 14px; overflow-wrap: anywhere; }
 
-/* 页头的 guia 精简摘要 (替代教师/学期/课程语言三行)。
- * 两行文字 + 一个按钮, 紧凑; 学分加粗便于扫读。 */
-.guia-brief { display: grid; gap: 2px; justify-items: start; }
-.guia-brief-main { margin: 0; font-size: 13px; }
-.guia-brief-main b:first-child { font-weight: 600; }
-.guia-brief-people { margin: 0; color: var(--text-muted); }
+/* 页头的 guia 精简信息 (替代教师/学期/课程语言三行)。
+ * 复用通用 .kv 两列网格 —— 与原三行完全同构, 只是内容来自 guia docent。
+ * guia-brief 的 dd 里可能有 mailto 链接, 继承全局链接色即可。 */
+.guia-brief { margin: 6px 0 10px; }
+.guia-brief dd { color: var(--text); }
 
-/* 折叠卡片: summary 行就是原来的 card-head (标题 + 学年),
- * 加右侧「点击展开全文」提示; ::marker 换成加号, 展开时变减号。 */
-.guia-fold > summary {
+/* guia docent 弹窗: 全屏遮罩 + 居中面板, 内容超长时面板内部滚动。
+ * z-index 取 60 (与 toast 同层) —— toast 在弹窗打开时也要能浮上来。
+ * 显隐走 .hidden 工具类。
+ * 注意顺序: .hidden 必须写在 .modal-mask **之后** —— 两者同优先级
+ * (都是单 class 选择器), CSS 里后写的赢; 写在前面会被 .modal-mask 的
+ * display: flex 覆盖, 弹窗永远关不上 (真实回归, 无头验证过)。 */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 4vh 16px;
+  overflow-y: auto;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  max-width: 720px; width: 100%;
+  margin: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.modal-head {
   display: flex; align-items: baseline; gap: 10px;
-  cursor: pointer; list-style: none;
+  padding: 14px 18px 8px;
+  border-bottom: 1px solid var(--border);
 }
-.guia-fold > summary::-webkit-details-marker { display: none; }
-.guia-fold > summary::before {
-  content: '+'; color: var(--text-muted); font-weight: 700;
+.modal-head h2 { margin: 0; }
+.modal-close {
+  margin-left: auto;
+  font-size: 18px; line-height: 1; padding: 2px 8px;
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
 }
-.guia-fold[open] > summary::before { content: '\2212'; }
-.guia-fold > summary:hover .guia-fold-title { color: var(--accent); }
-.guia-fold-title { font-size: 16px; font-weight: 700; }
-.guia-fold-hint { margin-left: auto; font-size: 12px; color: var(--text-muted); }
-.guia-fold[open] .guia-fold-hint { visibility: hidden; }
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 12px 18px 18px; }
+@media (max-width: 560px) {
+  .modal-mask { padding: 2vh 8px; }
+}
+.hidden { display: none; }
 
 /* 材料表的补充说明块 (D1 警告 + D4 零证据提示)。
  *
@@ -497,6 +554,102 @@ table.data tbody tr.material-note > td {
 /* 说明行是附注, 不是可点的数据行 —— 悬停不做高亮, 免得与"下一条材料"
  * 的悬停反馈混淆 (td 自带底色, 会盖住 tr:hover 的底色, 这里显式钉住)。*/
 table.data tbody tr.material-note:hover > td { background: var(--surface-2); }
+
+/* 课堂列表 (2026-09-22 第二轮改版): 月份切换 + 同日合并 + 紧凑行。
+ *
+ * 上一版把 8 列大表格改成了"日期分组 + 一节一张卡", 层级清楚了, 但一学期
+ * 28 节课照样从头排到尾 —— 一屏多高, 要一直滚才找得到 12 月的课。这一版:
+ * 一屏只画**一个月** (顶部切换条), 同一天的课合并进同一张卡, 每节课压成两行。
+ * 三件事都是为了"页面高度与信息量成正比"。
+ *
+ * 结构: .session-months (切换条) → .session-day (一天) → .session-day-card
+ *       (当天的卡) → .session-row (一节课)
+ *
+ * 整行可点: 锚点 ::after 拉伸盖住**本行** (定位祖先 = .session-row, 不是整天
+ * 那张卡 —— 否则第 1 行的命中区会盖住第 2 行)。「整堂处理」按钮是锚点的**兄弟
+ * 节点**并抬到 z-index: 1: 不嵌在 <a> 里 (嵌套交互元素既有语义问题, 一次点击
+ * 又会同时触发按钮与跳转)。窄屏 (<=560px) 行内换行, 不产生横向滚动。 */
+.session-summary { margin: 2px 0 10px; }
+
+/* 月份切换条: 按钮沿用全局 button 样式, 只收窄内边距 —— 一排月份是"选项",
+   不是主操作, 不该抢过页面里的动作按钮。当前月份由 [aria-current="true"]
+   高亮: 语义属性同时是视觉取值的唯一来源, 不存在"类名与 aria 不同步"。 */
+.session-months { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.session-month { padding: 4px 11px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.session-month[aria-current="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+.session-month-note { margin: 0 0 10px; }
+
+.session-day + .session-day { margin-top: 14px; }
+.session-day-head {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+/* 一天一张卡。overflow: hidden 让行分隔线不越过圆角。 */
+.session-day-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+/* 一节课一行 (两行文字 + 右侧按钮)。行内换行只在窄屏发生。 */
+.session-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+/* 同一天的第二节及以后: 一条分隔线, 不是又一张卡。 */
+.session-row + .session-row { border-top: 1px solid var(--border); }
+/* 悬停反馈给**行**: 一张卡里有多行时, 必须看得出点的是哪一行 (卡级 hover
+   会让整张卡一起亮, 用户仍然不知道会打开哪一节)。 */
+.session-row:hover { background: var(--surface-2); }
+.session-row-main {
+  flex: 1 1 auto;
+  min-width: 0; /* 长教师名 / 长教室名可收缩折行, 不把行撑出视口 */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+/* 整行可点: 把锚点的命中区拉伸到本行 (定位祖先 = .session-row)。 */
+.session-row-main::after { content: ""; position: absolute; inset: 0; }
+/* 悬停反馈不刷下划线 —— 锚点盖着整行, 全局 a:hover 的下划线会落到每一段文字
+   上; 这里只保留行底色 (见 .session-row:hover)。 */
+.session-row-main:hover { text-decoration: none; }
+.session-row-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.session-time { font-weight: 600; font-variant-numeric: tabular-nums; }
+.session-kind { font-weight: 600; }
+.session-title { font-weight: 600; font-size: 14px; color: var(--text); }
+.session-row-sub { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.session-who { color: var(--text-muted); font-size: 13px; }
+/* 材料状态靠右, 与第一行的「整堂处理」同一条视觉竖线。 */
+.session-row-sub .pill { margin-left: auto; }
+.session-row-meta { line-height: 1.4; }
+.session-row-action {
+  position: relative;
+  z-index: 1; /* 抬到拉伸锚点之上 —— 否则点按钮变成跳转 */
+  align-self: center;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+@media (max-width: 560px) {
+  .session-row { flex-wrap: wrap; }
+  .session-row-action { margin-left: auto; }
+}
 
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 

@@ -226,9 +226,9 @@ function guiaAssessmentTable(items, caption) {
  *
  * 用户反馈: 全部展开太占空间 (卡片高 3696px)。改为 ``<details>`` 默认收起,
  * summary 行显示标题 + 学年; 正文全部藏进去, 点 summary 或页头的
- * 「查看详情」按钮展开。数据不变, 只是默认不铺开。
+ * 「查看详情」按钮打开。数据不变, 只是装进弹窗。
  */
-function guiaDocentCard(metadata) {
+function guiaDocentModal(metadata) {
   if (!hasGuia(metadata)) return '';
   const g = metadata;
 
@@ -254,20 +254,33 @@ function guiaDocentCard(metadata) {
   const team = guiaList(g.guia_teaching_team);
   const outcomes = guiaList((g.guia_learning_outcomes || []).map((o) =>
     (o && o.code ? o.code + ' — ' : '') + (o && o.text ? o.text : '')));
-  const blocks = guiaList((g.guia_syllabus || []).map((b) =>
-    (b && b.title ? b.title : '') + (b && b.items && b.items.length
-      ? '<ul class="guia-list">' + b.items.map((it) => '<li>' + esc(it) + '</li>').join('') + '</ul>' : '')));
+  // Bloc 列表是「标题 + 可选嵌套条目」的两层结构, 不能把拼好的 <ul> 塞进
+  // guiaList (它会把整个字符串 esc 成可见文本 —— 双重转义)。这里直接构建,
+  // 每个动态片段单独转义; 嵌套 <ul> 继承 .guia-list ul 的样式。
+  const blocks = (g.guia_syllabus || []).length
+    ? '<ul class="guia-list">' +
+      g.guia_syllabus.map((b) =>
+        '<li>' + esc((b && b.title) || '') +
+        (b && b.items && b.items.length
+          ? '<ul>' + b.items.map((it) => '<li>' + esc(it) + '</li>').join('') + '</ul>'
+          : '') +
+        '</li>').join('') +
+      '</ul>'
+    : '';
   const hours = (g.guia_teaching_hours || []).length
     ? guiaList(g.guia_teaching_hours.map((h) =>
         (h.title || '') + ' — ' + (h.hours !== undefined ? h.hours : '—') + ' h / ' +
         (h.ects !== undefined ? h.ects : '—') + ' ECTS')) : '';
 
-  return '<div class="card" id="guia-docent">' +
-    '<details class="guia-fold">' +
-    '<summary><span class="guia-fold-title">' + t('guia.title') + '</span>' +
+  return '<div class="modal-mask hidden" id="guia-docent" role="dialog" aria-modal="true" ' +
+    'aria-label="' + esc(t('guia.title')) + '">' +
+    '<div class="modal">' +
+    '<div class="modal-head"><h2>' + t('guia.title') + '</h2>' +
     (g.guia_academic_year ? '<span class="tiny muted">' + esc(g.guia_academic_year) + '</span>' : '') +
-    '<span class="guia-fold-hint">' + t('guia.foldHint') + '</span>' +
-    '</summary>' +
+    '<button type="button" class="modal-close" data-action="close-guia" aria-label="' +
+    esc(t('common.close')) + '">\u00d7</button>' +
+    '</div>' +
+    '<div class="modal-body">' +
     (facts ? '<dl class="kv guia-facts">' + facts + '</dl>' : '') +
     contact +
     guiaSection(t('guia.team'), team) +
@@ -281,6 +294,8 @@ function guiaDocentCard(metadata) {
       guiaAssessmentTable(g.guia_assessment_items, t('guia.assessment'))) +
     (g.guia_assessment_note ? '<p class="tiny muted">' + esc(g.guia_assessment_note) + '</p>' : '') +
     guiaSection(t('guia.assessmentItems'), guiaList(g.guia_assessment_items_detail)) +
+    guiaSection(t('guia.assessmentRequirements'),
+      g.guia_assessment_requirements ? '<p class="small">' + esc(g.guia_assessment_requirements) + '</p>' : '') +
     guiaSection(t('guia.passRequirements'), g.guia_pass_requirements ? '<p class="small">' + esc(g.guia_pass_requirements) + '</p>' : '') +
     guiaSection(t('guia.recovery'), g.guia_recovery ? '<p class="small">' + esc(g.guia_recovery) + '</p>' : '') +
     guiaSection(t('guia.aiPolicy'), g.guia_ai_policy ? '<p class="small">' + esc(g.guia_ai_policy) + '</p>' : '') +
@@ -302,57 +317,525 @@ function guiaDocentCard(metadata) {
             '<td>' + esc(row.shift || '') + '</td></tr>'
           )).join('') + '</tbody></table>')
       : '') +
+    (g.guia_groups_note ? '<p class="tiny muted">' + esc(g.guia_groups_note) + '</p>' : '') +
     (g.guia_source ? '<p class="tiny muted guia-source">' + esc(g.guia_source) + '</p>' : '') +
-    '</details>' +
+    '</div>' +
+    '</div>' +
     '</div>';
 }
 
 /**
- * 页头的 guia docent **精简摘要** (替代教师/学期/课程语言三行)。
+ * 页头的 guia docent **精简信息** (替代教师/学期/课程语言三行)。
  *
- * 只放三样最有用的: 学分 + 学年 + 学位 (一行) / 联系人与教学团队 (一行) /
- * 「查看详情」按钮 (展开下面的折叠卡片并滚过去)。课程语言不重复显示 ——
- * 副标题 courseIdentity 已经有 code · language。
+ * 用户要求「具体信息, 直白明确」: 做成带标签的字段行 (教师 / 教学团队 /
+ * 学年 / 学分 / 学位), 每个值都是原文, 不再塞成一整段。联系人带 mailto
+ * 链接 —— **先拼好 HTML, 整行不再重复转义**: 上一版把拼好的 ``<a>``
+ * 又 esc() 一遍, 页面直接显示 ``<a href=...>`` 原文 (真实回归, 已修)。
  */
 function guiaBrief(metadata) {
   if (!hasGuia(metadata)) return '';
   const g = metadata;
-  const mainParts = [];
-  if (g.guia_credits) mainParts.push(esc(g.guia_credits) + ' ECTS');
-  if (g.guia_academic_year) mainParts.push(esc(g.guia_academic_year));
-  if (g.guia_degree) {
-    const suffix = [g.guia_degree_type, g.guia_year]
-      .filter((part) => part !== undefined && part !== null && part !== '')
-      .map(esc).join(' · ');
-    mainParts.push(esc(g.guia_degree) + (suffix ? ' (' + suffix + ')' : ''));
-  }
-  const contact = g.guia_contact_name
-    ? (g.guia_contact_email
-      ? '<a href="mailto:' + esc(g.guia_contact_email) + '">' + esc(g.guia_contact_name) + '</a>'
-      : esc(g.guia_contact_name))
-    : '';
-  const peopleParts = [contact]
-    .concat(g.guia_teaching_team || [])
-    .filter((part) => part !== '' && part !== null && part !== undefined)
-    .map(esc)
-    .join(' · ');
-  return '<div class="guia-brief">' +
-    (mainParts.length ? '<p class="guia-brief-main"><b>' + mainParts.join('</b> · <b>') + '</b></p>' : '') +
-    (peopleParts ? '<p class="guia-brief-people small">' + peopleParts + '</p>' : '') +
+  const row = (label, valueHtml) =>
+    valueHtml ? '<span><dt>' + esc(label) + '</dt><dd>' + valueHtml + '</dd></span>' : '';
+
+  const contactHtml = g.guia_contact_email
+    ? '<a href="mailto:' + esc(g.guia_contact_email) + '">' +
+      esc(g.guia_contact_name || g.guia_contact_email) + '</a>'
+    : esc(g.guia_contact_name || '');
+  const teamHtml = (g.guia_teaching_team || []).map((name) => esc(name)).join(' · ');
+
+  return '<dl class="kv guia-brief">' +
+    row(t('course.teacher'), contactHtml) +
+    row(t('guia.team'), teamHtml) +
+    row(t('guia.academicYear'), esc(g.guia_academic_year || '')) +
+    row(t('guia.credits'), g.guia_credits ? esc(g.guia_credits) + ' ECTS' : '') +
+    row(t('guia.degree'), esc(g.guia_degree || '')) +
+    '</dl>' +
     '<button type="button" class="small" data-action="open-guia">' +
-    t('guia.details') + ' ↓</button>' +
+    t('guia.details') + '</button>';
+}
+
+/**
+ * 弹窗的开关与关闭。
+ *
+ * 四条真实接线: 「查看详情」打开; 右上角 × 关闭; 直接点在遮罩上关闭;
+ * Esc 键关闭。处理器每次渲染都重新挂 —— route() 重绘 #view 后旧节点已
+ * 脱离文档, 不清理的话按钮会越积越多。
+ */
+function wireGuiaBrief() {
+  const open = document.querySelector('[data-action="open-guia"]');
+  const modal = document.getElementById('guia-docent');
+  if (!modal) return;
+  const close = () => { modal.classList.add('hidden'); };
+  if (open) {
+    open.addEventListener('click', () => modal.classList.remove('hidden'));
+  }
+  const closeButton = modal.querySelector('[data-action="close-guia"]');
+  if (closeButton) closeButton.addEventListener('click', close);
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) close();
+  });
+  modal.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') close();
+  });
+}
+
+// ---- 课堂列表 (2026-09-22 两轮重设计: 8 列大表格 → 日期分组卡片 → 月度视图) --
+//
+// 第一轮: 旧版课堂列表是一张大表格 —— 一次画几十行, 每行 8 列 (# / 标题 /
+// 日期 / 状态 / 材料 / 知识点 / 待审核 / 操作), 行与行没有视觉层次, 后台字段
+// 挤在一起。用户反馈"更像数据库管理台, 不像课堂助手", 于是改成"日期分组 +
+// 卡片", 层级是清楚了。
+//
+// 第二轮 (本版): 卡片版仍然**一学期一次性铺开** —— 28 节课排成一屏多高的长
+// 列表, 用户要一直滚才找得到 12 月的课; 每张卡又各自顶着一圈留白。课表是
+// **有明确日期范围**的数据, 不是无穷流: 该让用户自己选时间范围, 而不是靠
+// 无限滚动去猜他要找哪一段。所以这一版做三件事:
+//
+//   1. **月份切换** (sessionMonthNav): 一屏只画一个月, 顶部一排月份按钮,
+//      默认落在当前月 (当前月没课就落最近的有课月份);
+//   2. **同一天合并成一张卡** (sessionDayCard): 一天两三节课不再各占一张卡,
+//      行与行之间只用一条分隔线;
+//   3. **每节课压成两行** (sessionRow): 时间 + 类型 / 教师 · 教室 + 材料状态,
+//      按钮移到行的右侧 —— 与需求给的目标版式逐项对应。
+//
+// 信息层级 (自上而下):
+//
+//     28 节课堂 · 2026-09-09 → 2026-12-09      ← 整门课 (始终可见)
+//     [ 9月 ] [ 10月 ] [ 11月 ] [ 12月 ]        ← 月份切换, 当前月高亮
+//     2026年9月 · 8 节课堂                      ← 现在看的是哪一段
+//     09/09 · 周三                              ← 日期分组 (沿用)
+//     +----------------------------------------------+
+//     | 15:00–17:00 [Teoria]             整堂处理     | ← 时间 + 类型 + 操作
+//     | Dario Cottava · Aula Q1/1007  尚未添加材料    | ← 教师 · 教室 + 状态
+//     +----------------------------------------------+
+//     | 17:00–19:00 [Pràctiques]         整堂处理     |
+//     | Dario Cottava · Aula Q1/0011  尚未添加材料    |
+//     +----------------------------------------------+
+//
+// 功能不减: 整行链接进课堂详情 (href 与旧表格完全一致)、「整堂处理」按钮
+// (data-action="process-session", app.js 的 confirmDestructive 接线不动)、
+// 材料 / 知识点 / 待审核计数全部保留 —— 只是不再各占一行/一列。
+//
+// 月份完全由前端从 ``date`` 派生: 后端只给每个课堂一个 ``YYYY-MM-DD``,
+// 没有"学期""月份"这类字段, 也不需要新增 (见下方 uiLocale / monthOrdinal)。
+//
+// 标题数据: ClassSession 只有 session_number / date / title 三个可写字段,
+// 课表种子脚本把 "时间 类型 | 教师 | 教室" 整个编码进 title。parseSessionTitle
+// 把它拆回结构化字段; 更重要的是它**绝不渲染技术占位符** —— 旧种子脚本曾在
+// 教师位写过技术占位串 (转录课表图时教师栏不可见), 数据源已修 (脚本不再产出,
+// 库内 28 条已由 temp/fix_session_titles.py 清洗), 这里再兜一层尚未迁移的旧库。
+
+//: 历史种子脚本在"教师未知"时写入的技术占位串 —— 绝不渲染给用户。
+const SESSION_TITLE_PLACEHOLDER = '图中未显示';
+
+/**
+ * 把编码进 title 的课表行拆成结构化字段。
+ *
+ * 种子格式: ``15:00–17:00 Teoria | Hiyern Yoon; Genís Riba | Aula Q2/1009``。
+ *
+ * - ``time`` / ``kind`` 来自首段的 "HH:MM–HH:MM + 类型" 前缀;
+ * - ``mid`` 是中间段 (教师) —— 它是原始标题里唯一的"人话"部分, 卡片标题行
+ *   优先显示它;
+ * - ``room`` 是末段; 两段式 (教师段已被清洗掉) 里靠 ``Aula/Aules`` 前缀识别
+ *   教室, 认不出来就当 mid, 不猜;
+ * - 空段与技术占位段直接丢弃 —— 这是"图中未显示"的渲染侧防线;
+ * - 不匹配种子格式的标题 (如手工建的 "Tema 3") 原样放进 ``head``, 不猜结构。
+ *
+ * 返回的 ``head`` = 首段去掉时间前缀后的文本 (无前缀时就是首段本身)。
+ */
+function parseSessionTitle(rawTitle) {
+  const text = String(rawTitle || '').trim();
+  const out = { text, time: '', kind: '', mid: '', room: '', head: text };
+  if (!text) return out;
+  const parts = text.split('|')
+    .map((part) => part.trim())
+    .filter((part) => part && part !== SESSION_TITLE_PLACEHOLDER);
+  if (!parts.length) return out;
+  const head = parts[0];
+  out.head = head;
+  const timeMatch = /^(\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2})\s+(.*)$/.exec(head);
+  if (timeMatch) {
+    out.time = timeMatch[1].replace(/\s+/g, '');
+    out.kind = timeMatch[2].trim();
+    out.head = out.kind;
+  }
+  const tail = parts.slice(1);
+  if (tail.length === 1) {
+    // 两段式 (教师段已清洗): 末段像 "Aula/Aules …" 才算教室。
+    // 拼写注意: 是 Aula + 可选 s (= Aulas?), **不是** Aules? —— 后者匹配
+    // "Aule", 第 4 字母对不上 (2026-09-22 实测: 整段被误当 mid, 教室丢了)。
+    // 不用 \b, 用负向前瞻: "Aula(s)" 后必须不是字母数字。
+    if (/^Aulas?(?![A-Za-z0-9])/i.test(tail[0])) out.room = tail[0];
+    else out.mid = tail[0];
+  } else if (tail.length >= 2) {
+    out.mid = tail.slice(0, -1).join('; ');
+    out.room = tail[tail.length - 1];
+  }
+  return out;
+}
+
+/**
+ * 按 ``date`` 分组: 有日期的组按日期升序 (ISO 字符串比较 = 时间序),
+ * 组内保持后端顺序 (list_sessions 已按 session_number 全序排列);
+ * 没有日期的排最后单独一组, 且不画组头 —— 它们没有可分组的键。
+ */
+function sessionDayGroups(sessions) {
+  const byDate = [];
+  const indexOf = {};
+  sessions.forEach((s) => {
+    const date = String(s.date || '');
+    const key = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '';
+    if (!(key in indexOf)) {
+      indexOf[key] = byDate.length;
+      byDate.push({ date: key, items: [] });
+    }
+    byDate[indexOf[key]].items.push(s);
+  });
+  const dated = byDate.filter((group) => group.date)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return dated.concat(byDate.filter((group) => !group.date));
+}
+
+/**
+ * 日期组头: ``09/09 · 周三``。
+ *
+ * 日期部分取原文 (ISO 切片, 与界面语言无关); 星期按界面语言走 Intl ——
+ * 失败只丢星期, 绝不丢日期。用年月日构造**本地时区**日期:
+ * ``new Date('2026-09-09')`` 是 UTC 午夜, 西半球会算成前一天的星期。
+ */
+function sessionDayLabel(date) {
+  const short = String(date).slice(5).replace('-', '/');
+  let weekday = '';
+  try {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date));
+    if (m && typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+      weekday = Intl.DateTimeFormat(uiLocale(), { weekday: 'short' })
+        .format(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    }
+  } catch (err) {
+    weekday = '';
+  }
+  return short + (weekday ? ' · ' + weekday : '');
+}
+
+/** 顶部一行 summary: ``28 节课堂 · 2026-09-09 → 2026-12-09``。只有一个日期
+ *  时不画箭头; 一个日期都没有时只报数量, 不留悬空的分隔符。 */
+function sessionListSummary(sessions) {
+  const dates = sessions
+    .map((s) => String(s.date || ''))
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort();
+  let range = '';
+  if (dates.length) {
+    range = dates[0] === dates[dates.length - 1]
+      ? dates[0]
+      : dates[0] + ' → ' + dates[dates.length - 1];
+  }
+  return esc(String(sessions.length)) + esc(t(' 节课堂')) +
+    (range ? ' · ' + esc(range) : '');
+}
+
+// ---- 月份导航 (2026-09-22) ------------------------------------------------
+//
+// 月份是**本地时区下的日历月**, 不是"学期"这类业务概念: 后端只给每个课堂一个
+// ``YYYY-MM-DD``, 月份完全由前端从日期派生。因此这一段**不碰后端、不存库**,
+// 只是把同一份 sessions 数组换个粒度分组。
+
+/** 界面语言 → BCP 47 locale。日期/月份标签一律走 Intl: 手写月份名会在
+ *  (setembre / septiembre) 这类同形不同词的月份上立刻出错。
+ *  sessionDayLabel 也用这一个 (原先各写一份 locale 表)。 */
+function uiLocale() {
+  return { zh: 'zh-CN', es: 'es-ES', ca: 'ca-ES' }[state.lang] || 'zh-CN';
+}
+
+/** ``YYYY-MM-DD`` → ``YYYY-MM``。不是 ISO 日期就返回 '' —— 归不了月的课堂
+ *  另有去处 (见 sessionMonthView 的"日期未定"), 这里**不猜**月份。 */
+function sessionMonthKey(date) {
+  const text = String(date || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text.slice(0, 7) : '';
+}
+
+/** 今天的月份键。用**本地时区** —— ``toISOString()`` 是 UTC, 东八区在每月
+ *  1 日的 08:00 之前会算成上个月 (与 sessionDayLabel 同一条教训)。 */
+function currentMonthKey(now) {
+  const date = now || new Date();
+  const month = date.getMonth() + 1;
+  return date.getFullYear() + '-' + (month < 10 ? '0' : '') + month;
+}
+
+/** ``YYYY-MM`` → 自 1970-01 起的月序号 (整数)。有了它, "隔了几个月"与
+ *  "下一个月"都是普通整数运算, 不用管月末、闰年和跨年。非法值返回 NaN。 */
+function monthOrdinal(month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(month || ''));
+  if (!m) return NaN;
+  const number = Number(m[2]);
+  if (number < 1 || number > 12) return NaN;
+  return Number(m[1]) * 12 + (number - 1);
+}
+
+/** monthOrdinal 的逆运算 (只用于 1970 年之后的月份, 与课表数据的取值域一致)。 */
+function monthKeyOf(ordinal) {
+  const year = Math.floor(ordinal / 12);
+  const month = ordinal - year * 12 + 1;
+  return year + '-' + (month < 10 ? '0' : '') + month;
+}
+
+/**
+ * 按月份分组: ``[{ month: '2026-09', items: [...] }, ...]``, 月份升序。
+ * 没有可用日期的课堂归到 ``month: ''`` 一组, 永远排在最后 —— 它们归不了月,
+ * 但也**绝不隐藏** (见 sessionMonthView)。
+ *
+ * 组内保持后端顺序: ``list_sessions`` 已按 session_number 全序排列, 同一天里
+ * 的先后就是课表顺序, 这里不再重排。
+ */
+function sessionMonthGroups(sessions) {
+  const byMonth = [];
+  const indexOf = {};
+  sessions.forEach((s) => {
+    const key = sessionMonthKey(s.date);
+    if (!(key in indexOf)) {
+      indexOf[key] = byMonth.length;
+      byMonth.push({ month: key, items: [] });
+    }
+    byMonth[indexOf[key]].items.push(s);
+  });
+  const dated = byMonth.filter((group) => group.month)
+    .sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
+  return dated.concat(byMonth.filter((group) => !group.month));
+}
+
+/**
+ * 可切换的月份清单: 从**第一个有课的月**逐月排到**最后一个有课的月**。
+ *
+ * 为什么不是"只列有课的月份": 需求要求"点 12 月而该课 12 月没有课时, 显示
+ * '本月没有安排课堂'而不是空白页"。只列有课的月份时那条分支永远不可达, 而且
+ * 跳过的月份会让用户以为课表漏了一段。首末月份来自真实数据, 中间的空月是
+ * **课表的真实形状** (寒暑假、停课周), 不是编出来的。
+ */
+function sessionMonthTabs(groups) {
+  const months = groups.map((group) => group.month).filter(Boolean);
+  if (!months.length) return [];
+  const first = monthOrdinal(months[0]);
+  const last = monthOrdinal(months[months.length - 1]);
+  const tabs = [];
+  for (let i = first; i <= last; i += 1) tabs.push(monthKeyOf(i));
+  return tabs;
+}
+
+//: 月份标签的 Intl options。中文要 "2026年9月" —— 用 ``month: 'numeric'`` 会
+//: 得到 "2026/9" (Intl 把"年月都是数字"当成日期格式), 必须用 'short'。西语/
+//: 加泰语反过来: 'short' 只有 "sept", 带年份要 'long' 才读得出月份名。
+const SESSION_MONTH_LABELS = {
+  zh: { year: 'numeric', month: 'short' },
+  es: { year: 'numeric', month: 'long' },
+  ca: { year: 'numeric', month: 'long' },
+};
+
+/**
+ * 月份标签。``withYear === false`` 时只给月份 (切换条上的短标签)。
+ *
+ * Intl 不可用或抛异常时退化为 ``YYYY-MM`` —— 绝不抛、绝不猜, 也**不退回中文**:
+ * es/ca 界面上出现中文就是漏译 (scripts/ui_audit.js 有一条专门扫这个)。
+ */
+function sessionMonthLabel(month, withYear) {
+  const text = String(month || '');
+  const m = /^(\d{4})-(\d{2})$/.exec(text);
+  if (!m) return text;
+  try {
+    if (typeof Intl === 'undefined' || !Intl.DateTimeFormat) return text;
+    const lang = SESSION_MONTH_LABELS[state.lang] ? state.lang : 'zh';
+    const options = withYear === false ? { month: 'short' } : SESSION_MONTH_LABELS[lang];
+    return new Intl.DateTimeFormat(uiLocale(), options)
+      .format(new Date(Number(m[1]), Number(m[2]) - 1, 1));
+  } catch (err) {
+    return text;
+  }
+}
+
+/**
+ * 默认展示哪个月: 当前月有课就直接用它; 否则取**离今天最近**的有课月份, 同距
+ * 时取更晚的那个 —— 学期还没开始时应该显示即将到来的月份, 而不是几个月前那个
+ * 已经上完的月份。**不默认展开整个学期** (需求三)。
+ */
+function sessionDefaultMonth(months, todayKey) {
+  if (!months.length) return '';
+  const now = monthOrdinal(todayKey);
+  let best = months[0];
+  let bestGap = Math.abs(monthOrdinal(months[0]) - now);
+  months.slice(1).forEach((month) => {
+    const gap = Math.abs(monthOrdinal(month) - now);
+    if (gap < bestGap || (gap === bestGap && monthOrdinal(month) > monthOrdinal(best))) {
+      best = month;
+      bestGap = gap;
+    }
+  });
+  return best;
+}
+
+//: 课程页当前浏览的月份 (``{ course_id: 'YYYY-MM' }``)。
+//:
+//: **只活在内存里**: 月份是"我正在看课表的哪一段", 不是跨会话偏好。写
+//: localStorage 会让用户下次打开时落在一个几周前的月份上, 而"打开课程页先看
+//: 当前/最近的月份"才是默认预期 (需求三)。刷新即回到默认, 是可预期的。
+let sessionMonthPicks = {};
+
+/**
+ * 决定画哪个月: 用户选过且**仍在可切换范围内**就用它, 否则按"当前月 / 离今天最近
+ * 的月份"算默认 (需求三: 进来先看当前月, 不要默认铺开整学期)。
+ *
+ * 刻意**不写回**默认值: 默认月份每次渲染都按当时的数据与时钟重算 (今天跨月了就该
+ * 显示新的当前月), 只有用户真的点了月份才记进 sessionMonthPicks —— 于是"哪些状态
+ * 是用户设的"始终一目了然, 不会被一次渲染悄悄改写。
+ *
+ * 旧选择落空的处理同理: 课表删掉一整段之后, 画一个不存在的月份不如回到默认。
+ */
+function sessionMonthPlan(courseId, groups) {
+  const tabs = sessionMonthTabs(groups);
+  const picked = sessionMonthPicks[courseId];
+  const selected = tabs.indexOf(picked) >= 0
+    ? picked
+    : sessionDefaultMonth(
+      groups.map((group) => group.month).filter(Boolean), currentMonthKey());
+  return { tabs: tabs, selected: selected };
+}
+
+/** 月份切换条: 当前月份高亮 (``aria-current`` —— 视觉与语义同一处取值, CSS
+ *  直接选 ``[aria-current="true"]``, 不再另加一个"选中"类名去同步)。跨年时
+ *  标签带上年份, 否则 12 月和 1 月看起来像同一个学期里的相邻两个月。 */
+function sessionMonthNav(courseId, tabs, selected) {
+  const multiYear = tabs.some((month) => month.slice(0, 4) !== tabs[0].slice(0, 4));
+  return '<div class="session-months">' + tabs.map((month) => {
+    const on = month === selected;
+    return '<button type="button" class="session-month"' +
+      ' data-action="session-month" data-course="' + esc(courseId) + '"' +
+      ' data-month="' + esc(month) + '"' +
+      (on ? ' aria-current="true"' : '') +
+      ' title="' + esc(sessionMonthLabel(month, true)) + '">' +
+      esc(sessionMonthLabel(month, multiYear)) + '</button>';
+  }).join('') + '</div>';
+}
+
+/** 一堂课的一行 (2026-09-22 第二版: 两行, 按钮在右侧)。整行可点 (stretched
+ *  link 见 styles.css), 「整堂处理」是兄弟节点 —— 按钮**不嵌在 <a> 里**,
+ *  否则一次点击同时触发按钮与跳转。 */
+function sessionRow(courseId, session) {
+  const parsed = parseSessionTitle(session.title);
+  const counts = session.counts || {};
+  // 第一层的主标签: 课表种子里的类型 (Teoria / Pràctiques d'Aula) 优先; 手工建
+  // 的课堂 (如 "Tema 3") 没有类型段, 退回整段标题。
+  const primary = parsed.kind || parsed.head || '';
+  // 第二层: 教师段 (mid) 与教室段 (room) 拼一行, 缺一段就只画另一段。
+  // 教师不再单独占一行 —— 它和教室属于同一层信息。
+  const who = [parsed.mid, parsed.room].filter(Boolean).join(' · ');
+  const href = '#/courses/' + encodeURIComponent(courseId) +
+    '/sessions/' + encodeURIComponent(session.session_id);
+  const meta = [];
+  if (counts.materials) {
+    meta.push(esc(t('材料')) + ' ' + esc(String(counts.materials)));
+  }
+  if (counts.knowledge_points) {
+    meta.push(esc(t('course.knowledge')) + ' ' + esc(String(counts.knowledge_points)));
+  }
+  if (counts.pending_review) {
+    meta.push(esc(t('course.pendingReview')) + ' ' + esc(String(counts.pending_review)));
+  }
+  return '<div class="session-row">' +
+    '<a class="session-row-main" href="' + href + '">' +
+    '<div class="session-row-top">' +
+    (parsed.time ? '<span class="session-time">' + esc(parsed.time) + '</span>' : '') +
+    // 类型画成徽章 (一眼分辨 Teoria / Pràctiques); 自由标题没有类型可言, 就画
+    // 成普通文本 —— 给 "Tema 3" 套一个类型徽章会假装它是课程类型。
+    (parsed.kind
+      ? '<span class="pill pill-accent session-kind">' + esc(parsed.kind) + '</span>'
+      : '<span class="session-title">' + esc(primary || t('未命名课堂')) + '</span>') +
+    '</div>' +
+    '<div class="session-row-sub">' +
+    (who ? '<span class="session-who">' + esc(who) + '</span>' : '') +
+    pill(sessionStatusLabel(session.status), session.status) +
+    '</div>' +
+    // 计数只在非 0 时出现 —— "材料 0 · 知识点 0" 是噪音, 不是信息。
+    (meta.length
+      ? '<div class="session-row-meta tiny muted">' + meta.join(' · ') + '</div>'
+      : '') +
+    '</a>' +
+    '<button type="button" class="session-row-action" data-action="process-session"' +
+    ' data-course="' + esc(courseId) + '" data-session="' + esc(session.session_id) + '">' +
+    t('整堂处理') + '</button>' +
     '</div>';
 }
 
-/** 「查看详情」按钮: 展开折叠卡片并滚过去 (summary 本身也可以点, 这是快捷键)。 */
-function wireGuiaBrief() {
-  const button = document.querySelector('[data-action="open-guia"]');
-  const details = document.querySelector('#guia-docent details');
-  if (!button || !details) return;
-  button.addEventListener('click', () => {
-    details.open = true;
-    details.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+/**
+ * 同一天的所有课堂合并成**一张卡**: 行与行之间只有一条分隔线。
+ *
+ * 这是页面高度的大头 —— 一天两三节课时, 原先的"一节一张卡"会把 3 张卡的上下
+ * 留白与外框全叠起来。整行可点仍然成立: 拉伸锚点的定位祖先是 ``.session-row``
+ * 而不是这张卡, 所以第 2 行的链接不会盖住第 1 行的命中区。
+ *
+ * 没有日期的课堂 (parseSessionTitle 也救不回日期) 由 ``日期未定`` 组头兜底:
+ * 它们排在所选月份之后, 不加说明就会被读成"这个月的课"。
+ */
+function sessionDayCard(courseId, group) {
+  const head = group.date ? sessionDayLabel(group.date) : t('日期未定');
+  return '<section class="session-day">' +
+    '<h3 class="session-day-head">' + esc(head) + '</h3>' +
+    '<div class="session-day-card">' +
+    group.items.map((s) => sessionRow(courseId, s)).join('') +
+    '</div></section>';
+}
+
+/**
+ * 课堂列表主体: 整门课的 summary → 月份切换条 → 当前月份 → 日期分组。
+ *
+ * 用户在任何时刻都能回答三个问题: 这门课一共多少节、我正在看哪个月、这个月
+ * 多少节 —— 前两个由顶部两行给出, 第三个由当前月份那一行给出。
+ */
+function sessionMonthView(courseId, sessions) {
+  const groups = sessionMonthGroups(sessions);
+  const plan = sessionMonthPlan(courseId, groups);
+  const ofMonth = (month) => {
+    const found = groups.filter((group) => group.month === month)[0];
+    return found ? found.items : [];
+  };
+  let out = '<p class="small muted session-summary">' + sessionListSummary(sessions) + '</p>';
+  if (plan.tabs.length) out += sessionMonthNav(courseId, plan.tabs, plan.selected);
+  if (plan.selected) {
+    const items = ofMonth(plan.selected);
+    out += '<p class="small muted session-month-note">' +
+      esc(sessionMonthLabel(plan.selected, true)) + ' · ' +
+      esc(String(items.length)) + esc(t(' 节课堂')) + '</p>';
+    if (items.length) {
+      out += sessionDayGroups(items).map((group) => sessionDayCard(courseId, group)).join('');
+    } else {
+      // 空月份 (寒暑假 / 停课周) 给明确文案, 不留白页 —— 组头同时回答"这是哪个月"。
+      out += '<section class="session-day">' +
+        '<h3 class="session-day-head">' + esc(sessionMonthLabel(plan.selected, true)) + '</h3>' +
+        emptyState(t('本月没有安排课堂。')) +
+        '</section>';
+    }
+  }
+  // 没有日期的课堂归不了月: 它们**不随月份切换隐藏**, 而是永远画在末尾并带
+  // 自己的组头。藏起来会让用户以为这些课不存在 (证据优先: 宁可不整齐, 不隐瞒)。
+  const undated = groups.filter((group) => !group.month);
+  if (undated.length) {
+    out += sessionDayGroups(undated[0].items)
+      .map((group) => sessionDayCard(courseId, group)).join('');
+  }
+  return out;
+}
+
+/**
+ * 月份切换: 只改"看哪一段", 不发任何写请求 (与错题本的分组切换同一模式)。
+ *
+ * ``data-month`` 不是合法月份时直接忽略 —— 按钮是前端自己画出来的, 但
+ * 委托处理器拿到的是 DOM 属性, 宁可什么都不做也不猜。
+ */
+async function actionSessionMonth(courseId, month) {
+  const key = String(month || '');
+  if (!/^\d{4}-\d{2}$/.test(key)) return;
+  if (sessionMonthPicks[courseId] === key) return; // 点当前月份: 不必重画重取
+  sessionMonthPicks[courseId] = key;
+  await route();
 }
 
 // ---- 课程页 (Task 56.1) --------------------------------------------------
@@ -403,24 +886,11 @@ async function pageCourse(courseId) {
 
     '<div class="card"><div class="card-head"><h2>' + t('course.sessions') + '</h2>' +
     '<span class="small muted">' + t('点击进入课堂页，可整堂处理') + '</span></div>' +
+    // 月份切换 + 日期分组 + 紧凑行 —— 结构与月份解析见本文件上方「课堂列表」
+    // 一节。渲染收在 sessionMonthView() 里, 页面只决定"有课就画列表, 没课就给
+    // 空态"; 卡片区不再是表格, 也不再一次性铺开整个学期。
     (sessions.length
-      ? '<table class="data">' + tableCaption(t('course.sessions')) + '<thead><tr><th scope="col">#</th><th scope="col">' + t('标题') + '</th><th scope="col">' + t('日期') +
-        '</th><th scope="col">' + t('common.status') + '</th><th scope="col" class="num">' + t('材料') +
-        '</th><th scope="col" class="num">' + t('course.knowledge') + '</th><th scope="col" class="num">' +
-        t('course.pendingReview') + '</th><th scope="col">' + t('common.actions') + '</th></tr></thead><tbody>' +
-        sessions.map((s) => {
-          const c = s.counts || {};
-          return '<tr><td class="num">' + esc(s.session_number) + '</td>' +
-            '<td><a href="#/courses/' + encodeURIComponent(courseId) + '/sessions/' +
-            encodeURIComponent(s.session_id) + '">' + esc(s.title || t('(无标题)')) + '</a></td>' +
-            '<td class="small">' + dash(s.date) + '</td>' +
-            '<td>' + pill(sessionStatusLabel(s.status), s.status) + '</td>' +
-            '<td class="num">' + esc(c.materials || 0) + '</td>' +
-            '<td class="num">' + esc(c.knowledge_points || 0) + '</td>' +
-            '<td class="num">' + esc(c.pending_review || 0) + '</td>' +
-            '<td><button data-action="process-session" data-course="' + esc(courseId) +
-            '" data-session="' + esc(s.session_id) + '">' + t('整堂处理') + '</button></td></tr>';
-        }).join('') + '</tbody></table>'
+      ? sessionMonthView(courseId, sessions)
       : emptyState(t('还没有课堂。'))) +
     // 创建入口**永远**渲染 (空态下更是必须的) —— 见本节顶部第 1 条约束。
     '<div class="block-label">' + t('新建课堂') + '</div>' +
@@ -475,7 +945,7 @@ async function pageCourse(courseId) {
       : emptyState(t('未检测到缺口。'))) +
     '</div>' +
 
-    guiaDocentCard(data.metadata || {})
+    guiaDocentModal(data.metadata || {})
   );
   wireSessionForm();
   wireGuiaBrief();

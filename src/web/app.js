@@ -520,6 +520,10 @@ function originalBlock(text, language) {
 
 const state = {
   courseId: window.localStorage.getItem('ca.course') || null,
+  // 2026-09-22: 全局页 (概览/今日) 的**查看范围** —— 'all' 或某门课的 id。
+  // 刻意**不持久化**: 用户回到概览时默认仍然是"全部课程" (任务书 §11),
+  // 所以它只活在内存里, 每次开新标签页都回到默认值。
+  scope: 'all',
   lang: pickInitialLang(),
   studentId: window.localStorage.getItem('ca.student') || null,
   // Task 65: 错题本分组方式。只影响显示, 不改变任何数据。
@@ -530,6 +534,36 @@ const state = {
 // Task 64: 单题页最后发起的"出题依据链"请求。
 // 保留引用是为了让 UI 测试可以等它结束, 也避免未处理的 rejection 静默丢失。
 let __lastGrounding = null;
+
+/**
+ * 这条路由是不是**全局页** —— 内容不跟随"当前课程" (state.courseId)。
+ *
+ * 页面层级 (2026-09-22, 任务书 §2):
+ *   全局页   ``#/`` (概览) / ``#/today`` —— 默认按全部课程聚合, 顶栏选择器
+ *            在这两页上只作**本页筛选** (state.scope), 不改 course context;
+ *   课程页   其余全部 —— 数据跟随 state.courseId。
+ *
+ * switchCourse() 用它来决定换课后要不要把 scope 归位; renderCourseSwitcher()
+ * 用它来决定选择器的语义 (课程上下文 vs 本页筛选)。
+ */
+function isGlobalRoute() {
+  const parts = parseHash();
+  return parts.length === 0 || parts[0] === 'today';
+}
+
+/** 当前页实际生效的"查看范围": 全局页用 state.scope, 课程页恒为当前课程。 */
+function currentScope() {
+  if (!isGlobalRoute()) return state.courseId;
+  return state.scope === 'all' ? null : state.scope;
+}
+
+/**
+ * 全局页的查看范围。唯一写入口 (与 setCourse / setStudent 同一条收口规则)。
+ * 只改内存 —— 刻意不持久化, 见 state.scope 上的注释。
+ */
+function setScope(courseId) {
+  state.scope = courseId || 'all';
+}
 
 // ---------------------------------------------------------------- 界面语言
 //
@@ -683,6 +717,54 @@ function setRouteCourse(courseId) {
 }
 
 /**
+ * 课程上下文切换的**唯一**入口 (2026-09-22): 只换 ``currentCourseId``,
+ * 不碰 ``currentRoute``。
+ *
+ * 根因: 侧边栏原来是直链 ``#/courses/<id>``, 顶栏切换器原来是
+ * ``setCourse()`` + ``location.hash = '#/courses/<id>'`` —— 于是"换一门课"
+ * 恒等于"进入课程详情", 用户在概览/今日/材料等 11 个顶层功能页换课后都
+ * 被踢到课程详情, 还得再点一次顶部导航。
+ *
+ * 规则 (顶层功能页的 courseId 只活在全局 state 里, 不在 URL 里):
+ *   - 顶层功能页 (``#/`` / ``#/today`` / ``#/materials`` … / ``#/courses``):
+ *     hash 一字不动, 原地 ``route()`` 重渲染 —— 数据查询自动带上新课程。
+ *   - 课程作用域详情 (``#/courses/<旧id>(/…)``): courseId 长在 URL 里,
+ *     不换 URL 的话下一次路由的 ``setRouteCourse()`` 会把状态翻回旧课程,
+ *     所以换到新课程的详情页 (``#/courses/<新id>``, 同一次 hash 赋值即
+ *     push 一条历史, 与修复前用的 ``location.hash =`` 语义一致)。
+ *   - 错题详情 (``#/mistakes/<旧id>/<kp>``): 同样把 courseId 绣进 URL,
+ *     但那节的 id 在新课程下必然 404, 所以退到错题本列表 (同功能区)。
+ *
+ * 历史记录: 原地重渲染**不**产生新历史 (route 本来就没变, 不该污染
+ * Back/Forward); 详情族的换 URL 沿用 ``location.hash =`` (push), 与修复前一致。
+ * 刷新: 选择持久化在 ``ca.course`` (``setCourse()``), 与修复前一致。
+ */
+async function switchCourse(courseId) {
+  if (!courseId) return;
+  if (courseId === state.courseId) return;
+  setCourse(courseId);
+  // 全局页 (概览/今日) 的内容不跟随当前课程, 所以侧边栏点另一门课只换
+  // course context, **不**把本页改成单课程视图 —— 任务书 §5: "当前课程 =
+  // Gestió de Projectes 不应该导致概览 = 只显示 Gestió de Projectes"。
+  // 要单课程视图, 用顶栏的查看范围选择器 (state.scope)。
+  if (isGlobalRoute()) {
+    setScope('all');
+    await route();
+    return;
+  }
+  const parts = parseHash();
+  if (parts[0] === 'courses' && parts.length >= 2) {
+    const target = '#/courses/' + encodeURIComponent(courseId);
+    if (window.location.hash !== target) window.location.hash = target;
+    else await route();
+  } else if (parts[0] === 'mistakes' && parts.length === 3) {
+    window.location.hash = '#/mistakes';
+  } else {
+    await route();
+  }
+}
+
+/**
  * 当前学生。和 ``setCourse()`` 同理 —— 唯一的写入口, 内存与持久化一起改。
  *
  * 为什么必须收口: 原来 6 处页面函数各自写一遍 ``state.studentId`` +
@@ -771,6 +853,12 @@ let __courseCache = [];
  * course_id 由 (name, code) 派生 (见 models.Course._generate_stable_id),
  * 所以两门不同的课必然在 name 或 code 上不同。
  * course_id 只进 href 属性, 不进可见文本。
+ *
+ * 课程上下文与当前页面解耦 (2026-09-22): 侧边栏是**课程选择器**, 不是导航。
+ * 纯左键点击由文档级的 ``a[data-course-switch]`` 拦截, 只换 course context
+ * (``switchCourse()``)、hash 一字不动; ``href`` 保留课程详情地址, 只做两件事:
+ * 修饰键/中键/新标签页打开时的有效 fallback (仍是合法深链), 以及无 JS 时的
+ * 可访问性。真正的"查看详情"入口是「我的课程」卡片上的按钮。
  */
 function courseListHtml(courses) {
   return courses
@@ -781,7 +869,8 @@ function courseListHtml(courses) {
         ? '<br><span class="tiny muted mono">' + esc(course.code) + '</span>'
         : '';
       return (
-        '<li><a' + active + ' href="#/courses/' + encodeURIComponent(course.course_id) + '">' +
+        '<li><a' + active + ' href="#/courses/' + encodeURIComponent(course.course_id) + '"' +
+        ' data-course-switch="' + esc(course.course_id) + '">' +
         esc(course.name) + code + '</a></li>'
       );
     })
@@ -899,32 +988,55 @@ async function loadSidebar() {
 
 // Task 68: 顶栏课程切换器。
 //
-// 侧边栏的课程列表点进去会导航到该课程页; 但用户更常见的动作是"我现在
-// 想换一门课看", 这时候要一个不离开当前页结构就能换的控件。选中即
-// ``setCourse()`` —— 与侧边栏点击走的是同一个持久化入口, 所以刷新/重启
-// 之后的选择是一致的 (数据来源是 localStorage, 且由 /api/course-selection
+// 用户更常见的动作是"我现在想换一门课看", 这时候要一个不离开当前页结构
+// 就能换的控件。选中即 ``switchCourse()`` (2026-09-22 前是 ``setCourse()``
+// + 跳课程详情, 见 switchCourse 上面的根因) —— 与侧边栏点击走的是同一个
+// 上下文入口, 持久化仍收口在 ``setCourse()`` 里, 所以刷新/重启之后的选择
+// 是一致的 (数据来源是 localStorage, 且由 /api/course-selection
 // 判定这个偏好是否还成立)。
 let __courseSwitchWired = false;
 
 function renderCourseSwitcher(courses) {
   const picker = document.getElementById('course-switch');
   if (!picker) return;
-  picker.innerHTML = courses
-    .map((course) => (
-      '<option value="' + esc(course.course_id) + '"' +
-      (course.course_id === state.courseId ? ' selected' : '') + '>' +
+  // 选择器的语义随页面而变 (2026-09-22):
+  //   全局页 (概览/今日) —— 它是**本页的查看范围**。第一项是「全部课程」
+  //     (value='') 且是默认选中项; 选一门课只把这一页筛成那门课
+  //     (setScope + route), 不改 course context。
+  //   其余页面 —— 它仍是**课程上下文**切换器, 行为与 2026-09-22 解耦修复
+  //     后一致: 选中即 switchCourse()。
+  // 全局页与课程页共用同一个 <select> (index.html 里只有一个), 选项与选中项
+  // 每次重绘都按当前页面重建; 只接一次线 (同 switchCourse 的理由)。
+  const globalMode = isGlobalRoute();
+  const selectedId = globalMode ? (state.scope === 'all' ? '' : state.scope) : state.courseId;
+  picker.innerHTML = (globalMode
+    ? [{ id: '', label: t('scope.all') }]
+      .concat(courses.map((course) => ({ id: course.course_id, label: course.name || course.code || '' })))
+    : courses.map((course) => ({ id: course.course_id, label: course.name || course.code || '' })))
+    .map((item) => (
+      '<option value="' + esc(item.id) + '"' +
+      (item.id === selectedId ? ' selected' : '') + '>' +
       // 名称缺失时退回代码 —— 绝不显示内容寻址的 course_id。
-      esc(course.name || course.code || '') + '</option>'
+      esc(item.label) + '</option>'
     ))
     .join('');
   // 只接一次线。每次重绘都 addEventListener 的话, 一次切换会触发 N 次跳转。
   if (!__courseSwitchWired) {
     __courseSwitchWired = true;
     picker.addEventListener('change', () => {
-      const courseId = picker.value;
+      const courseId = picker.value || null;
+      if (isGlobalRoute()) {
+        // 查看范围: 只筛本页, 不碰课程上下文, 也不写 localStorage ——
+        // 筛选不持久化, 回到概览默认仍是"全部课程" (任务书 §11)。
+        if (state.scope === (courseId || 'all')) return;
+        setScope(courseId);
+        route();
+        return;
+      }
       if (!courseId) return;
-      setCourse(courseId);
-      window.location.hash = '#/courses/' + encodeURIComponent(courseId);
+      // 只换课程上下文, 不强制进课程详情 —— 去留由 switchCourse 按当前
+      // 路由决定 (顶层功能页原地重渲染, 课程详情族才换 URL)。
+      switchCourse(courseId);
     });
   }
 }
@@ -1022,6 +1134,17 @@ async function requireCourse() {
 
 
 document.addEventListener('click', (event) => {
+  // 课程上下文切换 (2026-09-22, 见 switchCourse): 侧边栏课程项的纯左键点击
+  // 只换 course context, 不进课程详情 —— hash 一字不动, 当前功能页原地重渲染。
+  // 修饰键/中键/右键放行 (中键、新标签页打开仍走 href 的课程详情, 是合法深链)。
+  const switchLink = event.target.closest('a[data-course-switch]');
+  if (switchLink) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const courseId = switchLink.getAttribute('data-course-switch');
+    if (courseId) switchCourse(courseId);
+    return;
+  }
   // Task 64: 出题按钮不是 [data-action] 委托的一部分 —— 它有自己的 id，
   // 而且必须在没有任何学生的情况下也能工作（出题与"谁在答"无关）。
   const generateButton = event.target.closest('#generate-batch');
@@ -1051,6 +1174,10 @@ document.addEventListener('click', (event) => {
   else if (action === 'material-digest') actionMaterialDigest(courseId, materialId);
   else if (action === 'ai-analyze') actionAiAnalyze(courseId, materialId, target);
   else if (action === 'process-session') actionProcessSession(courseId, sessionId, target);
+  // 课程页的月份切换 (2026-09-22): 只改"课表看哪一段", 不发任何写请求。
+  // 它不是路由 —— 月份是课程页内部的浏览位置, 不该进 hash (深链进课程页永远
+  // 落在当前/最近的月份, 见 views/courses.js 的 sessionMonthPlan)。
+  else if (action === 'session-month') actionSessionMonth(courseId, target.getAttribute('data-month'));
   else if (action === 'review-confirm') actionReview(courseId, knowledgeId, 'confirm', target);
   else if (action === 'review-reject') actionReview(courseId, knowledgeId, 'reject', target);
   else if (action === 'review-keep') actionReview(courseId, knowledgeId, 'keep', target);

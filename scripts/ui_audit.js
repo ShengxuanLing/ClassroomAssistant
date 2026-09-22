@@ -2469,6 +2469,19 @@ async function audit() {
     const idxMaskRule = CSS.indexOf('.modal-mask {');
     check('styles.css: .hidden rule comes after .modal-mask (must win the cascade)',
       idxHiddenRule >= 0 && idxMaskRule >= 0 && idxHiddenRule > idxMaskRule);
+    // 回归守卫: syllabus 嵌套条目必须渲染成真 <li> (旧代码把拼好的 <ul>
+    // 塞进 guiaList 被整体 esc 成可见文本 —— 双重转义, 截图实测发现)。
+    // 桩 DOM 不可靠, 这里直接检查渲染输出里的真实标记。
+    check('guia syllabus renders nested items as real <li> (no double-escape)',
+      out.includes('<li>Bloc 1. Introducció a la cartografia<ul>') &&
+      out.includes('<li>La projecció UTM</li>') &&
+      !out.includes('&lt;ul class="guia-list"'));
+    // 布局守卫: 弹窗顶部 facts 网格的值列必须可收缩 (minmax(0, 1fr)),
+    // 长学位名才不会把同行字段挤坏; 旧的 repeat(4, max-content) 固定列
+    // 会让 5 对 dt/dd 在 5 轨道里错位流动。
+    check('styles.css: .guia-facts value columns are shrinkable (minmax(0,1fr))',
+      CSS.includes('.guia-facts { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);') &&
+      !CSS.includes('repeat(4, max-content)'));
 
     // es/ca: 小节标题走 guia.* 词条; 内容是加泰语原文 (无 CJK),
     // 所以整页 CJK 检查 = 界面标题漏译检测。
@@ -2490,6 +2503,289 @@ async function audit() {
       !html(plain).includes('id="guia-docent"'));
     check('course page without guia_* keys keeps the teacher/semester rows',
       /<dt>教师<\/dt><dd>/.test(html(plain)));
+  }
+
+  // ---- 课程页: 课堂列表 = 月份切换 + 同日合并 + 紧凑行 (2026-09-22 第二轮) ----
+  //
+  // 第一轮把 8 列大表格改成"日期分组 + 一节一张卡": 层级清楚了, 但一学期 28 节课
+  // 仍旧一次性铺开成一屏多高的长列表, 用户要一直滚才找得到 12 月的课。这一轮加
+  // 月份切换 + 同一天合并成一张卡 + 每节课两行。这一节守住新契约:
+  //
+  //   1. 一屏只画**一个月**: 切换条恰好一个 aria-current, 且月份行说的就是它;
+  //   2. 切换月份真的换内容 (走 actionSessionMonth 这个真实入口), 空月份给明确
+  //      文案而不是白页;
+  //   3. 同一天的课合并进一张卡 (行与行只有分隔线), 整行可点且只命中本行;
+  //   4. 每节课两行: 时间 + 类型 / 教师 · 教室 + 状态, 「整堂处理」在最右;
+  //   5. 标题里的技术占位符 (图中未显示) **绝不**渲染 —— 夹具故意喂未迁移的旧
+  //      数据, 验的是渲染侧防线 (数据源已另行清洗);
+  //   6. 计数非 0 才画 meta 行;
+  //   7. es/ca 三语与 CSS 接线 (切换条高亮 / 拉伸锚点 / 按钮抬层 / 窄屏换行)。
+  //
+  // 默认落在哪个月随环境时钟变 (夹具跨 9 / 10 / 12 三个月), 所以"默认"只断言
+  // **不变量**, 确定性的内容一律先显式切到某个月再断言 —— 否则这份审计会在某个
+  // 真实月份变红, 让人以为是产品坏了。
+  {
+    const cardSession = (over) => Object.assign({
+      session_id: 'session-x', course_id: COURSE_ID, session_number: 1,
+      date: '2026-09-09', title: '', status: 'PLANNED',
+      counts: { materials: 0, knowledge_points: 0, pending_review: 0 },
+    }, over);
+    const table = routes();
+    table['/api/courses/' + COURSE_ID + '/workspace'] = courseWorkspace({
+      counts: { sessions: 6, materials: 2, evidence: 4, knowledge_points: 8, pending_review: 3 },
+      sessions: [
+        cardSession({
+          session_id: SESSION_ID,
+          title: '15:00–17:00 Teoria | 图中未显示 | Aula Q1/1007',
+        }),
+        cardSession({
+          session_id: 'session-b',
+          title: '17:00–19:00 Pràctiques de Laboratori | Aula Q1/0007',
+        }),
+        cardSession({
+          session_id: 'session-c', date: '2026-09-16', status: 'REVIEW_REQUIRED',
+          title: '15:00–17:00 Teoria | Dario Cottava | Aula Q2/1009',
+          counts: { materials: 2, knowledge_points: 8, pending_review: 3 },
+        }),
+        cardSession({ session_id: 'session-d', date: '2026-09-16', title: '' }),
+        // 10 月与 12 月: 让切换条跨月, 也让 11 月落在**范围内但没有课** (空月份
+        // 必须给明确文案, 不能白页)。
+        cardSession({
+          session_id: 'session-e', date: '2026-10-21',
+          title: '15:00–17:00 Teoria | Dario Cottava | Aula Q2/1009',
+        }),
+        cardSession({
+          session_id: 'session-f', date: '2026-12-02',
+          title: '15:00–17:00 Teoria | Dario Cottava | Aula Q2/1009',
+        }),
+      ],
+    });
+    // 与真实 route() 同样的顺序: 先 pageCourse(); 之后月份切换走真实的 action
+    // (data-action 委托把它接到 actionSessionMonth, 这里直接调同一个函数)。
+    const sandbox = await loadApp(table, 'zh');
+    sandbox.window.location.hash = '#/courses/' + COURSE_ID;
+    await sandbox.pageCourse(COURSE_ID);
+    // 标记用 `session-summary">` —— class 属性里它前面还有 small/muted,
+    // 搜 `class="session-summary"` 会匹配不到 (第一版就是这么踩的)。
+    const regionOf = (text) => {
+      const at = text.indexOf('session-summary">');
+      const to = text.indexOf('id="session-form"');
+      return at >= 0 && to > at ? text.slice(at, to) : '';
+    };
+    const rows = (area) => area.match(/<div class="session-row">/g) || [];
+    const currentTab = (area) => {
+      const on = /<button[^>]*aria-current="true"[^>]*>([^<]*)</.exec(area);
+      return on ? on[1] : '';
+    };
+    const currentLabel = (area) => {
+      const on = /<button[^>]*aria-current="true"[^>]*title="([^"]*)"/.exec(area);
+      return on ? on[1] : '';
+    };
+    const monthNote = (area) => {
+      const note = /session-month-note">([^<]*)</.exec(area);
+      return note ? note[1] : '';
+    };
+    const zh = html(sandbox);
+    const region = regionOf(zh);
+
+    check('sessions card renders the summary line', !!region);
+    check('summary counts sessions and spans the date range',
+      region.includes('6 节课堂 · 2026-09-09 → 2026-12-02'), region.slice(0, 160));
+    // —— 默认视图: 只画一个月, 且切换条与月份行互相印证 (与运行时钟无关) ——
+    const tabs = region.match(/<button type="button" class="session-month"/g) || [];
+    check('the month strip lists every month of the schedule range (gap included)',
+      tabs.length === 4, 'tabs=' + tabs.length);
+    check('month buttons show short labels with a full-label tooltip',
+      region.includes('title="2026年9月">9月</button>')
+        && region.includes('title="2026年12月">12月</button>'), region.slice(0, 240));
+    check('exactly one month is highlighted',
+      (region.match(/aria-current="true"/g) || []).length === 1);
+    // 每个按钮都必须带全 course + month: 委托处理器只从 DOM 属性取值 ——
+    // 少一个属性, 点下去就是"什么都没发生"(不报错, 也不切月份)。
+    const monthButtons = region.match(/<button type="button" class="session-month"[^>]*>/g) || [];
+    check('every month button carries its course and month',
+      monthButtons.length === 4
+        && monthButtons.every((button) => button.includes('data-course="' + COURSE_ID + '"')
+          && /data-month="\d{4}-\d{2}"/.test(button)), monthButtons.join(' '));
+    const defaultTab = currentTab(region);
+    const defaultLabel = currentLabel(region);
+    check('the highlighted month is one of the listed months',
+      ['9月', '10月', '12月'].indexOf(defaultTab) >= 0, 'tab=' + defaultTab);
+    check('the month line names the highlighted month',
+      monthNote(region).indexOf(defaultLabel) === 0, monthNote(region));
+    check('the month line counts exactly the rows that are drawn',
+      (/(\d+)[^\d]*$/.exec(monthNote(region)) || [])[1] === String(rows(region).length),
+      monthNote(region) + ' | rows=' + rows(region).length);
+    check('the whole semester is not on screen at once',
+      rows(region).length < 6, 'rows=' + rows(region).length);
+    check('the sessions card contains no table anymore', region.indexOf('<table') === -1);
+    check('the technical placeholder never renders',
+      zh.indexOf('图中未显示') === -1, zh.slice(zh.indexOf('图中未显示') - 40, 80));
+
+    // —— 切到 9 月: 同一天合并 / 每节两行 / 计数 / 按钮 都在确定的内容上断言 ——
+    await sandbox.actionSessionMonth(COURSE_ID, '2026-09');
+    const sep = regionOf(html(sandbox));
+    const rowOf = (area) => area.split('<div class="session-row">').slice(1);
+    const sepRows = rowOf(sep);
+    check('switching the month re-renders the list',
+      sepRows.length === 4, 'rows=' + sepRows.length);
+    check('the month line follows the switch',
+      monthNote(sep).indexOf('2026年9月') === 0, monthNote(sep));
+    check('the highlight follows the switch',
+      currentTab(sep) === '9月' && currentLabel(sep) === '2026年9月',
+      currentTab(sep) + ' | ' + currentLabel(sep));
+    const days = sep.match(/<section class="session-day">/g) || [];
+    check('September renders as 2 date groups', days.length === 2, 'days=' + days.length);
+    check('day groups are headed MM/DD + weekday',
+      sep.includes('09/09 · 周三') && sep.includes('09/16 · 周三'));
+    const dayChunks = sep.split('<section class="session-day">').slice(1);
+    const rowsPerDay = dayChunks.map((chunk) => rowOf(chunk).length);
+    check('both sessions of one day share a single card',
+      rowsPerDay.join(',') === '2,2', 'per day=' + rowsPerDay.join(','));
+    check('one day is one card, not one card per session',
+      (sep.match(/<div class="session-day-card">/g) || []).length === 2,
+      'cards=' + (sep.match(/<div class="session-day-card">/g) || []).length);
+    check('a row is exactly two lines of text',
+      !!sepRows[0] && sepRows[0].includes('session-row-top')
+        && sepRows[0].includes('session-row-sub'),
+      sepRows[0] ? sepRows[0].slice(0, 160) : 'no row');
+    check('the row keeps its time, kind, room and teacher',
+      !!sepRows[0] && sepRows[0].includes('15:00–17:00')
+        && sepRows[0].includes('session-kind') && sepRows[0].includes('Aula Q1/1007')
+        && sep.includes('Dario Cottava'), sepRows[0] ? sepRows[0].slice(0, 200) : 'no row');
+    check('a two-segment title still shows the room', sep.includes('Aula Q1/0007'));
+    check('kind badges render once per typed session',
+      (sep.match(/session-kind/g) || []).length === 3,
+      'kind badges=' + (sep.match(/session-kind/g) || []).length);
+    check('empty titles fall back to the untitled-session copy',
+      sep.includes('session-title">未命名课堂<'));
+    check('zero counts render no metadata line',
+      !!sepRows[0] && sepRows[0].indexOf('session-row-meta') === -1);
+    check('nonzero counts render one metadata line',
+      !!sepRows[2] && sepRows[2].includes('材料 2 · 知识点 8 · 待审核 3'),
+      sepRows[2] ? sepRows[2].slice(0, 200) : 'no row');
+    check('the process-session button survives on every row',
+      (sep.match(/data-action="process-session"/g) || []).length === 4,
+      'buttons=' + (sep.match(/data-action="process-session"/g) || []).length);
+    check('rows link into the session detail page',
+      sep.includes('href="#/courses/' + COURSE_ID + '/sessions/' + SESSION_ID + '"'));
+    check('the session status pill survives', sep.includes('尚未添加材料'));
+
+    // —— 切到 12 月: 只剩那个月, 其余月份的课不再画 (换一段, 不是丢数据) ——
+    await sandbox.actionSessionMonth(COURSE_ID, '2026-12');
+    const dec = regionOf(html(sandbox));
+    check('switching to December shows only December',
+      rowOf(dec).length === 1 && dec.includes('12/02 · 周三')
+        && dec.indexOf('09/09 · 周三') === -1,
+      'rows=' + rowOf(dec).length);
+    check('the December month line names December',
+      monthNote(dec).indexOf('2026年12月') === 0, monthNote(dec));
+
+    // —— 切到 11 月 (在范围内但确实没有课): 明确文案, 不是白页 ——
+    await sandbox.actionSessionMonth(COURSE_ID, '2026-11');
+    const nov = regionOf(html(sandbox));
+    check('a month without sessions says so instead of rendering nothing',
+      nov.includes('本月没有安排课堂。') && rowOf(nov).length === 0, nov.slice(0, 200));
+    check('the empty month still names itself',
+      nov.includes('2026年11月') && monthNote(nov).indexOf('2026年11月') === 0, monthNote(nov));
+
+    // —— 选择留在内存里: 重新画一次页面仍停在同一月, 不是每次重新猜 ——
+    await sandbox.pageCourse(COURSE_ID);
+    check('the chosen month survives a plain re-render of the page',
+      regionOf(html(sandbox)).includes('本月没有安排课堂。'));
+
+    // —— 默认月份规则: 纯函数 + 显式"今天", 与运行时钟无关 ——
+    const defaultMonth = vm.runInContext('sessionDefaultMonth', sandbox);
+    check('the current month wins when the course has it',
+      defaultMonth(['2026-09', '2026-12'], '2026-09') === '2026-09');
+    check('a tie prefers the upcoming month',
+      defaultMonth(['2026-09', '2026-11'], '2026-10') === '2026-11');
+    check('a semester that already ended falls back to its last month',
+      defaultMonth(['2026-09', '2026-12'], '2027-03') === '2026-12');
+    check('a semester that has not started falls back to its first month',
+      defaultMonth(['2026-09', '2026-12'], '2026-06') === '2026-09');
+    check('no dated sessions means no default month', defaultMonth([], '2026-09') === '');
+    const monthTabs = vm.runInContext('sessionMonthTabs', sandbox);
+    check('the tab range fills the months in between and ignores the undated group',
+      monthTabs([{ month: '2026-09' }, { month: '2026-12' }, { month: '' }]).join(',')
+        === '2026-09,2026-10,2026-11,2026-12');
+    check('a course with no dated sessions has no tabs', monthTabs([{ month: '' }]).length === 0);
+    const monthLabel = vm.runInContext('sessionMonthLabel', sandbox);
+    check('the long month label reads as a calendar month',
+      monthLabel('2026-09', true) === '2026年9月', monthLabel('2026-09', true));
+    check('the short month label drops the year',
+      monthLabel('2026-09', false) === '9月', monthLabel('2026-09', false));
+    check('a malformed month never invents a label',
+      monthLabel('nope', true) === 'nope' && monthLabel('', true) === '');
+
+    // —— 没有日期的课堂: 不随月份切换隐藏, 永远画在末尾并自带组头 ——
+    // (藏在某个月的列表后面而不加说明, 会被读成"这个月的课"。)
+    const undatedTable = routes();
+    undatedTable['/api/courses/' + COURSE_ID + '/workspace'] = courseWorkspace({
+      counts: { sessions: 1, materials: 0, evidence: 0, knowledge_points: 0, pending_review: 0 },
+      sessions: [cardSession({ session_id: 'session-nodate', date: '', title: 'Tema suelto' })],
+    });
+    const undated = html(await renderPage(pageByName('course'), undatedTable, 'zh'));
+    check('a session without a date is still listed, under its own head',
+      undated.includes('日期未定') && undated.includes('Tema suelto'), undated.slice(0, 200));
+    check('a session without a date produces no month strip',
+      undated.indexOf('session-months') === -1);
+
+    // 同一条规则的第二种情形: 有月份视图时, 没有日期的那一节**也不能被月切换
+    // 吃掉** (藏起来会让用户以为这堂课不存在)。
+    const mixedTable = routes();
+    mixedTable['/api/courses/' + COURSE_ID + '/workspace'] = courseWorkspace({
+      counts: { sessions: 2, materials: 0, evidence: 0, knowledge_points: 0, pending_review: 0 },
+      sessions: [
+        cardSession({
+          session_id: 'session-dated', date: '2026-09-09',
+          title: '15:00–17:00 Teoria | Dario Cottava | Aula Q1/1007',
+        }),
+        cardSession({ session_id: 'session-nodate', date: '', title: 'Tema suelto' }),
+      ],
+    });
+    const mixed = html(await renderPage(pageByName('course'), mixedTable, 'zh'));
+    check('the month view still renders the dated session',
+      mixed.includes('09/09 · 周三') && mixed.includes('session-months'));
+    check('a session without a date survives the month view',
+      mixed.includes('日期未定') && mixed.includes('Tema suelto'), mixed.slice(0, 200));
+
+    // —— 接线: 月份按钮必须真的被 app.js 的 data-action 委托接住, 并且真的把
+    //    data-month 读出来 (与 session_id 接线检查同一模式: 渲染对了但没人处理、
+    //    或读错属性, 点下去都毫无反应, 且不报错) ——
+    check('the month buttons are wired to the delegated action',
+      /action === 'session-month'/.test(APP_JS)
+        && /actionSessionMonth\(courseId, target\.getAttribute\('data-month'\)\)/.test(APP_JS)
+        && /function actionSessionMonth/.test(APP_JS));
+
+    for (const lang of ['es', 'ca']) {
+      const area = regionOf(html(await renderPage(pageByName('course'), table, lang)));
+      check('sessions summary is localized in ' + lang,
+        area.includes(lang === 'es' ? '6 sesiones · ' : '6 sessions · '),
+        area.slice(0, 160));
+      check('untitled-session fallback is localized in ' + lang,
+        area.includes(lang === 'es' ? 'Sesión sin título' : 'Sessió sense títol'));
+      check('the month line is localized in ' + lang,
+        monthNote(area).includes(lang === 'es' ? ' de 2026 · ' : ' del 2026 · ')
+          && monthNote(area).indexOf('2026-') === -1, monthNote(area));
+      check('sessions card has no untranslated CJK in ' + lang,
+        !/[\u4e00-\u9fff]/.test(area), 'CJK leaked: ' + firstCjk(area));
+    }
+
+    check('css gives the day card the shared radius',
+      /\.session-day-card\s*\{[^}]*border-radius:\s*var\(--radius\)/.test(CSS));
+    check('css separates two sessions of one day with a divider, not another card',
+      /\.session-row\s*\+\s*\.session-row\s*\{[^}]*border-top/.test(CSS));
+    check('css stretches a row link over its own row (not the whole day card)',
+      /\.session-row-main::after\s*\{[^}]*inset:\s*0/.test(CSS));
+    check('css keeps the action button above the stretched link',
+      /\.session-row-action\s*\{[^}]*z-index:\s*1/.test(CSS));
+    check('css highlights the current month from the aria attribute itself',
+      /\.session-month\[aria-current="true"\]\s*\{/.test(CSS));
+    check('css lays the month strip out as a wrapping row',
+      /\.session-months\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/.test(CSS));
+    check('css lets a session row wrap on narrow screens instead of scrolling',
+      /@media\s*\(max-width:\s*560px\)[\s\S]{0,160}\.session-row\s*\{[^}]*flex-wrap:\s*wrap/.test(CSS));
   }
 
   // ---- 静态检查: app.js 写出的每个 class 都在 styles.css 里有定义 ----
@@ -2681,6 +2977,40 @@ async function audit() {
       afterText.indexOf(COURSE_ID) === -1 && afterText.indexOf(NO_CODE_ID) === -1, afterText);
     check('exactly one course stays highlighted after a course switch',
       (sandbox.__elements.get('course-list').innerHTML.match(/class="active"/g) || []).length === 1);
+  }
+
+  // ---- 课程切换不断路由 (2026-09-22 解耦) --------------------------------
+  //
+  // 根因见 app.js switchCourse: 侧边栏原来是直链 `#/courses/<id>`, 顶栏切换器
+  // 原来是 `setCourse() + 跳详情` —— 11 个顶层功能页换课都被踢到课程详情。
+  // 真执行的行为回归在 ui_render_check.js; 这里只锁三处接线 (标记 / 委托 /
+  // 拦截), 防止有人顺手把 data 属性或委托删掉而切课又跳页。
+  {
+    const table = routes();
+    const sandbox = await loadApp(table, 'zh');
+    await sandbox.loadSidebar();
+    const sidebar = sandbox.__elements.get('course-list').innerHTML;
+    check('sidebar marks every course as a context switch link',
+      sidebar.indexOf('data-course-switch="' + COURSE_ID + '"') >= 0, sidebar.slice(0, 300));
+    check('switchCourse is exposed as the single switch entry',
+      typeof sandbox.switchCourse === 'function', typeof sandbox.switchCourse);
+    const handler = APP_JS.match(/picker\.addEventListener\('change', \(\) => \{([\s\S]*?)\}\);/);
+    check('the course switcher delegates to switchCourse',
+      !!handler && handler[1].indexOf('switchCourse(courseId)') >= 0,
+      handler ? handler[1].slice(0, 200) : 'handler not found');
+    check('the course switcher never navigates on its own',
+      !!handler && handler[1].indexOf('location.hash') === -1,
+      handler ? handler[1].slice(0, 200) : 'handler not found');
+    check('plain left-clicks on switch links are intercepted, not navigated',
+      APP_JS.indexOf("closest('a[data-course-switch]')") >= 0 &&
+      APP_JS.indexOf('event.preventDefault()') >= 0,
+      'delegation missing');
+    const switchFn = APP_JS.slice(APP_JS.indexOf('async function switchCourse(courseId)'));
+    check('staying on the page re-renders in place instead of navigating',
+      switchFn.indexOf('await route()') >= 0, switchFn.slice(0, 120));
+    check('course-scoped details still retarget to the new course',
+      switchFn.indexOf("'#/courses/' + encodeURIComponent(courseId)") >= 0,
+      switchFn.slice(0, 120));
   }
 
   // ---- 学生注册: 表单必须**始终**在, 而且真的接在 POST /api/students 上 ----

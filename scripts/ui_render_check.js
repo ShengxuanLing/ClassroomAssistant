@@ -2353,6 +2353,294 @@ async function main() {
     }
   }
 
+  // ---- 课程切换保持当前页面 (2026-09-22 解耦) ---------------------------
+  //
+  // 根因: 侧边栏原来是直链 `#/courses/<id>`, 顶栏切换器原来是
+  // `setCourse() + location.hash = '#/courses/<id>'` —— 于是 11 个顶层功能页
+  // 换课都会被踢到课程详情。这里用两门课证明统一契约:
+  //   Page = unchanged (hash 一字不动) / Course = changed / Content = changed。
+  //
+  // 桩按 pathOnly 路由而忽略 query, 所以"只带 query、不带路径"的端点靠改表
+  // 区分两门课 —— 改表即换课, 与真实后端"按 preferred 回显"的语义一致。
+  {
+    const GP = 'course-gp';
+    const GEO = 'course-geo';
+    const GP_NAME = 'Gestio de Projectes';
+    const GEO_NAME = 'Bases per a la Geoinformacio';
+    const twoCourses = [
+      { course_id: GP, name: GP_NAME, code: 'GP', language: 'es' },
+      { course_id: GEO, name: GEO_NAME, code: 'GEO', language: 'ca' },
+    ];
+
+    function useCourse(table, id) {
+      const tag = id === GP ? 'GP' : 'GEO';
+      const slow = tag.toLowerCase();
+      table['/api/course-selection'] = {
+        data: { preferred: id, course_id: id, reason: 'preferred', available: [GP, GEO] },
+      };
+      table['/api/dashboard'] = {
+        data: {
+          course_id: id, courses: twoCourses, version: 't',
+          knowledge: { count: 1, summary: {} }, gaps: { gaps: [] },
+          processing: { by_status: {}, jobs: [] },
+          materials: [{
+            material_id: 'm-' + tag, filename: 'FILE-' + tag + '-dash.pdf',
+            processing_status: 'REGISTERED', material_type: 'text', size: 10,
+          }],
+          sessions: [], review_pending: [], students: [], exercises: [],
+        },
+      };
+      table['/api/student-today'] = {
+        data: {
+          course_id: id, date: '2026-03-01', has_activity: false,
+          note: 'NOTE-' + tag + '-today', counts: {},
+          classes_today: [], study: [], learning_paths: [],
+          pending_exercises: [], recent_evaluations: [], attention: [],
+          review: { items: [], total: 0 },
+        },
+      };
+      table['/api/students'] = {
+        data: { students: [{ student_id: 'stu-' + slow, display_name: 'NAME-' + tag }] },
+      };
+      table['/api/reviews'] = {
+        data: { reviews: [{ knowledge_point_id: 'KP-' + tag, reason: 'R-' + tag, review_status: 'PENDING' }] },
+      };
+      table['/api/my-courses'] = {
+        data: {
+          view: 'multi-course-workspace-v1', language: 'zh', course_count: 2,
+          selection: { preferred: id, course_id: id, reason: 'preferred', available: [GP, GEO] },
+          courses: twoCourses.map((c) => ({
+            course_id: c.course_id, name: c.name, code: c.code, language: c.language,
+            counts: {}, validation: {}, review: {},
+            evidence_total: 0, gaps: 0, last_session: null,
+          })),
+          totals: { counts: {}, validation: {}, review: {}, evidence_total: 0, gaps: 0 },
+          empty: false,
+        },
+      };
+      table['/api/materials'] = {
+        data: {
+          materials: [{
+            material_id: 'm-' + tag, filename: 'FILE-' + tag + '-mat.pdf',
+            material_type: 'text', processing_status: 'REGISTERED', size: 5,
+          }],
+        },
+      };
+      table['/api/sessions'] = { data: { sessions: [] } };
+      table['/api/processing'] = { data: { by_status: {}, jobs: [] } };
+      table['/api/knowledge'] = {
+        data: {
+          course_id: id,
+          knowledge_points: [{
+            knowledge_id: 'kp-' + slow, title: 'TITLE-' + tag,
+            validation_status: 'supported', review_status: 'pending',
+            evidence_refs: [], original_terms: [],
+          }],
+        },
+      };
+      table['/api/course-knowledge'] = {
+        data: { course_id: id, topic_count: 0, relation_count: 0 },
+      };
+    }
+
+    function switchTable() {
+      // 路径里自带课程的端点: 两门课的响应可以静态共存, 不用改表。
+      const table = {
+        '/api/health': {
+          data: {
+            status: 'ok', application: 'classroom', version: 't',
+            processing: { asr: 'real', ocr: 'real', evidence_count: 0 },
+            storage: { courses: 2 },
+          },
+        },
+        '/api/courses': { data: { courses: twoCourses } },
+      };
+      useCourse(table, GP);
+      for (const id of [GP, GEO]) {
+        const tag = id === GP ? 'GP' : 'GEO';
+        const slow = tag.toLowerCase();
+        table['/api/students/stu-' + slow + '/review-set'] = {
+          data: {
+            counts: { total: 0 }, ordering_basis: 'ORDER-' + tag,
+            buckets: {}, items: [], conflicts: [],
+            coverage: { unavailable: true }, empty: true,
+          },
+        };
+        table['/api/students/stu-' + slow + '/exercises'] = {
+          data: {
+            student_id: 'stu-' + slow, answered: 0, total: 1,
+            exercises: [{
+              exercise_id: 'ex-' + slow, prompt: 'PROMPT-' + tag + '-prompt',
+              exercise_type: 'fill_blank', knowledge_points: [],
+              prerequisites: [], submitted: false,
+            }],
+          },
+        };
+        table['/api/students/stu-' + slow + '/mistakes'] = {
+          data: {
+            counts: {}, has_mistakes: false, groups: [],
+            mistakes: [], weak_knowledge: [], knowledge: [],
+          },
+        };
+        table['/api/courses/' + id + '/review-pack'] = {
+          data: {
+            llm_mode: 'mock',
+            digests: [{
+              material_id: 'm-' + tag, filename: 'FILE-' + tag + '-pack.pdf',
+              summary: { text: 'TEXT-' + tag, needs_verification: true, model: 'm', prompt_version: 'v' },
+              conflicts: [], evidence: [],
+            }],
+            conflicts: [],
+          },
+        };
+        table['/api/courses/' + id + '/workspace'] = {
+          data: {
+            course: { course_id: id, name: id === GP ? GP_NAME : GEO_NAME, code: tag, language: 'es' },
+            counts: {}, coverage: {}, sessions: [], knowledge: {},
+            recent_materials: [], pending_review: [], metadata: {},
+            gaps: { gaps: [] }, teacher: 'T', semester: 'S',
+          },
+        };
+      }
+      return table;
+    }
+
+    // 在 hash 页渲染 GP, 切到 GEO, 断言: 路由不动 / 状态与持久化是 GEO /
+    // 视图是 GEO 内容 / 查询真的带上了 GEO / 顶栏高亮仍是本页。
+    async function switchStaysOn(table, hash, nav, markerBefore, markerAfter) {
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      const route = grab(sandbox, 'route');
+      const switchCourse = grab(sandbox, 'switchCourse');
+      sandbox.window.location.hash = hash;
+      useCourse(table, GP);
+      await route();
+      const before = html(sandbox);
+      check(hash + ' renders the GP content before switching',
+        before.indexOf(markerBefore) >= 0, before.slice(0, 200));
+      const fetchedBefore = sandbox.__fetched.length;
+      useCourse(table, GEO);
+      await switchCourse(GEO);
+      check(hash + ' keeps the route after switching course',
+        sandbox.window.location.hash === hash, sandbox.window.location.hash);
+      check(hash + ' switches the course state',
+        grab(sandbox, 'state').courseId === GEO,
+        String(grab(sandbox, 'state').courseId));
+      check(hash + ' persists the new course for reload',
+        sandbox.window.localStorage.getItem('ca.course') === GEO,
+        String(sandbox.window.localStorage.getItem('ca.course')));
+      const fresh = sandbox.__fetched.slice(fetchedBefore).join(' | ');
+      check(hash + ' re-queries with the new course',
+        fresh.indexOf(GEO) >= 0, fresh.slice(0, 300));
+      check(hash + ' keeps the top-nav highlight on this page',
+        JSON.stringify(activeNav(sandbox)) === JSON.stringify([nav]),
+        JSON.stringify(activeNav(sandbox)));
+      const bar = sandbox.document.getElementById('course-list').innerHTML;
+      check(hash + ' moves the sidebar highlight to the new course',
+        (bar.match(/class="active"/g) || []).length === 1 &&
+        new RegExp('<a class="active" href="#/courses/' + GEO + '"').test(bar), bar.slice(0, 200));
+      const after = html(sandbox);
+      check(hash + ' renders the GEO content after switching',
+        after.indexOf(markerAfter) >= 0, after.slice(0, 200));
+      check(hash + ' no longer renders the GP content after switching',
+        after.indexOf(markerBefore) === -1, after.slice(0, 300));
+      // 幂等: 已经是当前课程时不碰路由、不发请求。
+      const fetchedAgain = sandbox.__fetched.length;
+      await switchCourse(GEO);
+      check(hash + ' ignores switching to the course already selected',
+        sandbox.window.location.hash === hash && sandbox.__fetched.length === fetchedAgain,
+        sandbox.window.location.hash + ' / +' + (sandbox.__fetched.length - fetchedAgain));
+    }
+
+    const PAGES = [
+      ['#/', '#/', 'FILE-GP-dash.pdf', 'FILE-GEO-dash.pdf'],
+      ['#/today', '#/today', 'NOTE-GP-today', 'NOTE-GEO-today'],
+      ['#/review', '#/review', 'ORDER-GP', 'ORDER-GEO'],
+      ['#/review-pack', '#/review-pack', 'FILE-GP-pack.pdf', 'FILE-GEO-pack.pdf'],
+      ['#/reviews', '#/reviews', 'KP-GP', 'KP-GEO'],
+      ['#/materials', '#/materials', 'FILE-GP-mat.pdf', 'FILE-GEO-mat.pdf'],
+      ['#/knowledge', '#/knowledge', 'TITLE-GP', 'TITLE-GEO'],
+      ['#/students', '#/students', 'NAME-GP', 'NAME-GEO'],
+      ['#/exercises', '#/exercises', 'PROMPT-GP', 'PROMPT-GEO'],
+      ['#/mistakes', '#/mistakes', 'stu-gp', 'stu-geo'],
+    ];
+    for (const [hash, nav, markerBefore, markerAfter] of PAGES) {
+      await switchStaysOn(switchTable(), hash, nav, markerBefore, markerAfter);
+    }
+
+    // 我的课程 (#/courses): 列表页本身渲染两门课, 断言"当前"标记搬到新课程。
+    {
+      const table = switchTable();
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      const route = grab(sandbox, 'route');
+      sandbox.window.location.hash = '#/courses';
+      useCourse(table, GP);
+      await route();
+      useCourse(table, GEO);
+      await grab(sandbox, 'switchCourse')(GEO);
+      check('#/courses keeps the route after switching course',
+        sandbox.window.location.hash === '#/courses', sandbox.window.location.hash);
+      const out = html(sandbox);
+      const at = out.indexOf('card-current');
+      check('#/courses marks exactly one current course',
+        at >= 0 && out.indexOf('card-current', at + 1) === -1, out.slice(0, 200));
+      // 'card-current' 长在卡片 div 上, 卡名 (h3) 在它后面 —— 向后找:
+      // 离它最近的那个卡名就是被标为当前的卡。
+      check('#/courses marks the NEW course as current',
+        at >= 0 && out.indexOf(GEO_NAME, at) >= 0 &&
+        out.indexOf(GEO_NAME, at) < out.indexOf(GP_NAME, at),
+        out.slice(at, at + 200));
+    }
+
+    // 课程详情族: courseId 长在 URL 里, 切换后必须换到新课程的详情页
+    // (否则下一次路由的 setRouteCourse 会把状态翻回旧课程)。
+    {
+      const table = switchTable();
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      const route = grab(sandbox, 'route');
+      sandbox.window.location.hash = '#/courses/' + GP;
+      useCourse(table, GP);
+      await route();
+      check('course detail renders the GP course',
+        html(sandbox).indexOf(GP_NAME) >= 0, html(sandbox).slice(0, 200));
+      useCourse(table, GEO);
+      await grab(sandbox, 'switchCourse')(GEO);
+      check('switching course on a course detail retargets to the new course',
+        sandbox.window.location.hash === '#/courses/' + GEO, sandbox.window.location.hash);
+      await route();
+      check('the retargeted course detail renders the GEO course',
+        html(sandbox).indexOf(GEO_NAME) >= 0, html(sandbox).slice(0, 200));
+    }
+
+    // 错题详情 `#/mistakes/<旧课>/<kp>`: id 在新课程下必然 404, 退到列表。
+    {
+      const table = switchTable();
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      sandbox.window.location.hash = '#/mistakes/' + GP + '/kp-1';
+      useCourse(table, GEO);
+      await grab(sandbox, 'switchCourse')(GEO);
+      check('switching course on a mistake detail falls back to the list',
+        sandbox.window.location.hash === '#/mistakes', sandbox.window.location.hash);
+      await grab(sandbox, 'route')();
+      check('the fallback list renders the GEO course',
+        html(sandbox).indexOf('stu-geo') >= 0, html(sandbox).slice(0, 200));
+    }
+
+    // 侧边栏: 课程项带 data-course-switch (纯左键拦截、不导航), href 仍是
+    // 有效的课程详情深链 (修饰键/中键打开与无 JS 的 fallback)。
+    {
+      const table = switchTable();
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      await grab(sandbox, 'loadSidebar')();
+      const bar = sandbox.document.getElementById('course-list').innerHTML;
+      check('sidebar marks switchable courses',
+        bar.indexOf('data-course-switch="' + GP + '"') >= 0 &&
+        bar.indexOf('data-course-switch="' + GEO + '"') >= 0, bar.slice(0, 300));
+      check('sidebar keeps the detail URL as the href fallback',
+        bar.indexOf('href="#/courses/' + GP + '"') >= 0 &&
+        bar.indexOf('href="#/courses/' + GEO + '"') >= 0, bar.slice(0, 300));
+    }
+  }
+
   // ------------------------------------------------------------- 汇总
 
   if (failures.length) {

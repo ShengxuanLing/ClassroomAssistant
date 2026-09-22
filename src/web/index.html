@@ -53,6 +53,10 @@
            翻译过的界面文案。原先硬编码的 aria-label="Course" /
            "UI language" 反而**覆盖**掉它, 于是 es / ca 界面下屏幕阅读器读出
            英文 (2026-09-21 修)。顺带满足 WCAG 2.5.3: 可访问名与可见标签一致。 -->
+      <!-- 2026-09-22: 这个 <select> 有两种语义, 由 renderCourseSwitcher()
+           按页面类型重建选项: 在全局页 (概览/今日) 上它是**查看范围**
+           (第一项 = 全部课程, 默认选中, 只筛本页); 在其余页面上它仍是
+           课程上下文切换器。标签用中性的 mc.switch, 两种语义下都读得通。 -->
       <label class="lang-picker course-picker">
         <span data-i18n="mc.switch">切换课程</span>
         <select id="course-switch"></select>

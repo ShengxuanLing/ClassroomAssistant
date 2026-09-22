@@ -463,7 +463,10 @@ class TestTheSidebarShowsTheCodeNotTheId:
     def test_the_sidebar_renders_the_course_code(self):
         body = function_body(read_asset("app.js"), "function courseListHtml(courses) {")
         assert "esc(course.code)" in body
-        assert "esc(course.course_id)" not in body, "侧边栏不得把哈希当文案"
+        # 2026-09-22 解耦: 哈希多了一个属性位 (data-course-switch, 点击委托的
+        # 取值处) —— 仍不是文案。用与切换器测试同一套属性感知的判据, 而不是
+        # 字面量 "esc(course.course_id) 不出现" (那个一刀切连属性位一起杀)。
+        assert course_id_text_offenders(body) == []
 
     def test_the_code_line_is_omitted_when_the_course_has_no_code(self):
         """没有代码就只显示名称 —— 不要渲染一行空的第二行。"""
@@ -471,10 +474,16 @@ class TestTheSidebarShowsTheCodeNotTheId:
         assert "course.code" in body
         assert ": '';" in body
 
-    def test_the_sidebar_keeps_the_course_id_in_the_href_only(self):
-        """id 仍然要进 ``href`` —— 那是导航用的技术标识, 不是文案。"""
+    def test_the_sidebar_keeps_the_course_id_in_attributes_only(self):
+        """id 只进非文本属性, 不当文案 (2026-09-22 解耦后有两个属性位)。
+
+        ``href`` 是课程详情深链 (修饰键/中键打开与无 JS 的 fallback);
+        ``data-course-switch`` 是点击委托的取值处 (纯左键只换 context、不导航)。
+        """
         body = function_body(read_asset("app.js"), "function courseListHtml(courses) {")
         assert "encodeURIComponent(course.course_id)" in body
+        assert "data-course-switch" in body
+        assert course_id_text_offenders(body) == []
 
     def test_the_switcher_falls_back_to_the_code_not_the_id(self):
         body = function_body(
