@@ -174,6 +174,187 @@ function wireSessionForm() {
   });
 }
 
+// ---- Guia docent (课程 metadata 的 ``guia_*`` 键) ------------------------
+//
+// 数据来源是导入脚本写进课程 metadata 的结构化字段 (见
+// scripts/dev-archive/import_guia_geo_metadata.py), 经
+// ``GET /api/courses/{id}/workspace`` 的 ``metadata`` 原样透传到前端。
+//
+// 三条约束:
+//
+// 1. **原文原样渲染** —— guia docent 是加泰罗尼亚语原文, 只做界面标题的翻译,
+//    内容一个字节不改写不翻译 (README: "原文一律按原样显示");
+// 2. **没有 guia_* 键就不渲染卡片** —— 其余课程 (还没有导入 guia docent)
+//    的课程页必须和改动前一模一样, 零视觉影响;
+// 3. 所有内容都过 ``esc()`` —— 它来自 API 的 metadata, 与夹具数据同级别的
+//    不可信输入。
+
+/** metadata 里是否有任何 ``guia_*`` 键 (决定 guia docent 卡片是否渲染)。 */
+function hasGuia(metadata) {
+  return Object.keys(metadata || {}).some((key) =>
+    key.indexOf('guia_') === 0);
+}
+
+/** 列表项 ``<li>`` (跳过空值; 内容逐字渲染, 过 esc() 转义)。 */
+function guiaList(items) {
+  const list = (items || []).filter((item) => item !== '' && item !== null && item !== undefined);
+  if (!list.length) return '';
+  return '<ul class="guia-list">' + list.map((item) => '<li>' + esc(item) + '</li>').join('') + '</ul>';
+}
+
+/** 一段小节: 小标题 + 正文 (paragraph / list 皆可)。 */
+function guiaSection(title, bodyHtml) {
+  if (!bodyHtml) return '';
+  return '<h3 class="guia-section-title">' + esc(title) + '</h3>' + bodyHtml;
+}
+
+/** 评估活动表 (题名 + 权重 + 依据的 guia 行号)。缺权重时显示 — 而不是猜。 */
+function guiaAssessmentTable(items, caption) {
+  const rows = (items || []).map((item) => (
+    '<tr><td>' + esc(item.title || '') + '</td>' +
+    '<td class="num">' + dash(item.weight !== undefined && item.weight !== null && item.weight !== '' ? item.weight : null) + '</td></tr>'
+  )).join('');
+  if (!rows) return '';
+  return '<table class="data">' + tableCaption(caption) +
+    '<thead><tr><th scope="col">' + esc(t('guia.activity')) + '</th>' +
+    '<th scope="col" class="num">' + esc(t('guia.weight')) + ' (%)</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>';
+}
+
+/**
+ * guia docent 卡片 (页头下方, **默认折叠**)。
+ *
+ * 用户反馈: 全部展开太占空间 (卡片高 3696px)。改为 ``<details>`` 默认收起,
+ * summary 行显示标题 + 学年; 正文全部藏进去, 点 summary 或页头的
+ * 「查看详情」按钮展开。数据不变, 只是默认不铺开。
+ */
+function guiaDocentCard(metadata) {
+  if (!hasGuia(metadata)) return '';
+  const g = metadata;
+
+  // 基本信息: 学分 / 学年 / 学位 / 年级 / 课程代码 (代码可能等于课程 code,
+  // 仍按原样展示 —— 两个来源不一致时各显各的, 不替用户挑一个)。
+  const facts = [
+    g.guia_credits ? '<span><dt>' + esc(t('guia.credits')) + '</dt><dd>' + esc(g.guia_credits) + '</dd></span>' : '',
+    g.guia_academic_year ? '<span><dt>' + esc(t('guia.academicYear')) + '</dt><dd>' + esc(g.guia_academic_year) + '</dd></span>' : '',
+    g.guia_degree ? '<span><dt>' + esc(t('guia.degree')) + '</dt><dd>' + esc(g.guia_degree) + '</dd></span>' : '',
+    g.guia_year ? '<span><dt>' + esc(t('guia.year')) + '</dt><dd>' + esc(g.guia_year) + '</dd></span>' : '',
+    g.guia_course_code ? '<span><dt>' + esc(t('guia.courseCode')) + '</dt><dd>' + esc(g.guia_course_code) + '</dd></span>' : '',
+  ].filter(Boolean).join('');
+
+  const contact = (g.guia_contact_name || g.guia_contact_email)
+    ? '<p class="small">' +
+      (g.guia_contact_name
+        ? '<strong>' + esc(g.guia_contact_name) + '</strong>' : '') +
+      (g.guia_contact_email
+        ? (g.guia_contact_name ? ' · ' : '') +
+          '<a href="mailto:' + esc(g.guia_contact_email) + '">' + esc(g.guia_contact_email) + '</a>' : '') +
+      '</p>' : '';
+
+  const team = guiaList(g.guia_teaching_team);
+  const outcomes = guiaList((g.guia_learning_outcomes || []).map((o) =>
+    (o && o.code ? o.code + ' — ' : '') + (o && o.text ? o.text : '')));
+  const blocks = guiaList((g.guia_syllabus || []).map((b) =>
+    (b && b.title ? b.title : '') + (b && b.items && b.items.length
+      ? '<ul class="guia-list">' + b.items.map((it) => '<li>' + esc(it) + '</li>').join('') + '</ul>' : '')));
+  const hours = (g.guia_teaching_hours || []).length
+    ? guiaList(g.guia_teaching_hours.map((h) =>
+        (h.title || '') + ' — ' + (h.hours !== undefined ? h.hours : '—') + ' h / ' +
+        (h.ects !== undefined ? h.ects : '—') + ' ECTS')) : '';
+
+  return '<div class="card" id="guia-docent">' +
+    '<details class="guia-fold">' +
+    '<summary><span class="guia-fold-title">' + t('guia.title') + '</span>' +
+    (g.guia_academic_year ? '<span class="tiny muted">' + esc(g.guia_academic_year) + '</span>' : '') +
+    '<span class="guia-fold-hint">' + t('guia.foldHint') + '</span>' +
+    '</summary>' +
+    (facts ? '<dl class="kv guia-facts">' + facts + '</dl>' : '') +
+    contact +
+    guiaSection(t('guia.team'), team) +
+    guiaSection(t('guia.prerequisites'), g.guia_prerequisites ? '<p class="small">' + esc(g.guia_prerequisites) + '</p>' : '') +
+    guiaSection(t('guia.objectives'), guiaList(g.guia_objectives)) +
+    guiaSection(t('guia.outcomes'), outcomes) +
+    guiaSection(t('guia.syllabus'), blocks) +
+    (g.guia_syllabus_note ? '<p class="tiny muted">' + esc(g.guia_syllabus_note) + '</p>' : '') +
+    guiaSection(t('guia.teachingHours'), hours) +
+    guiaSection(t('guia.assessment'),
+      guiaAssessmentTable(g.guia_assessment_items, t('guia.assessment'))) +
+    (g.guia_assessment_note ? '<p class="tiny muted">' + esc(g.guia_assessment_note) + '</p>' : '') +
+    guiaSection(t('guia.assessmentItems'), guiaList(g.guia_assessment_items_detail)) +
+    guiaSection(t('guia.passRequirements'), g.guia_pass_requirements ? '<p class="small">' + esc(g.guia_pass_requirements) + '</p>' : '') +
+    guiaSection(t('guia.recovery'), g.guia_recovery ? '<p class="small">' + esc(g.guia_recovery) + '</p>' : '') +
+    guiaSection(t('guia.aiPolicy'), g.guia_ai_policy ? '<p class="small">' + esc(g.guia_ai_policy) + '</p>' : '') +
+    guiaSection(t('guia.software'), g.guia_software ? '<p class="small">' + esc(g.guia_software) + '</p>' : '') +
+    (g.guia_groups && g.guia_groups.length
+      ? guiaSection(t('guia.groups'),
+          '<table class="data">' + tableCaption(t('guia.groups')) + '<thead><tr>' +
+          '<th scope="col">' + esc(t('guia.groupKind')) + '</th>' +
+          '<th scope="col" class="num">' + esc(t('guia.group')) + '</th>' +
+          '<th scope="col">' + esc(t('course.language')) + '</th>' +
+          '<th scope="col">' + esc(t('course.semester')) + '</th>' +
+          '<th scope="col">' + esc(t('guia.shift')) + '</th>' +
+          '</tr></thead><tbody>' +
+          g.guia_groups.map((row) => (
+            '<tr><td>' + esc(row.kind || '') + '</td>' +
+            '<td class="num">' + esc(row.group || '') + '</td>' +
+            '<td>' + esc(row.language || '') + '</td>' +
+            '<td>' + esc(row.semester || '') + '</td>' +
+            '<td>' + esc(row.shift || '') + '</td></tr>'
+          )).join('') + '</tbody></table>')
+      : '') +
+    (g.guia_source ? '<p class="tiny muted guia-source">' + esc(g.guia_source) + '</p>' : '') +
+    '</details>' +
+    '</div>';
+}
+
+/**
+ * 页头的 guia docent **精简摘要** (替代教师/学期/课程语言三行)。
+ *
+ * 只放三样最有用的: 学分 + 学年 + 学位 (一行) / 联系人与教学团队 (一行) /
+ * 「查看详情」按钮 (展开下面的折叠卡片并滚过去)。课程语言不重复显示 ——
+ * 副标题 courseIdentity 已经有 code · language。
+ */
+function guiaBrief(metadata) {
+  if (!hasGuia(metadata)) return '';
+  const g = metadata;
+  const mainParts = [];
+  if (g.guia_credits) mainParts.push(esc(g.guia_credits) + ' ECTS');
+  if (g.guia_academic_year) mainParts.push(esc(g.guia_academic_year));
+  if (g.guia_degree) {
+    const suffix = [g.guia_degree_type, g.guia_year]
+      .filter((part) => part !== undefined && part !== null && part !== '')
+      .map(esc).join(' · ');
+    mainParts.push(esc(g.guia_degree) + (suffix ? ' (' + suffix + ')' : ''));
+  }
+  const contact = g.guia_contact_name
+    ? (g.guia_contact_email
+      ? '<a href="mailto:' + esc(g.guia_contact_email) + '">' + esc(g.guia_contact_name) + '</a>'
+      : esc(g.guia_contact_name))
+    : '';
+  const peopleParts = [contact]
+    .concat(g.guia_teaching_team || [])
+    .filter((part) => part !== '' && part !== null && part !== undefined)
+    .map(esc)
+    .join(' · ');
+  return '<div class="guia-brief">' +
+    (mainParts.length ? '<p class="guia-brief-main"><b>' + mainParts.join('</b> · <b>') + '</b></p>' : '') +
+    (peopleParts ? '<p class="guia-brief-people small">' + peopleParts + '</p>' : '') +
+    '<button type="button" class="small" data-action="open-guia">' +
+    t('guia.details') + ' ↓</button>' +
+    '</div>';
+}
+
+/** 「查看详情」按钮: 展开折叠卡片并滚过去 (summary 本身也可以点, 这是快捷键)。 */
+function wireGuiaBrief() {
+  const button = document.querySelector('[data-action="open-guia"]');
+  const details = document.querySelector('#guia-docent details');
+  if (!button || !details) return;
+  button.addEventListener('click', () => {
+    details.open = true;
+    details.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 // ---- 课程页 (Task 56.1) --------------------------------------------------
 
 async function pageCourse(courseId) {
@@ -198,11 +379,17 @@ async function pageCourse(courseId) {
     '<div class="page-head"><div class="crumbs"><a href="#/">' + t('概览') + '</a>' + t(' / 课程') + '</div>' +
     '<h1>' + esc(course.name || course.code || '') + '</h1>' +
     '<p class="subtitle mono small">' + esc(courseIdentity(course)) + '</p>' +
-    '<dl class="kv">' +
-    kv(t('course.teacher'), data.teacher || '—') +
-    kv(t('course.semester'), data.semester || '—') +
-    kv(t('course.language'), course.language || '—') +
-    '</dl></div>' +
+    // 有 guia docent 时, 页头三行 (教师/学期/课程语言) 换成 guia 精简摘要 ——
+    // 教师/联系人本来就该来自 guia docent, 而且摘要有「查看详情」入口。
+    // 没有 guia 数据的课程保持原三行不变。
+    (hasGuia(data.metadata)
+      ? guiaBrief(data.metadata)
+      : '<dl class="kv">' +
+        kv(t('course.teacher'), data.teacher || '—') +
+        kv(t('course.semester'), data.semester || '—') +
+        kv(t('course.language'), course.language || '—') +
+        '</dl>') +
+    '</div>' +
 
     '<div class="grid grid-4" style="margin-bottom:16px">' +
     stat(t('course.sessions'), counts.sessions || 0) +
@@ -286,9 +473,12 @@ async function pageCourse(courseId) {
           esc(gap.description || gap.knowledge_point_id || '') + '</li>'
         )).join('') + '</ul>'
       : emptyState(t('未检测到缺口。'))) +
-    '</div>'
+    '</div>' +
+
+    guiaDocentCard(data.metadata || {})
   );
   wireSessionForm();
+  wireGuiaBrief();
 }
 
 // ---- 课堂页 (Task 56.2 / 56.3) -------------------------------------------

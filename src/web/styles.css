@@ -418,6 +418,50 @@ label.field input, label.field select, label.field textarea { width: 100%; }
 .kv-group .kv dt { color: var(--text-muted); overflow-wrap: anywhere; }
 .kv-group .kv dd { font-variant-numeric: tabular-nums; }
 
+/* guia docent 卡片 (课程页, metadata.guia_* 驱动)。
+ *
+ * 基本信息 facts 用 4 列网格而不是通用 .kv 两列 —— 这里全是短值
+ * (6 / 2026/2027 / FB / 2), 四列铺满卡宽, 两列会留一半空白。
+ * 窄屏收两列。小节标题 (h3) 用大写小字号分隔条样式, 与 .kv-group-label
+ * 同一视觉词汇。嵌套列表 (Bloc > 条目) 去默认缩进, 只留一层项目符号。 */
+.guia-facts { grid-template-columns: repeat(4, max-content) minmax(0, 1fr); gap: 4px 18px; }
+.guia-facts span { display: contents; }
+@media (max-width: 720px) {
+  .guia-facts { grid-template-columns: repeat(2, max-content) minmax(0, 1fr); }
+}
+.guia-section-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin: 14px 0 4px;
+}
+.guia-list { margin: 4px 0; padding-left: 18px; }
+.guia-list ul { margin: 2px 0 6px; padding-left: 18px; }
+.guia-list li { margin: 2px 0; font-size: 13px; }
+.guia-source { margin-top: 14px; overflow-wrap: anywhere; }
+
+/* 页头的 guia 精简摘要 (替代教师/学期/课程语言三行)。
+ * 两行文字 + 一个按钮, 紧凑; 学分加粗便于扫读。 */
+.guia-brief { display: grid; gap: 2px; justify-items: start; }
+.guia-brief-main { margin: 0; font-size: 13px; }
+.guia-brief-main b:first-child { font-weight: 600; }
+.guia-brief-people { margin: 0; color: var(--text-muted); }
+
+/* 折叠卡片: summary 行就是原来的 card-head (标题 + 学年),
+ * 加右侧「点击展开全文」提示; ::marker 换成加号, 展开时变减号。 */
+.guia-fold > summary {
+  display: flex; align-items: baseline; gap: 10px;
+  cursor: pointer; list-style: none;
+}
+.guia-fold > summary::-webkit-details-marker { display: none; }
+.guia-fold > summary::before {
+  content: '+'; color: var(--text-muted); font-weight: 700;
+}
+.guia-fold[open] > summary::before { content: '\2212'; }
+.guia-fold > summary:hover .guia-fold-title { color: var(--accent); }
+.guia-fold-title { font-size: 16px; font-weight: 700; }
+.guia-fold-hint { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+.guia-fold[open] .guia-fold-hint { visibility: hidden; }
+
 /* 材料表的补充说明块 (D1 警告 + D4 零证据提示)。
  *
  * 结构: 说明**不再**塞进 "状态" 格, 而是自成一个 `tr.material-note`

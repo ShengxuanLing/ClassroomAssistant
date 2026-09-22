@@ -2346,6 +2346,134 @@ async function audit() {
     }
   }
 
+  // ---- guia docent 卡片 (课程页, metadata.guia_* 驱动) ----------------
+  //
+  // 数据流: 导入脚本把结构化 guia docent 写进课程 metadata (``guia_*`` 键),
+  // course_workspace 原样透传, 前端只渲染不改写。守卫四件事:
+  //   1. 有 guia_* 键时卡片渲染, 原文逐字出现 (加泰语原文不加翻译不改写);
+  //   2. 来自 API 的内容必须过 esc() —— 用含 HTML 的夹具值证明不会注入;
+  //   3. es/ca 界面语言下小节标题走 guia.* 词条, 不漏中文 (内容是加泰语,
+  //      本来就无 CJK —— 出现 CJK 只可能是界面标题漏译);
+  //   4. 没有 guia_* 键的课程页完全不渲染这张卡片 (其余 4 门课零影响)。
+  {
+    const guiaMetadata = {
+      teacher: 'Prof. Ana', semester: '2026-2',
+      guia_course_code: '106934',
+      guia_credits: '6',
+      guia_academic_year: '2026/2027',
+      guia_degree: 'Gestió de Ciutats Intel·ligents i Sostenibles',
+      guia_degree_type: 'FB',
+      guia_year: '2',
+      guia_contact_name: 'Marc Castello Bueno',
+      guia_contact_email: 'marc.castello.bueno@uab.cat',
+      guia_teaching_team: ['Miquel Àngel Vargas Garcia', 'Magda Pla Montferrer'],
+      guia_prerequisites: 'No hi ha prerequisits vinculats a aquesta assignatura.',
+      guia_objectives: ['Objectiu 1', 'Objectiu 2'],
+      guia_learning_outcomes: [
+        { code: 'CM09', text: 'Relacionar els coneixements i les habilitats en geomàtica.' },
+      ],
+      guia_syllabus: [
+        { title: 'Bloc 1. Introducció a la cartografia', items: ['El mapa: elements bàsics'] },
+        { title: 'Bloc 2. Projeccions cartogràfiques', items: ['La projecció UTM'] },
+      ],
+      guia_teaching_hours: [
+        { title: 'Classes magistrals', hours: '20', ects: '0,8' },
+      ],
+      guia_assessment_items: [
+        { title: 'Exàmens teòrics i pràctics', weight: '40' },
+        { title: 'Treball final', weight: '30' },
+      ],
+      guia_assessment_items_detail: ['Treball final (30%): mapa temàtic urbà'],
+      guia_pass_requirements: 'La part teòrica i pràctica s\'ha d\'aprovar per separat.',
+      guia_recovery: 'Es podrà recuperar els exàmens teòrics i pràctics.',
+      guia_ai_policy: 'Es permet l\'ús de la IA amb transparència.',
+      guia_software: 'MiraMon <img src=x onerror=alert(1)>',  // 注入载荷: 必须被 esc()
+      guia_groups: [
+        { kind: 'TE', group: '61', language: 'Català', semester: 'primer quadrimestre', shift: 'tarda' },
+        { kind: 'PLAB', group: '611', language: 'Català', semester: 'primer quadrimestre', shift: 'tarda' },
+      ],
+      guia_source: 'guia docent PDF (extret 2026-09-22)',
+    };
+
+    const guiaRoutes = () => Object.assign({}, routes(), {});
+    const table = guiaRoutes();
+    table['/api/courses/' + COURSE_ID + '/workspace'] =
+      courseWorkspace({ metadata: guiaMetadata });
+
+    const zhSandbox = await renderPage(pageByName('course'), table, 'zh');
+    const out = html(zhSandbox);
+    check('guia docent card renders on the course page', out.includes('id="guia-docent"'));
+    // 原文逐字: 带重音的加泰语原文必须原样出现在 DOM 里 (esc() 不改写非 ASCII)。
+    check('guia docent keeps accented Catalan text verbatim',
+      out.includes('Introducció a la cartografia') &&
+      out.includes('Gestió de Ciutats Intel·ligents i Sostenibles'));
+    check('guia docent shows the contact name verbatim',
+      out.includes('Marc Castello Bueno'));
+    check('guia docent shows syllabus blocks and items',
+      out.includes('Bloc 1. Introducció a la cartografia') && out.includes('La projecció UTM'));
+    check('guia docent shows the assessment weights',
+      out.includes('Exàmens teòrics i pràctics') && out.includes('40'));
+    check('guia docent shows the teaching groups table',
+      out.includes('PLAB') && out.includes('primer quadrimestre'));
+    check('guia docent escapes HTML from metadata (no raw tag)',
+      !out.includes('<img src=x'), 'raw tag leaked into DOM');
+    check('guia docent escapes HTML from metadata (entity present)',
+      out.includes('&lt;img src=x'));
+    check('guia docent card carries the source line',
+      out.includes('guia docent PDF (extret 2026-09-22)'));
+
+    // 页头精简摘要: 替代教师/学期/课程语言三行, 且自带「查看详情」按钮。
+    check('course head shows the guia brief instead of the three kv rows',
+      out.includes('guia-brief-main') && !out.includes('6 ECTS') === false);
+    check('guia brief lists credits, year and degree',
+      out.includes('6 ECTS') && out.includes('2026/2027') &&
+      out.includes('Gestió de Ciutats Intel·ligents i Sostenibles'));
+    check('guia brief lists the contact and the teaching team',
+      out.includes('Marc Castello Bueno') && out.includes('Miquel Àngel Vargas Garcia'));
+    check('guia brief has the open-details button',
+      out.includes('data-action="open-guia"'));
+    check('course head no longer renders the teacher/semester kv rows when guia exists',
+      !/<dt>Profesor\/a<\/dt>/.test(out) && !/<dt>Professor\/a<\/dt>/.test(out) &&
+      !/<dt>教师<\/dt>/.test(out));
+
+    // 折叠: 卡片必须默认收起 (无 open 属性), 全文藏在 details 里。
+    check('guia details is collapsed by default',
+      /<details class="guia-fold">/.test(out) &&
+      !/<details class="guia-fold" open/.test(out));
+    const zhSandboxDetails = zhSandbox.document.querySelector('#guia-docent details');
+    check('guia details element exists and starts closed',
+      zhSandboxDetails !== null && zhSandboxDetails.open === false);
+    check('guia full text lives inside the details element',
+      zhSandboxDetails !== null &&
+      zhSandboxDetails.innerHTML.includes('La projecció UTM'));
+    // 「查看详情」按钮真的能展开 (接线存在, 不模拟真实点击 —— 点击冒烟
+    // 属于本脚本固化边界里明确未覆的部分)。
+    check('wireGuiaBrief is wired after pageCourse renders',
+      typeof zhSandbox.wireGuiaBrief === 'function' &&
+      zhSandbox.document.querySelector('[data-action="open-guia"]') !== null);
+
+    // es/ca: 小节标题走 guia.* 词条; 内容是加泰语原文 (无 CJK),
+    // 所以整页 CJK 检查 = 界面标题漏译检测。
+    for (const lang of ['es', 'ca']) {
+      const localized = await renderPage(pageByName('course'), table, lang);
+      const localizedOut = html(localized);
+      check('guia docent card renders in ' + lang,
+        localizedOut.includes('id="guia-docent"'));
+      check('guia docent localized title in ' + lang,
+        localizedOut.includes(lang === 'es' ? 'Guia docente' : 'Guia docent</span>'));
+      check('guia docent has no untranslated CJK in ' + lang,
+        !/[\u4e00-\u9fff]/.test(localizedOut),
+        'CJK leaked: ' + firstCjk(localizedOut));
+    }
+
+    // 没有 guia_* 键: 其余课程页必须完全不渲染这张卡片, 且页头保持原三行。
+    const plain = await renderPage(pageByName('course'), routes(), 'zh');
+    check('course page without guia_* keys renders no guia card',
+      !html(plain).includes('id="guia-docent"'));
+    check('course page without guia_* keys keeps the teacher/semester rows',
+      /<dt>教师<\/dt><dd>/.test(html(plain)));
+  }
+
   // ---- 静态检查: app.js 写出的每个 class 都在 styles.css 里有定义 ----
   //
   // 用例来源: 一处真实的欠账。Task 41 的 status.md 声明 ".path-chain /
