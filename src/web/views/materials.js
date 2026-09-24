@@ -3,6 +3,21 @@
  */
 'use strict';
 
+function materialSessionCell(session) {
+  if (!session) {
+    return '<span class="pill pill-warn">' + esc(t('session.missing')) + '</span>';
+  }
+  const parts = sessionDisplayParts(session);
+  const lines = [
+    parts.date,
+    [parts.number, parts.time].filter(Boolean).join(' · '),
+    [parts.kind, parts.room].filter(Boolean).join(' · '),
+  ].filter(Boolean);
+  return lines.map((line, index) => (
+    '<span class="' + (index === 0 ? '' : 'tiny ') + 'session-line">' + esc(line) + '</span>'
+  )).join('<br>');
+}
+
 async function pageMaterials() {
   markActiveNav('#/materials');
   const courseId = await requireCourse();
@@ -25,24 +40,19 @@ async function pageMaterials() {
   const counts = status.by_status || {};
   const activeCounts = Object.keys(counts).sort().filter((k) => counts[k] > 0);
 
+  // 统一分析状态 (服务端真相): POST .../analyze 的幂等状态 + 失败阶段
+  // + 用户可读错误。刷新页面后状态从这里恢复, 不依赖任何前端 loading。
+  const analyses = materialPayload.analysis_statuses || {};
   const rows = materials.map((m) => (
     '<tr><td class="break-all">' + esc(m.filename) +
     '<br><span class="tiny muted mono">' + esc(m.material_id) + '</span></td>' +
     '<td class="small">' + esc(m.material_type || m.source_type || '—') +
     '<br><span class="tiny muted">' + esc(m.extension || '') + ' · ' + fmtBytes(m.size) + '</span></td>' +
-    '<td>' + pill(m.processing_status) + (m.duplicate ? ' <span class="pill pill-info">' + t('重复') + '</span>' : '') +
-    (m.error ? '<br><span class="tiny pill pill-bad">' + esc(m.error) + '</span>' : '') +
-    // 成功但有话要说 (warning) + 成功但零证据: 都不改上面的状态 pill,
-    // 只在下面各加一行 (见 app.js 的 warningRow / zeroEvidenceHint)。
-    warningRow(m) + zeroEvidenceHint(m) + '</td>' +
+    '<td>' + materialAnalysisCell(m, analyses[m.material_id]) + '</td>' +
     '<td class="small">' + (m.session_id
-      ? esc(sessionLabel(sessionById[m.session_id], m.session_id)) : '—') + '</td>' +
-    '<td class="small nowrap">' +
-    '<button data-action="process-material" data-course="' + esc(courseId) + '" data-material="' + esc(m.material_id) + '">' + t('处理') + '</button> ' +
-    '<button data-action="retry-material" data-course="' + esc(courseId) + '" data-material="' + esc(m.material_id) + '">' + t('重试') + '</button> ' +
-    '<button data-action="material-evidence" data-course="' + esc(courseId) + '" data-material="' + esc(m.material_id) + '">' + t('证据') + '</button> ' +
-    '<button data-action="material-digest" data-course="' + esc(courseId) + '" data-material="' + esc(m.material_id) + '">' + t('摘要') + '</button> ' +
-    '<button data-action="ai-analyze" data-course="' + esc(courseId) + '" data-material="' + esc(m.material_id) + '">' + t('ai.analyze') + '</button>' +
+      ? materialSessionCell(sessionById[m.session_id])
+      : '<span class="muted">' + esc(t('未关联课堂')) + '</span>') + '</td>' +
+    '<td class="small nowrap">' + materialActionButtons(courseId, m, analyses[m.material_id]) +
     '</td></tr>'
   )).join('');
 
@@ -71,19 +81,115 @@ async function pageMaterials() {
     '</form></div>' +
 
     '<div class="card"><div class="card-head"><h2>' + t('材料列表') + '</h2>' +
-    '<span class="small muted">' + t('处理顺序按 material_id 升序，串行执行') + '</span></div>' +
+    '<span class="small muted">' + t('AI分析将自动完成从材料解析到知识点生成的全部流程。') + '</span></div>' +
     (materials.length
       ? '<table class="data">' + tableCaption(t('材料列表')) + '<thead><tr><th scope="col">' + t('文件') + '</th><th scope="col">' + t('类型') + '</th><th scope="col">' + t('状态') + '</th><th scope="col">' + t('课堂') + '</th>' +
         '<th scope="col">' + t('操作') + '</th></tr></thead><tbody>' + rows + '</tbody></table>'
       : emptyState(t('该课程还没有材料。'))) +
     '</div>' +
-    '<div id="evidence-panel"></div>' +
-    '<div id="digest-panel"></div>' +
     '<div id="ai-panel"></div>'
   );
+  // 有进行中的分析才轮询 (1.2s, 与任务坞同量级); 全部终态时一次都不定时。
+  scheduleMaterialAnalysisPolling(courseId, materials, analyses);
 }
 
-// ---- 待审核 --------------------------------------------------------------
+// ---- 统一分析状态 (材料页「AI分析」) --------------------------------------
+//
+// 状态真相永远在服务端 (POST .../analyze + GET /materials 里的
+// analysis_statuses); 这里只负责把它翻成人话。内部 pipeline 阶段
+// (处理/重试/证据/摘要) 不再作为按钮暴露 —— 见任务书「材料页重构」。
+
+function materialStageLabel(stage) {
+  const key = 'mat.stage.' + stage;
+  const label = t(key);
+  return label === key ? (stage || '') : label;
+}
+
+function materialAnalysisCell(m, analysis) {
+  const status = analysis ? analysis.status : null;
+  let html = pill(m.processing_status) + (m.duplicate ? ' <span class="pill pill-info">' + t('重复') + '</span>' : '');
+  if (status === 'PROCESSING') {
+    const stage = materialStageLabel(analysis.current_stage);
+    html += '<br><span class="pill pill-warn">' + esc(t('ai.analyzing')) + '</span>' +
+      '<br><span class="tiny muted">' + esc(t('mat.currentStage')) + ': ' + esc(stage) + '</span>';
+  } else if (status === 'FAILED') {
+    const stage = materialStageLabel(analysis.current_stage);
+    html += '<br><span class="pill pill-bad">' + esc(t('ai.autoFailed')) + '</span>' +
+      '<br><span class="tiny muted">' + esc(t('mat.failedStage')) + ': ' + esc(stage) + '</span>';
+    if (analysis.error_message) {
+      html += '<br><span class="tiny pill pill-bad">' + esc(analysis.error_message) + '</span>';
+    }
+  } else if (status === 'COMPLETED') {
+    html += '<br><span class="tiny muted">' + esc(t('mat.completed')) + '</span>';
+  }
+  // 摄取层自己的错误行 (FAILED / warning / 零证据) 原样保留 —— 它们是
+  // 服务端诊断, 不是用户可执行的内部操作。
+  if (m.error) html += '<br><span class="tiny pill pill-bad">' + esc(m.error) + '</span>';
+  html += warningRow(m) + zeroEvidenceHint(m);
+  return html;
+}
+
+function materialActionButtons(courseId, m, analysis) {
+  const base = 'data-course="' + esc(courseId) + '" data-material="' + esc(m.material_id) + '"';
+  const status = analysis ? analysis.status : null;
+  let html = '';
+  if (status === 'PROCESSING') {
+    // 分析中: 禁用态按钮 (不再是可点的「AI分析」), 后端幂等闸门兜底。
+    html += '<button disabled>' + esc(t('ai.analyzing')) + '</button> ';
+  } else if (status === 'FAILED') {
+    // 失败态恢复操作: 重新分析 (重新跑完整链路, 系统不支持安全断点恢复)。
+    html += '<button data-action="analyze-material" ' + base + '>' + esc(t('mat.retry')) + '</button> ';
+  } else {
+    html += '<button data-action="analyze-material" ' + base + '>' + esc(t('ai.analyze')) + '</button> ';
+  }
+  html += '<button class="danger" data-action="delete-material" ' + base + '>' + esc(t('mat.delete')) + '</button>';
+  return html;
+}
+
+let __materialPoller = null;
+
+function stopMaterialAnalysisPolling() {
+  if (__materialPoller) {
+    clearTimeout(__materialPoller);
+    __materialPoller = null;
+  }
+}
+
+function scheduleMaterialAnalysisPolling(courseId, materials, analyses) {
+  // 单一定时器: 重复进入/重绘不叠加 (先清旧的再定新的); 切页时 route()
+  // 重绘会重新调度, 离开页面后没有任何轮询路径存活。
+  stopMaterialAnalysisPolling();
+  const active = materials.some((m) => {
+    const a = analyses[m.material_id];
+    return a && a.status === 'PROCESSING';
+  });
+  if (!active || typeof setTimeout !== 'function') return;
+  __materialPoller = setTimeout(async () => {
+    __materialPoller = null;
+    // 页面已被切走 (路由重绘过) -> 停止, 不再拉状态。
+    if (!onTaskLane()) return;
+    try {
+      const payload = await api('/materials', { query: { course_id: courseId } });
+      const statuses = payload.analysis_statuses || {};
+      const stillActive = (payload.materials || []).some((m) => {
+        const a = statuses[m.material_id];
+        return a && a.status === 'PROCESSING';
+      });
+      // 完成或失败 -> 停止轮询并重绘一次 (终态); 否则下一拍。
+      if (stillActive) {
+        scheduleMaterialAnalysisPolling(courseId, payload.materials || [], statuses);
+      } else {
+        await route();
+      }
+    } catch (err) {
+      // 网络抖动不终止轮询: 下一拍再试, 与 pollRestoredTask 同口径。
+      __materialPoller = setTimeout(
+        () => { scheduleMaterialAnalysisPolling(courseId, materials, analyses); },
+        2400
+      );
+    }
+  }, 1200);
+}
 
 
 function wireUploadForm() {
@@ -234,57 +340,106 @@ async function loadAiSummaryIntoPanel(courseId, materialId) {
   }
 }
 
-async function actionAiAnalyze(courseId, materialId, button) {
-  // AI 分析**不**登记可恢复任务 (P3-2): 服务端没有"正在分析"这个可读状态
-  // —— /processing/{id} 的 job.ai 与 /ai-summary 都只暴露**已经存在**的
-  // 报告。存了它就只能要么永远转圈、要么替服务端编一个结局。
-  const taskId = startTask(t('ai.analyzing') + ' · ' + materialId);
-  const panel = document.getElementById('ai-panel');
-  if (button) button.disabled = true;
-  if (panel) panel.innerHTML = '<p class="muted">' + t('ai.analyzing') + '</p>';
-  try {
-    const report = await api('/materials/' + encodeURIComponent(materialId) + '/ai-analyze', {
-      method: 'POST', query: { course_id: courseId }, body: {},
-    });
-    const auto = report.auto_accepted || [];
-    const review = report.needs_review || [];
-    const conflicts = report.conflicts || [];
-    const autoCount = Array.isArray(auto) ? auto.length : (auto || 0);
-    const reviewCount = Array.isArray(review) ? review.length : (review || 0);
-    const conflictCount = Array.isArray(conflicts) ? conflicts.length : (conflicts || 0);
-    finishTask(taskId, true, t('ai.autoAccepted') + ' ' + autoCount + ' · ' +
-      t('ai.needsReview') + ' ' + reviewCount + ' · ' + t('ai.conflicts') + ' ' + conflictCount);
-    // 用户若已切到别的模块: 只 toast + 任务坞, 不把人拽回来; 材料页数据
-    // 下次进页面时自然是最新的 (pageMaterials 每次都重拉)。
-    if (!onTaskLane()) {
-      toast(t('ai.autoDone') + ': ' + t('ai.autoAccepted') + ' ' + autoCount, 'ok');
+function pollMaterialAnalysisTask(courseId, materialId, taskId, ticks) {
+  const live = tasks.find((item) => item.id === taskId);
+  if (!live || live.status !== 'running') return;
+  if (ticks > TASK_POLL_MAX_TICKS) {
+    finishTask(taskId, false, t('超过 5 分钟仍未结束，无法确认结局。'));
+    return;
+  }
+  api('/materials/' + encodeURIComponent(materialId) + '/analysis', {
+    query: { course_id: courseId },
+  }).then((status) => {
+    if (status.status === 'COMPLETED') {
+      finishTask(taskId, true, t('mat.completed'));
+    } else if (status.status === 'FAILED') {
+      const stage = materialStageLabel(status.current_stage);
+      finishTask(taskId, false, t('mat.failedStage') + ': ' + stage + ' · ' + (status.error_message || ''));
+    } else {
+      const current = tasks.find((item) => item.id === taskId);
+      if (!current || current.status !== 'running') return;
+      current.detail = t('mat.currentStage') + ': ' + materialStageLabel(status.current_stage);
+      renderTaskDock();
+      __taskPollers[taskId] = setTimeout(
+        () => { pollMaterialAnalysisTask(courseId, materialId, taskId, ticks + 1); },
+        1200
+      );
+    }
+  }).catch((err) => {
+    if (err instanceof ApiError && err.code === 'NOT_FOUND') {
+      finishTask(taskId, false, err.message);
       return;
     }
-    // renderAiReport 之后再 route: 路由重绘会重建空面板, 必须重绘完
-    // 之后用只读总结视图把它填回去 (TASK-77 修掉"报告闪一下就没"的 bug)。
-    if (panel) panel.innerHTML = renderAiReport(report);
-    await route();
-    await loadAiSummaryIntoPanel(courseId, materialId);
+    const current = tasks.find((item) => item.id === taskId);
+    if (!current || current.status !== 'running') return;
+    current.detail = t('暂时查不到分析状态，正在重试');
+    renderTaskDock();
+    __taskPollers[taskId] = setTimeout(
+      () => { pollMaterialAnalysisTask(courseId, materialId, taskId, ticks + 1); },
+      2400
+    );
+  });
+}
+
+async function actionAnalyzeMaterial(courseId, materialId, button) {
+  // 一键完整流水线: 后端 ``POST .../analyze`` 串起摄取 → 证据 → 知识 →
+  // AI (幂等闸门在服务端: 重复点击返回当前状态, 不创建第二个任务)。
+  // 本地只把按钮置为禁用 (视觉反馈), 状态真相随后端 analysis_statuses。
+  if (button) button.disabled = true;
+  const taskId = startTask(t('ai.analyzing') + ' · ' + materialId);
+  try {
+    const result = await api('/materials/' + encodeURIComponent(materialId) + '/analyze', {
+      method: 'POST', query: { course_id: courseId }, body: {},
+    });
+    if (result.status === 'COMPLETED') {
+      finishTask(taskId, true, t('mat.completed'));
+    } else if (result.status === 'FAILED') {
+      const stage = materialStageLabel(result.current_stage);
+      finishTask(taskId, false, t('mat.failedStage') + ': ' + stage + ' · ' + (result.error_message || ''));
+    } else {
+      // already_running / 其它: 绝不能把仍在 processing 的任务标成 done。
+      // 同一请求可能来自并发点击; 复用同一 task id 并轮询服务端分析状态。
+      const live = tasks.find((item) => item.id === taskId);
+      if (live) {
+        live.detail = t('ai.analyzing');
+        renderTaskDock();
+        pollMaterialAnalysisTask(courseId, materialId, taskId, 1);
+      }
+    }
   } catch (err) {
     finishTask(taskId, false, err.code + ' ' + err.message);
-    // 面板可能已随路由重建: 永远用新鲜查找, 切页后只 toast。
-    const fresh = document.getElementById('ai-panel');
-    if (fresh && onTaskLane()) {
-      // 失败只画通用卡片: 状态码 + 可读原因 + 材料证据完好 + 重试按钮。
-      // 绝不把 traceback / 500 堆栈甩给用户, 也绝不回显任何密钥形状。
-      fresh.innerHTML = '<div class="card"><div class="card-head"><h2>' +
-        t('ai.summaryTitle') + '</h2></div>' +
-        '<p><span class="pill pill-bad">' + esc(err.code) + '</span> ' +
-        '<span class="small">' + esc(err.message) + '</span></p>' +
-        '<p class="small muted">' + esc(t('ai.safeNote')) + '</p>' +
-        '<p><button data-action="ai-analyze" data-course="' + esc(courseId) +
-        '" data-material="' + esc(materialId) + '">' + t('ai.retry') + '</button></p></div>';
-    } else {
-      toast(t('ai.autoFailed') + ' [' + err.code + '] ' + err.message, 'bad');
-    }
-  } finally {
-    if (button) button.disabled = false;
+    toast(t('ai.autoFailed') + ' [' + err.code + '] ' + err.message, 'bad');
   }
+  // 无论成败都重绘: 状态行与按钮 (AI分析 / 分析中… / 重新分析) 以
+  // 服务端为准; 完成时顺带把 AI 报告面板填上。
+  await route();
+  if (!onTaskLane()) return;
+  try {
+    const st = await api('/materials/' + encodeURIComponent(materialId) + '/analysis', {
+      query: { course_id: courseId },
+    });
+    if (st.status === 'COMPLETED') await loadAiSummaryIntoPanel(courseId, materialId);
+  } catch (err) {
+    // 状态查询失败不影响主流程 (列表里已有状态行)。
+  }
+}
+
+async function actionDeleteMaterial(courseId, materialId, button) {
+  // 危险操作必须确认 (confirmDestructive 集中管理哪些动作要确认)。
+  const body = t('mat.deleteBody');
+  if (!confirmDestructive(t('mat.deleteTitle') + '\n\n' + body)) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await api('/materials/' + encodeURIComponent(materialId), {
+      method: 'DELETE', query: { course_id: courseId },
+    });
+    const removed = (result.removed_knowledge_point_ids || []).length;
+    toast(t('mat.deleted') + (result.filename || materialId) +
+      (removed ? t(' · 已移除 ') + removed + t(' 个知识点') : ''), 'ok');
+  } catch (err) {
+    toast(t('mat.deleteFailed') + ' [' + err.code + '] ' + err.message, 'bad');
+  }
+  await route();
 }
 
 // ------------------------------------------------------------ 事件与路由

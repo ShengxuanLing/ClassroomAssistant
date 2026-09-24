@@ -186,6 +186,10 @@ class AIAnalysisService:
         stages.append({"stage": "knowledge_extraction", "state": "done", "detail": ""})
 
         material_evidence_ids = [str(getattr(e, "evidence_id", "")) for e in evidences]
+        evidence_texts = {
+            str(getattr(e, "evidence_id", "")): str(getattr(e, "content", "") or "")
+            for e in evidences
+        }
         try:
             existing_kps = ctx.knowledge_service.get_knowledge_points(course_id)
         except Exception:  # noqa: BLE001 - 知识查询失败时按空集处理, 不中断分析
@@ -194,9 +198,16 @@ class AIAnalysisService:
             merged,
             chunk_to_evidence=chunk_to_evidence,
             material_evidence_ids=material_evidence_ids,
+            evidence_texts=evidence_texts,
             existing_kps=existing_kps,
         )
-        stages.append({"stage": "knowledge_validation", "state": "done", "detail": ""})
+        stages.append(
+            {
+                "stage": "knowledge_validation",
+                "state": "done",
+                "detail": "%d rejected" % len(classification["rejected"]),
+            }
+        )
 
         auto_payloads = pipeline.kp_payloads(
             classification["auto"],
@@ -306,6 +317,7 @@ class AIAnalysisService:
                     "title": str(g.candidate.title or "")[:80],
                     "reason": g.reject_reason,
                     "confidence": g.candidate.confidence,
+                    "evidence_ids": list(g.evidence_ids or []),
                 }
                 for g in classification["rejected"]
             ],

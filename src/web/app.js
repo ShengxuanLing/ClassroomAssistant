@@ -206,8 +206,33 @@ const TASK_TERMINAL_STATUSES = ['SUCCEEDED', 'FAILED', 'CANCELLED'];
 const TASK_POLL_INTERVAL_MS = 5000;
 const TASK_POLL_MAX_TICKS = 60;
 
-//: taskId → setTimeout 句柄。终态时清掉, 避免同一条任务被两拍同时推进。
+// 终态通知仍要短暂可见, 供用户读到结果/错误, 但不能永久占住任务坞。
+// 两个时长是独立常量, Node harness 可替换 setTimeout 后精确推进, 不必真的等待。
+const TASK_SUCCESS_VISIBLE_MS = 3000;
+const TASK_FAILURE_VISIBLE_MS = 15000;
+
+//: taskId → setTimeout 句柄。轮询与终态清理分开, 避免两套定时器互相覆盖。
 const __taskPollers = {};
+const __taskCleanupTimers = {};
+
+function clearTaskTimer(timers, id) {
+  if (timers[id] !== undefined) {
+    clearTimeout(timers[id]);
+    delete timers[id];
+  }
+}
+
+function clearTaskCleanupTimer(id) {
+  if (__taskCleanupTimers[id] !== undefined) {
+    if (typeof window.clearTimeout === 'function') window.clearTimeout(__taskCleanupTimers[id]);
+    delete __taskCleanupTimers[id];
+  }
+}
+
+function clearTaskTimers(id) {
+  clearTaskTimer(__taskPollers, id);
+  clearTaskCleanupTimer(id);
+}
 
 function taskStoreRead() {
   try {
@@ -236,10 +261,37 @@ function taskStoreRemove(targetId) {
 function taskTerminalStatus(status) {
   return TASK_TERMINAL_STATUSES.indexOf(String(status || '')) >= 0;
 }
+function taskKey(label, poll) {
+  const metadata = poll || {};
+  if (metadata.targetId !== undefined && metadata.targetId !== null && metadata.targetId !== '') {
+    return 'target:' + String(metadata.targetId);
+  }
+  if (metadata.key !== undefined && metadata.key !== null && metadata.key !== '') {
+    return 'key:' + String(metadata.key);
+  }
+  // 当前少数非持久化任务尚未单独传 key (上传文件名 / AI 材料 id 已在 label 中),
+  // 所以用规范化后的 label 作为最后一道稳定身份。显式 key/targetId 始终优先。
+  return 'label:' + String(label || '').trim().replace(/\s+/g, ' ');
+}
 
-/** 登记一个任务。``poll`` 给出 {courseId, targetId, targetKind} 时才可恢复。 */
+/** 登记一个任务。可轮询任务给出 {courseId, targetId, targetKind}。 */
 function startTask(label, poll) {
-  const task = { id: ++__taskSeq, label: String(label || ''), status: 'running', detail: '' };
+  const key = taskKey(label, poll);
+  const existing = tasks.find((item) => item.key === key);
+  if (existing) {
+    // 同一处理中目标再次登记仍返回原 id。第二个请求即使先结束, 也会收尾这张卡,
+    // 不会制造重复通知, 更不会留下一个永远等不到 finishTask 的孤儿 id。
+    if (existing.status === 'running') return existing.id;
+    // 终态重试不是重复通知: 清掉旧定时器/卡片, 立即恢复为新的 running 卡片。
+    removeTask(existing.id);
+  }
+  const task = {
+    id: ++__taskSeq,
+    key: key,
+    label: String(label || ''),
+    status: 'running',
+    detail: '',
+  };
   if (poll && poll.targetId) {
     task.targetId = poll.targetId;
     taskStoreWrite(
@@ -256,24 +308,40 @@ function startTask(label, poll) {
   tasks.unshift(task);
   // 只留最近 5 条。被挤掉的那条**不**从存储里删 —— 它可能还在服务端跑着,
   // 删了就等于把用户唯一的信号丢掉。它会在下次刷新时回到坞里并自行收敛。
-  while (tasks.length > 5) tasks.pop();
+  while (tasks.length > 5) removeTask(tasks[tasks.length - 1].id, false);
   renderTaskDock();
   return task.id;
 }
 
+function removeTask(id, render) {
+  const index = tasks.findIndex((item) => item.id === id);
+  clearTaskTimers(id);
+  if (index >= 0) tasks.splice(index, 1);
+  if (render !== false) renderTaskDock();
+}
+
 function finishTask(id, ok, detail) {
   const task = tasks.find((item) => item.id === id);
-  if (task) {
-    task.status = ok ? 'done' : 'failed';
-    task.detail = String(detail || '');
-    if (task.targetId) taskStoreRemove(task.targetId);
-  }
-  if (__taskPollers[id] !== undefined) {
-    clearTimeout(__taskPollers[id]);
-    delete __taskPollers[id];
+  // 即便卡片已因 5 条上限被挤掉, 也要保住旧契约: 收到结局仍停止该 id 的轮询。
+  clearTaskTimer(__taskPollers, id);
+  if (!task) return;
+  if (task.targetId) taskStoreRemove(task.targetId);
+  // 第一次终态是权威结果。重复 fetch / 并发请求不得重置 cleanup 定时器,
+  // 否则同一个完成通知会被不断延后清理, 也会把 failed 改写成 succeeded.
+  if (task.status !== 'running') return;
+  task.status = ok ? 'done' : 'failed';
+  task.detail = String(detail || '');
+  // window timer 与 polling timer 分域: 旧审计桩只排轮询, 不会顺手清掉失败详情。
+  if (typeof window.setTimeout === 'function') {
+    clearTaskCleanupTimer(id);
+    __taskCleanupTimers[id] = window.setTimeout(() => { removeTask(id); },
+      ok ? TASK_SUCCESS_VISIBLE_MS : TASK_FAILURE_VISIBLE_MS);
   }
   renderTaskDock();
 }
+
+
+
 
 function renderTaskDock() {
   const dock = document.getElementById('task-dock');
@@ -536,6 +604,26 @@ const state = {
 let __lastGrounding = null;
 
 /**
+ * 当前正在渲染的页面 (由 route() 与页面函数**声明**, 不隨时反解析 hash)。
+ *
+ * 顶栏选择器在全局页 / 课程页上有两种语义 (见 renderCourseSwitcher), 它需要
+ * 知道"现在屏幕上是哪一页"。反解析 hash 看似等价, 实际有两个洞:
+ *   1. 页面函数可以被直接调用 (脚本/审计/测试就是这么做的), 此时 hash 还停
+ *      在上一页 —— 视图与 hash 短暂不一致, 反解析读到的是**上一页**;
+ *   2. `#/today` 与 `#/learn` 共享同一条顶栏高亮, hash 前缀分不清"哪一页
+ *      真正在渲染"。
+ * 所以沿用 markActiveNav() 的同一条架构规则: **界面归属由页面自己声明**。
+ * 初值 null = "还没有任何页面渲染" —— 此时选择器按课程页语义处理 (与旧版
+ * 行为一致), 只有真的渲染出全局页才切换语义。
+ */
+let __activeRoute = null;
+
+/** 声明"现在渲染的是这个 hash"。与 markActiveNav() 同一条声明式契约。 */
+function declareRoute(hash) {
+  __activeRoute = hash || '#/';
+}
+
+/**
  * 这条路由是不是**全局页** —— 内容不跟随"当前课程" (state.courseId)。
  *
  * 页面层级 (2026-09-22, 任务书 §2):
@@ -547,8 +635,18 @@ let __lastGrounding = null;
  * 用它来决定选择器的语义 (课程上下文 vs 本页筛选)。
  */
 function isGlobalRoute() {
-  const parts = parseHash();
+  if (__activeRoute === null) return false;
+  const parts = hashParts(__activeRoute);
   return parts.length === 0 || parts[0] === 'today';
+}
+
+/** parseHash() 的纯函数版: 解析任意 hash 字符串, 不读 window。 */
+function hashParts(raw) {
+  return String(raw || '')
+    .replace(/^#/, '')
+    .split('/')
+    .filter((part) => part.length > 0)
+    .map(decodeURIComponent);
 }
 
 /** 当前页实际生效的"查看范围": 全局页用 state.scope, 课程页恒为当前课程。 */
@@ -743,12 +841,12 @@ async function switchCourse(courseId) {
   if (!courseId) return;
   if (courseId === state.courseId) return;
   setCourse(courseId);
-  // 全局页 (概览/今日) 的内容不跟随当前课程, 所以侧边栏点另一门课只换
-  // course context, **不**把本页改成单课程视图 —— 任务书 §5: "当前课程 =
+  // scope 筛选**不跟着换课走**: 课程页换课 = 换上下文 (本页没有筛选);
+  // 全局页换课 = 只换上下文、视图回"全部课程" —— 任务书 §5: "当前课程 =
   // Gestió de Projectes 不应该导致概览 = 只显示 Gestió de Projectes"。
   // 要单课程视图, 用顶栏的查看范围选择器 (state.scope)。
+  setScope('all');
   if (isGlobalRoute()) {
-    setScope('all');
     await route();
     return;
   }
@@ -908,33 +1006,69 @@ function courseLabel(courseId) {
   return (found && found.name) || courseId;
 }
 
-/**
- * 课堂的**人话标签** —— ``第 3 堂 · Tema 3``, 而不是内容寻址的 session_id。
- *
- * ``session-32dde014868219be`` 与 course_id 是同一类东西: 由
- * ``ClassSession._generate_stable_id`` 从 (course_id, 课号) 派生的内部句柄
- * (``"session-" + sha256(course_id + 课号)[:16]``), 对用户零信息量。所以凡是
- * 显示课堂的地方都走这里, 不内联拼一遍 —— 内联复制输出完全一样, 没有任何断言
- * 会红, 只有等将来往标签里加字段 (比如加日期) 才会暴露。
- *
- * 拼法沿用课堂页 h1 的既有写法, 三语由 t() 负责: ``'第 '`` 在 es/ca 下是
- * "Sesión "/"Sessió ", ``' 堂'`` 是空串, ``' 堂 · '`` 是 " · "。
- *
- * 入参是 **session 记录**。记录缺失 (材料挂在一个已不存在的课堂下) 时退回
- * ``fallback`` —— 那是最后手段, 与 courseLabel() 的契约一致: 宁可给出一个
- * 不漂亮的句柄, 也不要显示空白, 否则两条不同的记录看起来会一模一样。
- */
-function sessionLabel(session, fallback) {
-  if (session) {
-    const number = session.session_number;
-    const ordinal = number ? t('第 ') + String(number) : '';
-    const title = session.title || '';
-    if (ordinal && title) return ordinal + t(' 堂 · ') + title;
-    if (ordinal) return ordinal + t(' 堂');
-    if (title) return title;
-    if (session.date) return String(session.date);
+/** ``YYYY-MM-DD`` / ``YYYY-MM-DDTHH:mm`` -> 本地化日期与星期。
+ * 日期取 API 的日历值，星期只从该真实值派生；非法 / 空日期原样返回，不猜。
+ * 课表日期必须用年月日构造本地时区 Date；``new Date('2026-09-24')`` 是 UTC
+ * 午夜，在西半球会算错星期。 */
+function sessionDateLabel(date) {
+  const value = String(date || '').trim();
+  if (!value) return '';
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/.exec(value);
+  if (!match || typeof Intl === 'undefined' || !Intl.DateTimeFormat) {
+    return value;
   }
-  return fallback || '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const localDate = new Date(year, month - 1, day);
+  if (
+    localDate.getFullYear() !== year
+    || localDate.getMonth() !== month - 1
+    || localDate.getDate() !== day
+  ) return value;
+  try {
+    const locale = { zh: 'zh-CN', es: 'es-ES', ca: 'ca-ES' }[state.lang] || 'zh-CN';
+    let dateText = new Intl.DateTimeFormat(locale, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(localDate);
+    let weekday = new Intl.DateTimeFormat(locale, { weekday: 'long' })
+      .format(localDate);
+    if (state.lang === 'zh') {
+      dateText = dateText.replace(/\//g, '-');
+      weekday = weekday.replace(/^星期/, '');
+      // Chromium/Node 的 zh-CN long weekday 可能是「星期四」或「四」；
+      // 用户要求统一显示「周四」，不要依赖运行时的简写差异。
+      if (!/^周[日一二三四五六]$/.test(weekday)) weekday = '周' + weekday;
+      return dateText + '（' + weekday + '）';
+    }
+    return dateText + ' (' + weekday.toLowerCase() + ')';
+  } catch (err) {
+    return value;
+  }
+}
+
+/** Structured display fields shared by the picker and the materials table. */
+function sessionDisplayParts(session) {
+  if (!session) return { date: '', number: '', time: '', kind: '', mid: '', room: '' };
+  const parsed = parseSessionTitle(session.title);
+  const number = Number(session.session_number || 0);
+  return {
+    date: sessionDateLabel(session.date),
+    number: number > 0 ? t('第 ') + String(number) + t(' 堂') : '',
+    time: parsed.time,
+    kind: parsed.kind || (!parsed.time ? parsed.head : ''),
+    mid: parsed.mid,
+    room: parsed.room,
+  };
+}
+
+/** The one human-readable Session label used by every selector and link. */
+function sessionLabel(session, fallback) {
+  if (!session) return fallback || '';
+  const parts = sessionDisplayParts(session);
+  const fields = [parts.date, parts.number, parts.time, parts.kind, parts.mid, parts.room]
+    .filter(Boolean);
+  return fields.length ? fields.join(' · ') : (fallback || '');
 }
 
 /**
@@ -1011,13 +1145,16 @@ function renderCourseSwitcher(courses) {
   const selectedId = globalMode ? (state.scope === 'all' ? '' : state.scope) : state.courseId;
   picker.innerHTML = (globalMode
     ? [{ id: '', label: t('scope.all') }]
-      .concat(courses.map((course) => ({ id: course.course_id, label: course.name || course.code || '' })))
-    : courses.map((course) => ({ id: course.course_id, label: course.name || course.code || '' })))
+    : []).concat(courses.map((course) => ({
+      id: course.course_id,
+      // 名称缺失时退回代码 —— 绝不显示内容寻址的 course_id。转义在这里做
+      // 一次 (option 文案位置), 内层 map 只拼壳, 不再出现第二次来源。
+      label: esc(course.name || course.code || ''),
+    })))
     .map((item) => (
       '<option value="' + esc(item.id) + '"' +
       (item.id === selectedId ? ' selected' : '') + '>' +
-      // 名称缺失时退回代码 —— 绝不显示内容寻址的 course_id。
-      esc(item.label) + '</option>'
+      item.label + '</option>'
     ))
     .join('');
   // 只接一次线。每次重绘都 addEventListener 的话, 一次切换会触发 N 次跳转。
@@ -1168,11 +1305,13 @@ document.addEventListener('click', (event) => {
   const materialId = target.getAttribute('data-material');
   const sessionId = target.getAttribute('data-session');
   const knowledgeId = target.getAttribute('data-knowledge');
+  // 材料页 (重构后): 一键分析 + 删除。课程页时间线仍用 process/retry
+  // (views/courses.js), 保留那两个分支; evidence/digest/ai-analyze 仅
+  // 材料页在用, 材料页移除后分支一并移除。
   if (action === 'process-material') actionProcessMaterial(courseId, materialId, target);
   else if (action === 'retry-material') actionRetryMaterial(courseId, materialId, target);
-  else if (action === 'material-evidence') actionMaterialEvidence(courseId, materialId);
-  else if (action === 'material-digest') actionMaterialDigest(courseId, materialId);
-  else if (action === 'ai-analyze') actionAiAnalyze(courseId, materialId, target);
+  else if (action === 'analyze-material') actionAnalyzeMaterial(courseId, materialId, target);
+  else if (action === 'delete-material') actionDeleteMaterial(courseId, materialId, target);
   else if (action === 'process-session') actionProcessSession(courseId, sessionId, target);
   // 课程页的月份切换 (2026-09-22): 只改"课表看哪一段", 不发任何写请求。
   // 它不是路由 —— 月份是课程页内部的浏览位置, 不该进 hash (深链进课程页永远
@@ -1200,6 +1339,9 @@ function parseHash() {
 
 async function route() {
   const parts = parseHash();
+  // 先声明"现在渲染的是这一页" —— 顶栏选择器的全局/课程语义、以及页面函数
+  // 里的 currentScope() 都以这份声明为准 (见 __activeRoute 上的注释)。
+  declareRoute(window.location.hash || '#/');
   // 横幅的生命周期跟着**路由**走。
   //
   // 曾经从不被清空: 只要出现过一次「课程选择判定失败，已按列表顺序显示。」,

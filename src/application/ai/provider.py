@@ -242,10 +242,44 @@ class AIProvider(ABC):
 
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?;；])\s*")
+_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_FAKE_STOPWORDS = frozenset(
+    {
+        "la", "el", "los", "las", "un", "una", "unos", "unas", "de", "del", "en",
+        "que", "se", "su", "sus", "es", "son", "por", "para", "con", "como", "entre",
+        "a", "al", "y", "o", "the", "of", "is", "are", "and", "to", "in",
+    }
+)
+
+
+def _fake_concept(sentence: str) -> tuple[str, str]:
+    """Return a compact concept title and a non-verbatim fixture explanation.
+
+    This provider is explicitly a test fixture, not a model.  It must nevertheless
+    honour the same contract as a real provider: source text belongs in evidence,
+    while title/content are abstractions.  Reusing the source sentence here would
+    make every happy-path integration test depend on copy rejection and would hide
+    regressions in the orchestration around grounding.
+    """
+    words = _WORD_RE.findall(sentence or "")
+    terms: list[str] = []
+    for word in words:
+        if word.casefold() in _FAKE_STOPWORDS or len(word) < 3:
+            continue
+        if word not in terms:
+            terms.append(word)
+        if len(terms) == 3:
+            break
+    label = " · ".join(term[:1].upper() + term[1:] for term in terms) or "Concepto clave"
+    description = (
+        "Síntesis conceptual de %s: identifica su función y la relaciona con "
+        "los conceptos relevantes del material." % label
+    )
+    return label[:80], description
 
 
 def _fake_candidates_for_text(text: str, chunk_id: str) -> list[dict[str, Any]]:
-    """确定性 fixture: 按句子切分, 每句一个候选 (诚实 mock, 非语义理解)。"""
+    """Deterministic abstracted fixture: one concept per source sentence."""
     sentences = [s.strip() for s in _SENTENCE_SPLIT.split(text or "") if s.strip()]
     out: list[dict[str, Any]] = []
     for index, sentence in enumerate(sentences[:8]):
@@ -260,10 +294,11 @@ def _fake_candidates_for_text(text: str, chunk_id: str) -> list[dict[str, Any]]:
             kp_type = "procedure"
         else:
             kp_type = "concept"
+        title, description = _fake_concept(sentence)
         out.append(
             {
-                "title": sentence[:60],
-                "description": sentence,
+                "title": title,
+                "description": description,
                 "type": kp_type,
                 "importance": "high" if index == 0 else "medium",
                 # 确定性置信度: 首句 0.95 (自动接受), 次句 0.8 (待确认),
@@ -316,6 +351,9 @@ class FakeAIProvider(AIProvider):
             if marker in marker_text:
                 marker_text = marker_text.rsplit(marker, 1)[1]
                 break
+        # Prompt 在证据/中间结果之后还附了 ``Return JSON`` schema；它不是材料
+        # 内容。旧 fixture 没截断，导致 "Return JSON" 被误抽成第二个知识点。
+        marker_text = re.split(r"\n\s*Return JSON:", marker_text, maxsplit=1)[0]
         # chunk id 引用: 取 AVAILABLE CHUNKS 行声明的 id。
         chunk_ids = re.findall(r"AVAILABLE CHUNKS: \[(.*?)\]", prompt or "")
         chunk_id = chunk_ids[0].strip() if chunk_ids else "chunk-0"

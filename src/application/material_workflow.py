@@ -779,6 +779,76 @@ class MaterialWorkflowService:
     # Cleanup
     # ------------------------------------------------------------------
 
+    def delete_material(self, material_id: str) -> dict[str, Any]:
+        """真正删除一份材料及其派生数据 (Task: 材料页「删除」)。
+
+        删除语义 (按项目现有架构逐层清理, 不写裸 SQL):
+
+        - **注册表记录**: 从内存注册表移除并原子重写
+          ``data/materials/<course_id>.json``; SQLite 一侧由
+          :meth:`Workspace.delete_material` 在同一事务里删行
+          (``material_processing`` / ``material_evidence`` 由外键
+          ``ON DELETE CASCADE`` 级联, 见 migration 001)。
+        - **受管文件副本**: 删除 ``data/{documents,audio,images}/<课>/`` 下的
+          那一份副本。用户原始文件 (source_root) **永不**被触碰 —— 与
+          :meth:`cleanup` 的安全模型一致。
+        - **证据**: 派生自这份材料的 Evidence 在共享 store 中标记 RETIRED
+          (不是物理删除: 证据库是内容寻址的, 证据可能被同课其它材料以相同
+          内容命中过, 物理删除会破坏其余材料的溯源; RETIRED 与既有
+          ``retire()`` 生命周期一致)。只有当**没有任何其他材料**注册表引用
+          同一条证据时才退休它 —— 引用判定以本课程注册表为准, 因为
+          ``assemble_knowledge`` 的课程作用域正是按注册表划定的。
+        - **处理作业**: 不在这里动。作业归 ``ClassroomProcessingService``
+          所有 (方向: processing -> workflow), 工作流删掉记录后作业读不到
+          材料, Workspace 层负责把作业标记为 CANCELLED 并移除。
+
+        材料不存在 -> ``NotFoundError`` (与 ``get_material`` 同口径)。
+        重复删除同一 id: 第一次真删, 第二次 404 —— 删除是真实的, 不是
+        幂等标记。
+        """
+        record = self._get_record(material_id)
+        material_id = str(record["material_id"])
+        evidence_ids = [str(e) for e in (record.get("evidence_ids") or []) if e]
+
+        # 1) 注册表 + 哈希索引。先从内存移除再重写 JSON, 这样"删除后崩溃"
+        #    的窗口里注册表也不含这条记录 (与既有原子写语义一致)。
+        self._materials.pop(material_id, None)
+        content_hash = record.get("content_hash")
+        if content_hash and self._hash_index.get(str(content_hash)) == material_id:
+            del self._hash_index[str(content_hash)]
+        self._persist_registry()
+
+        # 2) 受管文件副本 (仅 data_dir 内; source_root 永不触碰)。stored_path
+        #    可能指向早已丢失的文件 —— 删除路径上"本来就没有"不算错误。
+        removed_files: list[str] = []
+        stored = record.get("stored_path")
+        if stored and os.path.isfile(str(stored)):
+            if remove_quietly(str(stored)):
+                removed_files.append(str(stored))
+
+        # 3) 证据退休。同课程注册表里还有别的材料引用同一条证据吗?
+        #    (内容寻址: 两份材料逐字节相同会产出同一 evidence_id。)
+        retired: list[str] = []
+        referenced_elsewhere: set[str] = set()
+        for other in self._materials.values():
+            for eid in other.get("evidence_ids") or []:
+                referenced_elsewhere.add(str(eid))
+        for eid in evidence_ids:
+            if eid in referenced_elsewhere:
+                continue
+            if self._store.retire(eid):
+                retired.append(eid)
+
+        return {
+            "material_id": material_id,
+            "course_id": self._course_id,
+            "deleted": True,
+            "filename": record.get("filename"),
+            "removed_files": removed_files,
+            "retired_evidence_ids": retired,
+            "evidence_count": len(evidence_ids),
+        }
+
     def cleanup(self) -> dict[str, Any]:
         """删除本课程在 data_dir 内的所有副本与注册表。
 

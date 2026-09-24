@@ -416,6 +416,42 @@ class WorkspacePersistence:
     def material_ids(self) -> list[str]:
         return self._repos.materials.keys()
 
+    def delete_material_record(self, material_id: str) -> bool:
+        """删除一条材料数据库行 (**真实删除**, 材料页「删除」用)。
+
+        ``material_processing`` / ``material_evidence`` 对 ``materials``
+        有 ``ON DELETE CASCADE`` 外键 (migration 001), 因此删掉主行后
+        处理状态与溯源链自动消失 —— 这里只删主行, 不手写 DELETE。
+        证据行本身**不动**: 证据是内容寻址的共享资产, 退休与否由工作区
+        层决定 (与 :meth:`save_evidence_store` 的写穿语义一致)。
+
+        注册表里已经没有这条记录时返回 False (幂等重删安全)。
+        """
+        return bool(self._repos.materials.delete(material_id))
+
+    def set_evidence_states(self, states: Mapping[str, str]) -> int:
+        """显式更新一批证据的生命周期状态 (RETIRED 回写)。
+
+        ``save_evidence_store`` 是增量写入 (只补新行), 已存在证据的
+        状态**变化**它看不见 —— 否则每次摄取都要重写全库。退休走这里:
+        逐行 UPDATE, 与内存里的状态机 (ACTIVE/RETIRED) 一一对应。
+        返回真正更新的行数。
+        """
+        written = 0
+        for evidence_id, state in states.items():
+            if state not in ("ACTIVE", "RETIRED"):
+                raise ValueError(f"unknown evidence state: {state!r}")
+
+            def _set_one(evidence_id=evidence_id, state=state) -> None:
+                self._db.execute(
+                    "UPDATE evidence SET state = ? WHERE evidence_id = ?",
+                    (state, evidence_id),
+                )
+
+            self._write("evidence_state", _set_one)
+            written += 1
+        return written
+
     # ------------------------------------------------------------------
     # 证据
     # ------------------------------------------------------------------

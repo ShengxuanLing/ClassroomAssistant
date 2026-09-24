@@ -18,33 +18,28 @@
         <small>Classroom Assistant</small>
       </span>
     </a>
-    <!-- 分两组 (P3-3)。原先 12 项平铺、靠 flex-wrap 折成 2–3 行, 而且四个
-         名字都含"复习"的入口 (待审核 / 考前复习 / 复习中心 / 复习包) 挨在一起
-         —— 用户无法从名字判断区别。2026-09-21 删掉「复习中心」后剩 11 项,
-         现在按**用途**分成两组, 中间放一个纯装饰的分隔符:
-
-           第一组「现在要做什么」: 概览 → 今日 → 考前复习 → 复习包 → 待审核
-           第二组「管理什么」:     我的课程 → 材料 → 知识点 → 学生 → 练习 → 错题本
-
-         概览 (`#/`) 从第三位提到第一位 —— 它是首页, 排在「今日」「考前复习」
-         之后与它的角色不符。
-
-         分隔符是 <span> 且 aria-hidden: `markActiveNav()` 只扫 `.topnav a`,
-         它不该被当成一个可高亮项; 对屏幕阅读器它也不承载任何语义。
-         这份 href 顺序必须与 scripts/ui_render_check.js 的 TOPNAV 逐项一致。 -->
+    <!-- 2026-09-22: 4 个未实现入口暂时禁用 (只改顶栏公共组件, 不动路由/页面):
+         考前复习 (#/review) / 复习包 (#/review-pack) / 练习 (#/exercises) /
+         错题本 (#/mistakes) 仍显示文字, 但改为 <span class="nav-disabled">:
+         无 href、无点击、无路由、无数据加载; markActiveNav() 只扫 `.topnav a`,
+         它们永远进不了 active。重启用时把 span 换回 <a href="..."> 即可,
+         路由分支与页面函数均原样保留。
+         顺序: 7 个可用 <a> → 分隔符 → 4 个禁用 span (可用项保持原相对顺序)。
+         这份可用 href 顺序必须与 scripts/ui_render_check.js 的 TOPNAV 逐项一致
+         (TOPNAV 只收可用 <a>; 禁用 span 不进该数组, 见该文件注释)。 -->
     <nav class="topnav">
       <a href="#/" data-i18n="nav.overview">概览</a>
       <a href="#/today" data-i18n="nav.today">今日</a>
-      <a href="#/review" data-i18n="nav.reviewMode">考前复习</a>
-      <a href="#/review-pack" data-i18n="nav.reviewPack">复习包</a>
       <a href="#/reviews" data-i18n="nav.reviews">待审核</a>
-      <span class="topnav-sep" aria-hidden="true"></span>
       <a href="#/courses" data-i18n="nav.myCourses">我的课程</a>
       <a href="#/materials" data-i18n="nav.materials">材料</a>
       <a href="#/knowledge" data-i18n="nav.knowledge">知识点</a>
       <a href="#/students" data-i18n="nav.students">学生</a>
-      <a href="#/exercises" data-i18n="nav.exercises">练习</a>
-      <a href="#/mistakes" data-i18n="nav.mistakes">错题本</a>
+      <span class="topnav-sep" aria-hidden="true"></span>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewMode">考前复习</span>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewPack">复习包</span>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.exercises">练习</span>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.mistakes">错题本</span>
     </nav>
     <div class="topbar-meta">
       <!-- 两个 <select> 都**不再**写 aria-label。

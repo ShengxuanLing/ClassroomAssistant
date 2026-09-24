@@ -141,6 +141,15 @@ a:hover { text-decoration: underline; }
 }
 .topnav a:hover { background: var(--surface-2); text-decoration: none; color: var(--text); }
 
+/* 2026-09-22: 暂未实现入口的禁用态。与可用 <a> 同字号同内边距, 只去交互:
+   无 href → 不可点击/不触发路由/无 hover、无 pointer; 灰色低强调, 非错误色。
+   重启用时把 index.html 里对应 <span> 换回 <a href> 即可, 本类不动。 */
+.topnav .nav-disabled {
+  padding: 5px 10px; border-radius: var(--radius-sm);
+  font-size: 14px; color: var(--text-muted); opacity: 0.65;
+  cursor: default; white-space: nowrap;
+}
+
 /* 顶栏两组之间的分隔符 (P3-3)。刻意不是 `border-left` —— 它要参与 flex 的
    gap 计算, 而且折行后仍应贴在它右边那一组的前面。aria-hidden 见 index.html。 */
 .topnav-sep {

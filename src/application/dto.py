@@ -141,6 +141,13 @@ def knowledge_point_to_dict(
         has_conflict = False
     else:
         has_conflict = _coerce_conflict_flag(conflict)
+    knowledge_id = str(kp.knowledge_id or "")
+    if knowledge_id.startswith("aikp-"):
+        generation_mode = "ai_summary"
+    elif knowledge_id.startswith("kp-"):
+        generation_mode = "deterministic_fallback"
+    else:
+        generation_mode = "manual"
     return {
         "knowledge_id": kp.knowledge_id,
         "title": kp.title,
@@ -154,6 +161,11 @@ def knowledge_point_to_dict(
         "validation_status": kp.validation_status,
         "knowledge_score": kp.knowledge_score,
         "review_status": kp.review_status,
+        # ``kp-*`` is the deterministic extractor's namespace and may contain a
+        # source excerpt; ``aikp-*`` is reserved for validated AI abstractions.
+        # Project the distinction in the API so the UI never calls fallback text
+        # an AI summary.  No DB migration is needed: the namespace is persisted.
+        "generation_mode": generation_mode,
         # "这条知识是否有未解决的冲突" —— 由调用方从结构快照推导后传入。
         "conflict": has_conflict,
     }

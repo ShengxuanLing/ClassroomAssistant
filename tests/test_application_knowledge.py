@@ -104,6 +104,15 @@ def test_get_knowledge_point_returns_dto():
     assert result["evidence_refs"] == ["ev-1"]
 
 
+def test_generation_mode_distinguishes_ai_summary_from_deterministic_fallback():
+    assert knowledge_point_to_dict(_kp("aikp-abc123"))["generation_mode"] == "ai_summary"
+    assert (
+        knowledge_point_to_dict(_kp("kp-abc123"))["generation_mode"]
+        == "deterministic_fallback"
+    )
+    assert knowledge_point_to_dict(_kp("manual-1"))["generation_mode"] == "manual"
+
+
 # ----------------------------------------------------------------------
 # KnowledgeService — coverage / gaps / dependencies / conflicts
 # ----------------------------------------------------------------------

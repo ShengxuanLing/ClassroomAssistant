@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.request
 
 import pytest
@@ -45,6 +46,7 @@ from src.application.ai.prompts import (
     ALLOWED_KNOWLEDGE_TYPES,
     CHUNK_EXTRACTION_PROMPT_VERSION,
     build_chunk_extraction_prompt,
+    build_summary_prompt,
 )
 from src.application.ai.provider import (
     AIProvider,
@@ -61,9 +63,12 @@ from src.application.ai.schemas import (
 )
 from src.application.ai.validators import (
     AI_PIPELINE_POLICY,
+    EVIDENCE_COPY_SIMILARITY_THRESHOLD,
     GroundedCandidate,
+    candidate_copy_reason,
     candidate_knowledge_id,
     classify_confidence,
+    evidence_copy_similarity,
     ground_candidates,
     map_candidate_to_kp_payload,
 )
@@ -118,6 +123,47 @@ def _evidence(evidence_id, content, material_id="mat-1"):
         source_reference=SourceReference(material_id=material_id),
         evidence_type=EvidenceType.DOCUMENT,
     )
+
+
+class _VerbatimCopyProvider(AIProvider):
+    """Deliberately malicious fixture: returns the source sentence as content."""
+
+    name = "verbatim-copy-test"
+
+    @property
+    def capabilities(self):
+        return ProviderCapabilities(
+            supports_text=True,
+            supports_image=True,
+            supports_audio=False,
+            supports_structured_output=True,
+        )
+
+    def generate_structured(self, prompt, *, timeout_seconds=60, max_output_chars=8000):
+        match = re.search(r"EVIDENCE TEXT:\n(.*?)(?:\n\nReturn JSON:|\Z)", prompt, re.S)
+        source = (match.group(1) if match else "Evidencia de prueba").strip()
+        chunk_match = re.search(r"AVAILABLE CHUNKS: \[(.*?)\]", prompt)
+        chunk_id = chunk_match.group(1).strip() if chunk_match else "chunk-1"
+        return json.dumps(
+            {
+                "summary": "Síntesis independiente.",
+                "topics": ["tema"],
+                "knowledge_points": [
+                    {
+                        "title": "Contenido fuente",
+                        "description": source,
+                        "type": "concept",
+                        "importance": "high",
+                        "confidence": 0.99,
+                        "evidence_refs": [chunk_id],
+                        "relations": [],
+                        "examples": [],
+                        "original_terms": [],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
 
 
 # ======================================================================
@@ -370,6 +416,139 @@ class TestValidators:
         )
         assert len(grounded) == 1 and grounded[0].decision == "review"
 
+    def test_exact_evidence_copy_is_rejected_but_evidence_is_retained(self):
+        source = (
+            "La fotosíntesis convierte la luz solar en materia orgánica dentro de "
+            "los cloroplastos de las células vegetales."
+        )
+        candidate = KnowledgeCandidate(
+            title="Fotosíntesis",
+            description=source,
+            confidence=0.99,
+            evidence_refs=["chunk-ok"],
+        )
+        grounded, rejected = ground_candidates(
+            [candidate],
+            chunk_to_evidence={"chunk-ok": "ev-1"},
+            material_evidence_ids=["ev-1"],
+            evidence_texts={"ev-1": source},
+        )
+        assert grounded == []
+        assert len(rejected) == 1
+        assert rejected[0].evidence_ids == ["ev-1"]
+        assert "candidate content" in (rejected[0].reject_reason or "")
+        assert "ev-1" in (rejected[0].reject_reason or "")
+        assert source not in (rejected[0].reject_reason or "")
+
+    def test_long_verbatim_title_copy_is_rejected(self):
+        source = (
+            "El mercado de factores de producción determina la eficiencia y el "
+            "equilibrio de los sistemas económicos."
+        )
+        candidate = KnowledgeCandidate(
+            title="El mercado de factores de producción determina la eficiencia",
+            description="Síntesis original del contenido.",
+            confidence=0.95,
+            evidence_refs=["chunk-ok"],
+        )
+        assert evidence_copy_similarity(candidate.title, source) >= (
+            EVIDENCE_COPY_SIMILARITY_THRESHOLD
+        )
+        _, rejected = ground_candidates(
+            [candidate],
+            chunk_to_evidence={"chunk-ok": "ev-1"},
+            material_evidence_ids=["ev-1"],
+            evidence_texts={"ev-1": source},
+        )
+        assert "title" in (rejected[0].reject_reason or "")
+
+    def test_genuine_abstraction_is_kept(self):
+        source = (
+            "La fotosíntesis convierte la luz solar en materia orgánica dentro de "
+            "los cloroplastos de las células vegetales."
+        )
+        candidate = KnowledgeCandidate(
+            title="Fotosíntesis",
+            description=(
+                "Proceso vegetal que transforma energía luminosa en azúcares "
+                "mediante orgánulos celulares especializados."
+            ),
+            confidence=0.95,
+            evidence_refs=["chunk-ok"],
+        )
+        reason = candidate_copy_reason(
+            candidate, evidence_ids=["ev-1"], evidence_texts={"ev-1": source}
+        )
+        assert reason is None
+        grounded, rejected = ground_candidates(
+            [candidate],
+            chunk_to_evidence={"chunk-ok": "ev-1"},
+            material_evidence_ids=["ev-1"],
+            evidence_texts={"ev-1": source},
+        )
+        assert rejected == [] and len(grounded) == 1
+
+    def test_copy_check_only_uses_candidate_own_resolved_evidence(self):
+        source = "La energía solar alimenta el crecimiento de las plantas verdes."
+        candidate = KnowledgeCandidate(
+            title="Energía solar",
+            description=source,
+            confidence=0.95,
+            evidence_refs=["chunk-other"],
+        )
+        reason = candidate_copy_reason(
+            candidate,
+            evidence_ids=["ev-1"],
+            evidence_texts={"ev-1": "Un evidence legal pero distinto."},
+        )
+        assert reason is None
+
+    def test_reordered_technical_vocabulary_is_not_a_copy(self):
+        source = (
+            "La fotosíntesis convierte la luz solar en materia orgánica dentro de "
+            "los cloroplastos de las células vegetales."
+        )
+        candidate = KnowledgeCandidate(
+            title="Fotosíntesis",
+            description=(
+                "Cloroplastos de las células vegetales convierten la fotosíntesis "
+                "mediante la luz solar en materia orgánica."
+            ),
+            confidence=0.95,
+            evidence_refs=["chunk-ok"],
+        )
+        assert candidate_copy_reason(
+            candidate, evidence_ids=["ev-1"], evidence_texts={"ev-1": source}
+        ) is None
+
+    def test_missing_evidence_text_fails_closed(self):
+        candidate = KnowledgeCandidate(
+            title="Fotosíntesis", description="Una explicación original.",
+            confidence=0.95, evidence_refs=["chunk-ok"],
+        )
+        grounded, rejected = ground_candidates(
+            [candidate],
+            chunk_to_evidence={"chunk-ok": "ev-1"},
+            material_evidence_ids=["ev-1"],
+            evidence_texts={},
+        )
+        assert grounded == []
+        assert "unavailable" in (rejected[0].reject_reason or "")
+        assert rejected[0].evidence_ids == ["ev-1"]
+
+    def test_copy_detection_is_backward_compatible_without_evidence_text(self):
+        source = "La fotosíntesis convierte la luz solar en materia orgánica."
+        candidate = KnowledgeCandidate(
+            title="Fotosíntesis", description=source, confidence=0.95,
+            evidence_refs=["chunk-ok"],
+        )
+        grounded, rejected = ground_candidates(
+            [candidate],
+            chunk_to_evidence={"chunk-ok": "ev-1"},
+            material_evidence_ids=["ev-1"],
+        )
+        assert rejected == [] and len(grounded) == 1
+
     def test_candidate_knowledge_id_is_deterministic(self):
         first = candidate_knowledge_id(course_id="c", title="  Integración ", kp_type="concept")
         second = candidate_knowledge_id(course_id="c", title="integración", kp_type="concept")
@@ -616,9 +795,19 @@ class TestPipeline:
             pipeline.analyze_material([], material_id="m", kind="text")
 
     def test_prompts_demand_grounding(self):
-        prompt = build_chunk_extraction_prompt(chunk_id="c", chunk_text="t")
-        for required in ("evidence_refs", "confidence", "STRICT JSON", "ONLY"):
+        prompt = build_chunk_extraction_prompt(
+            chunk_id="c", chunk_text="La fotosíntesis ocurre en los cloroplastos."
+        )
+        for required in ("ONLY", "evidence_refs", "confidence", "STRICT JSON", "CONDENSED"):
             assert required in prompt
+        assert "Verbatim source wording belongs ONLY" in prompt
+        assert "report-layer synthesis" in prompt
+        assert "Knowledge content and source evidence are separate" in prompt
+        assert "roles even when they discuss the same concept" in prompt
+
+        summary_prompt = build_summary_prompt(material_text="Una fuente original.")
+        assert "report-layer abstractions" in summary_prompt
+        assert "verbatim source only in the evidence store" in summary_prompt
 
 
 # ======================================================================
@@ -639,6 +828,74 @@ def _enable(ws):
 
 
 class TestWorkspaceAIText:
+    def test_verbatim_candidate_is_reported_without_persisting_or_losing_evidence(
+        self, tmp_path
+    ):
+        ws = _workspace(tmp_path)
+        cid = ws.create_course("Biología", "BIO1", "es")["course_id"]
+        source = (
+            "La fotosíntesis convierte la luz solar en materia orgánica dentro de "
+            "los cloroplastos de las células vegetales."
+        )
+        record = _register_text(ws, cid, source, filename="photosynthesis.txt")
+        ws.process_material(cid, record["material_id"])
+        before_ids = {kp["knowledge_id"] for kp in ws.knowledge_points(cid)}
+        before_evidence = ws.material_evidence(cid, record["material_id"])
+
+        ws.configure_ai(enabled=True, provider=_VerbatimCopyProvider())
+        report = ws.analyze_material_with_ai(cid, record["material_id"])
+
+        after_ids = {kp["knowledge_id"] for kp in ws.knowledge_points(cid)}
+        after_evidence = ws.material_evidence(cid, record["material_id"])
+        assert after_ids == before_ids
+        assert [item["content"] for item in after_evidence] == [
+            item["content"] for item in before_evidence
+        ]
+        assert report["rejected"]
+        rejected = report["rejected"][0]
+        assert "copies evidence" in rejected["reason"]
+        assert rejected["evidence_ids"] == [
+            item["evidence_id"] for item in after_evidence
+        ]
+        assert report["summary"] == "Síntesis independiente."
+        assert report["summary"] != source
+
+    def test_qgis_source_becomes_abstracted_knowledge_with_separate_evidence(
+        self, tmp_path
+    ):
+        ws = _workspace(tmp_path)
+        cid = ws.create_course("GIS", "GIS1", "ca")["course_id"]
+        source = (
+            "QGIS Desktop és una interfície que permet interactuar amb mapes. "
+            "Disposa de les principals eines per visualitzar, editar i gestionar "
+            "capes geoespacials, així com per processar-ne la informació."
+        )
+        record = _register_text(ws, cid, source, filename="qgis.txt")
+        ws.process_material(cid, record["material_id"])
+        _enable(ws)
+        ws.analyze_material_with_ai(cid, record["material_id"])
+
+        points = [
+            point
+            for point in ws.knowledge_points(cid)
+            if point.get("generation_mode") == "ai_summary"
+        ]
+        evidence = ws.material_evidence(cid, record["material_id"])
+        assert points
+        assert evidence
+        evidence_by_id = {item["evidence_id"]: item["content"] for item in evidence}
+        assert source in evidence_by_id.values()
+        for point in points:
+            linked_text = "\n".join(
+                evidence_by_id[evidence_id]
+                for evidence_id in point["evidence_refs"]
+                if evidence_id in evidence_by_id
+            )
+            assert point["title"] != source
+            assert point["content"] != source
+            assert point["content"] != linked_text
+            assert linked_text
+
     def test_upload_process_analyze_flow(self, tmp_path):
         ws = _workspace(tmp_path)
         cid = ws.create_course("Cálculo II", "M101", "es")["course_id"]
@@ -665,6 +922,7 @@ class TestWorkspaceAIText:
             trace = ws.knowledge_trace(cid, entry["knowledge_id"])
             assert trace["evidence"], entry
             assert trace["materials"], entry
+            assert trace["knowledge_point"]["generation_mode"] == "ai_summary"
         # Review 队列: 低置信度/冲突的人工入口 (pending, 待 confirm)。
         pending = ws.knowledge_points(cid, review_status="pending")
         assert len(pending) >= 1

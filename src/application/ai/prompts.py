@@ -35,13 +35,14 @@ __all__ = [
 ]
 
 #: 各提示词版本 (进入 processing identity; 改任一 prompt 文本必须 bump 对应版本)。
-#: v2 (2026-09-21): 描述必须浓缩改写、表格必须解读、考前复习导向 ——
-#: v1 只要求"抽取", 实测模型直接复述原文句子 (KP 与证据一字不差)。
-CHUNK_EXTRACTION_PROMPT_VERSION = PROMPT_VERSION + ":extract-v2"
-MERGE_PROMPT_VERSION = PROMPT_VERSION + ":merge-v2"
-SUMMARY_PROMPT_VERSION = PROMPT_VERSION + ":summary-v2"
-IMAGE_PROMPT_VERSION = PROMPT_VERSION + ":image-v2"
-AUDIO_PROMPT_VERSION = PROMPT_VERSION + ":audio-v2"
+#: v3 (2026-09-24): 应用层会拒绝与 Evidence 原文相同/异常高相似的候选；
+#: 提示词明确 summary、knowledge content 与 source evidence 是三个独立角色。
+#: v2 只要求"抽取/浓缩"，模型仍可能把证据段落当 description/summary。
+CHUNK_EXTRACTION_PROMPT_VERSION = PROMPT_VERSION + ":extract-v3"
+MERGE_PROMPT_VERSION = PROMPT_VERSION + ":merge-v3"
+SUMMARY_PROMPT_VERSION = PROMPT_VERSION + ":summary-v3"
+IMAGE_PROMPT_VERSION = PROMPT_VERSION + ":image-v3"
+AUDIO_PROMPT_VERSION = PROMPT_VERSION + ":audio-v3"
 
 #: 允许的知识点类型 (超集; 落库时映射到现有 domain 模型, 见 validators.py)。
 ALLOWED_KNOWLEDGE_TYPES = (
@@ -69,6 +70,8 @@ GROUNDING RULES (must follow exactly):
    outside the JSON object.
 6. Every knowledge point must carry "confidence" (0.0-1.0) and "evidence_refs".
 7. Keep "original_terms" as the verbatim terms from the evidence.
+8. "summary"/"topics" are report-layer abstractions; never paste a source
+   passage there. Keep the verbatim source only in the evidence store.
 """
 
 
@@ -88,7 +91,12 @@ DISTILLATION RULES (exam-review oriented, must follow exactly):
    most "importance": "low" and type "fact" — never "high".
 5. One concept per knowledge point. A definition, its formula, and its
    example are three separate points, not one pasted paragraph.
-6. Verbatim source wording belongs ONLY in "original_terms" and "examples".
+6. Verbatim source wording belongs ONLY in "original_terms" and short
+   clearly-labelled "examples". It must not be used as "title" or as the main
+   "description" copied from a source passage.
+7. Treat "summary" as a report-layer synthesis, never as a replacement for or
+   duplicate of EVIDENCE TEXT. Knowledge content and source evidence are separate
+   roles even when they discuss the same concept.
 """
 
 

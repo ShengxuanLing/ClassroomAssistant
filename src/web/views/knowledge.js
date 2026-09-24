@@ -10,6 +10,37 @@
 // 大块整段整段塞进 .pill, 会生成一个撑满整列的"大圆角块 / 圈" —— 既难看又误导。
 // 所以只有在它确实像术语标签 (短且无换行) 时才用 pill; 否则降级成截断的小字预览
 // (+ 浮层全文), 详情页则给足空间展示完整文本。
+function knowledgeGenerationMode(kp) {
+  const explicit = String((kp || {}).generation_mode || '');
+  if (explicit) return explicit;
+  const id = String((kp || {}).knowledge_id || '');
+  if (id.indexOf('aikp-') === 0) return 'ai_summary';
+  if (id.indexOf('kp-') === 0) return 'deterministic_fallback';
+  return 'manual';
+}
+
+function knowledgeModeBadge(kp) {
+  const mode = knowledgeGenerationMode(kp);
+  if (mode === 'ai_summary') {
+    return ' <span class="pill pill-ok tiny">' + esc(t('knowledge.aiSummaryBadge')) + '</span>';
+  }
+  if (mode === 'deterministic_fallback') {
+    return ' <span class="pill pill-warn tiny">' + esc(t('knowledge.fallbackBadge')) + '</span>';
+  }
+  return '';
+}
+
+function knowledgeModeNotice(kp) {
+  const mode = knowledgeGenerationMode(kp);
+  if (mode === 'ai_summary') {
+    return '<div class="banner">' + esc(t('knowledge.aiSummaryNotice')) + '</div>';
+  }
+  if (mode === 'deterministic_fallback') {
+    return '<div class="banner">' + esc(t('knowledge.fallbackNotice')) + '</div>';
+  }
+  return '';
+}
+
 function renderTerms(terms, opts) {
   opts = opts || {};
   const limit = opts.limit || 3;
@@ -52,7 +83,7 @@ async function pageKnowledge() {
         points.map((kp) => (
             '<tr><td class="kp-title"><a href="#/courses/' + encodeURIComponent(courseId) +
             '/knowledge/' + encodeURIComponent(kp.knowledge_id) + '">' +
-            esc(kp.title || kp.knowledge_id) + '</a>' +
+            esc(kp.title || kp.knowledge_id) + '</a>' + knowledgeModeBadge(kp) +
             '<br><span class="tiny muted mono break-all">' + esc(kp.knowledge_id) + '</span></td>' +
             '<td class="nowrap">' + pill(kp.validation_status) + ' ' + pill(kp.review_status) + '</td>' +
             '<td class="num">' + esc((kp.evidence_refs || []).length) + '</td>' +
@@ -157,6 +188,7 @@ async function pageKnowledgeDetail(courseId, knowledgeId) {
     (trace.complete ? '' :
       '<div class="banner banner-bad">' + t('该知识点的证据链不完整：') +
       esc((trace.unresolved_material_ids || []).length) + t(' 个材料引用无法解析。') + '</div>') +
+    knowledgeModeNotice(kp) +
 
     '<div class="card"><div class="card-head"><h2>' + t('陈述') + '</h2>' +
     '<span class="row">' + pill(kp.validation_status) + pill(kp.review_status) + '</span></div>' +

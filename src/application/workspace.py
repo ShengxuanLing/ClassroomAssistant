@@ -254,6 +254,15 @@ class Workspace:
         self._ai_enabled = False
         self._ai_provider: Optional[Any] = None
         self._ai_reports: dict[tuple[str, str], dict[str, Any]] = {}
+        # 材料页一键分析 (「AI分析」按钮): 每份材料最近一次的统一状态
+        # (QUEUED/PROCESSING/COMPLETED/FAILED + current_stage)。内存字典 +
+        # 进程内锁即可: HTTP 服务器是多线程的, 幂等闸门必须跨线程; 状态
+        # 本身以服务端为真相, 前端刷新后重读 (不依赖前端 loading 标志)。
+        self._analysis_status: dict[tuple[str, str], dict[str, Any]] = {}
+        self._analysis_inflight: set[tuple[str, str]] = set()
+        import threading as _threading
+
+        self._inflight_lock = _threading.Lock()
         if ingestion_service is not None:
             self.ingestion_service = ingestion_service
         else:
@@ -901,6 +910,417 @@ class Workspace:
         """
         return self.analyze_material_with_ai(
             course_id, material_id, **kw  # type: ignore[arg-type]
+        )
+
+    # ------------------------------------------------------------------
+    # 材料删除 (材料页「删除」按钮 -> ``DELETE /api/materials/{id}``)
+    # ------------------------------------------------------------------
+    #
+    # 删除语义 (按现有架构逐层清理, 不写裸 SQL, 不新建第二套状态):
+    #
+    # 1. **作业**: 同步执行模型下唯一安全的"取消"是把作业从
+    #    ``processing._jobs`` 移除并标记 CANCELLED —— 不存在需要 kill 的
+    #    后台线程, 用户删除时永远没有正在跑的作业。
+    # 2. **领域状态**: 工作流注册表删记录 + 受管文件副本删盘 + 派生证据
+    #    退休 (workflow.delete_material, 本文件上一节的级联清理链)。
+    # 3. **知识**: 从装配结构 / 组织服务 / 评审视图里显式移除归属该材料
+    #    证据的知识点。仅退休证据不够 —— ``_surviving_evidence`` 把
+    #    RETIRED 行也算存活, 重启后 KP 会被"复活"; 这里删掉全局
+    #    ``knowledge_points`` 行后, 溯源链 / 关系 / 冲突 / 评审历史由
+    #    外键 ``ON DELETE CASCADE`` 一并消失。
+    # 4. **持久化**: 全部 DB 变更在同一个 ``_atomic()`` 事务里提交 ——
+    #    中途失败整轮回滚, 绝不留下"材料还在但知识没了"的中间态。
+
+    def delete_material(self, course_id: str, material_id: str) -> dict[str, Any]:
+        started = time.monotonic()
+        ok = False
+        failure_reason: Optional[str] = None
+        try:
+            with self._atomic():
+                ctx = self.context(course_id)
+                record = ctx.workflow.get_material(material_id)
+                material_id = str(record["material_id"])
+                # 证据清单必须在删除注册表记录**之前**捕获 (记录没了就查不到
+                # 这份材料产出过哪些证据了) —— 知识拆卸的判据全靠它。
+                material_evidence_ids = {
+                    str(e) for e in (record.get("evidence_ids") or []) if e
+                }
+
+                # 1) 作业: 移除 + CANCELLED (无后台线程, 见模块注释)。
+                job_info = ctx.processing.discard_job(material_id)
+
+                # 2) 领域状态: 注册表 / 文件 / 证据退休。
+                cleanup = ctx.workflow.delete_material(material_id)
+                # 退休状态写穿到 DB (save_evidence_store 是增量写入, 状态
+                # 变化必须显式 UPDATE —— 见 set_evidence_states)。
+                retired_ids = cleanup.get("retired_evidence_ids") or []
+                if retired_ids and self._persistence is not None:
+                    self._persistence.set_evidence_states(
+                        {eid: "RETIRED" for eid in retired_ids}
+                    )
+
+                # 3) 内存知识拆卸: 结构 / 组织 / 评审视图同步移除。
+                knowledge_info = self._detach_material_knowledge(
+                    ctx, material_evidence_ids
+                )
+
+                # 4) 数据库: 注册表行 (级联处理状态与溯源链) + 知识行 +
+                #    课程作用域表 (migration 003 无外键, 需显式删)。
+                self._purge_material_persistence(
+                    material_id,
+                    course_id,
+                    knowledge_info["knowledge_point_ids"],
+                )
+
+                # 5) AI 报告落盘副本 (衍生缓存, 删掉即可, 不进事务)。
+                self._remove_ai_report(course_id, material_id)
+
+            ok = True
+            return {
+                "material_id": material_id,
+                "course_id": course_id,
+                "deleted": True,
+                "filename": record.get("filename"),
+                "job": job_info,
+                "removed_files": cleanup.get("removed_files") or [],
+                "retired_evidence_ids": cleanup.get("retired_evidence_ids") or [],
+                "removed_knowledge_point_ids": knowledge_info[
+                    "knowledge_point_ids"
+                ],
+            }
+        except NotFoundError:
+            # 删除不存在 / 已删除的材料: 明确 404, 不是静默成功。
+            raise
+        except Exception as exc:  # noqa: BLE001
+            failure_reason = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self._record_op(
+                "delete_material",
+                course=course_id,
+                material=material_id,
+                success=ok,
+                failure=failure_reason,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+
+    def _detach_material_knowledge(
+        self, ctx: CourseContext, material_evidence_ids: set[str]
+    ) -> dict[str, Any]:
+        """把归属该材料的知识从内存结构 / 组织服务 / 评审视图移除。
+
+        判据是**证据链** (与 ``assemble_knowledge`` / ``_link_session_knowledge``
+        同源): 知识点的 ``evidence_refs`` 里有任一条证据源自这份材料, 该
+        知识点就失去全部来源, 必须移除。``material_evidence_ids`` 由调用方
+        在删除注册表记录之前捕获 (记录没了就查不到了)。
+        """
+        structure = ctx.processing.structure
+        removed: list[str] = []
+        if structure is None:
+            return {"knowledge_point_ids": removed}
+        dead_ids = [
+            kp.knowledge_id
+            for kp in list(structure.knowledge_points.values())
+            if material_evidence_ids.intersection(kp.evidence_refs)
+        ]
+        for kp_id in dead_ids:
+            structure.knowledge_points.pop(kp_id, None)
+            removed.append(kp_id)
+        # 结构内部的关系 / 冲突索引按 KP id 派生 —— 重建一次让它们一致。
+        structure.relationships = [
+            rel
+            for rel in structure.relationships
+            if rel.source_id in structure.knowledge_points
+            and rel.target_id in structure.knowledge_points
+        ]
+        structure.conflicts = [
+            conf
+            for conf in structure.conflicts
+            if all(
+                ref in {e for kp in structure.knowledge_points.values() for e in kp.evidence_refs}
+                for ref in conf.evidence_refs
+            )
+        ]
+        structure._conflict_ids = {
+            c.conflict_id for c in structure.conflicts
+        }
+        structure._relationship_keys = {
+            rel._canonical_key() for rel in structure.relationships
+        }
+
+        org = ctx.org_service
+        for kp_id in removed:
+            org._kp_by_id.pop(kp_id, None)
+            org._structure_by_kp.pop(kp_id, None)
+        org._kp_ids_cache = None
+        org_structure = org.structure
+        org_structure.knowledge_memberships = {
+            mid: m
+            for mid, m in org_structure.knowledge_memberships.items()
+            if m.knowledge_point_id not in set(removed)
+        }
+        org_structure.session_memberships = {
+            mid: m
+            for mid, m in org_structure.session_memberships.items()
+            if m.knowledge_point_id not in set(removed)
+        }
+        org_structure.relations = {
+            rid: r
+            for rid, r in org_structure.relations.items()
+            if r.source_knowledge_point_id not in set(removed)
+            and r.target_knowledge_point_id not in set(removed)
+        }
+        org_structure._rebuild_indexes()
+        return {"knowledge_point_ids": removed}
+
+    def _purge_material_persistence(
+        self,
+        material_id: str,
+        course_id: str,
+        knowledge_point_ids: Sequence[str],
+    ) -> None:
+        """数据库侧真实删除 (与内存拆卸同一事务)。
+
+        - ``materials`` 主行: ``material_processing`` / ``material_evidence``
+          靠外键级联, 一条 DELETE 带走;
+        - ``knowledge_points`` 全局行: 溯源链 / 关系 / 冲突 / 成员关系 /
+          评审历史全部有指向它的 ``ON DELETE CASCADE`` 外键;
+        - migration 003 的课程作用域表 (无外键): 显式逐表删。
+        """
+        p = self._persistence
+        if p is None:
+            return
+        repos = p.repositories
+        p.delete_material_record(material_id)
+        for kp_id in knowledge_point_ids:
+            repos.knowledge.delete(kp_id)
+            repos.knowledge.course_rows.delete(course_id, kp_id)
+            repos.knowledge.course_evidence.clear_for(course_id, kp_id)
+            repos.reviews.course_rows.delete(course_id, kp_id)
+        p.database.execute(
+            "DELETE FROM course_conflicts WHERE course_id = ? AND conflict_id NOT IN "
+            "(SELECT conflict_id FROM conflicts)",
+            (course_id,),
+        )
+
+    def _remove_ai_report(self, course_id: str, material_id: str) -> None:
+        """删除落盘的 AI 报告副本 (衍生缓存; 不存在不算错误)。"""
+        self._ai_reports.pop((course_id, material_id), None)
+        try:
+            target = self._ai_report_path(course_id, material_id)
+        except ValueError:
+            return
+        remove_quietly(target)
+
+    # ------------------------------------------------------------------
+    # 一键 AI 分析 (材料页「AI分析」按钮 -> ``POST /api/materials/{id}/analyze``)
+    # ------------------------------------------------------------------
+    #
+    # 设计: 复用**现有**完整链路, 不造第二套 pipeline ——
+    #   ``process_material``  (摄取: 解析/OCR/转写 → 规范化 → 证据 →
+    #                          知识装配; AI 开启时还会自动语义分析)
+    # + ``analyze_material_with_ai`` (知识生成/验证/评审; 已处理过的材料
+    #   也会被显式补跑, 因为 process_material 对已成功的材料会短路)。
+    # 状态是服务端真相 (内存字典 + 事务内落盘与推导), 前端刷新页面后
+    # 仍然读得到 —— 不依赖任何前端 loading 标志。
+
+    #: 统一分析状态的高层取值 (对任务书 QUEUED/PROCESSING/COMPLETED/FAILED
+    #: 的直译; ``current_stage`` 用内部阶段码, 前端负责翻成人话)。
+    ANALYSIS_QUEUED = "QUEUED"
+    ANALYSIS_PROCESSING = "PROCESSING"
+    ANALYSIS_COMPLETED = "COMPLETED"
+    ANALYSIS_FAILED = "FAILED"
+
+    #: 用户级阶段码 (``current_stage`` 取值)。与 ProcessingJob 的内部
+    #: 阶段 (INGESTING/EVIDENCE/...) 一一对应, 由 ``_analysis_stage_view``
+    #: 翻译; AI 阶段是本层新增的统一编码, 不改动底层作业模型。
+    ANALYSIS_STAGE_INGESTION = "INGESTION"
+    ANALYSIS_STAGE_EXTRACTION = "EXTRACTION"
+    ANALYSIS_STAGE_KNOWLEDGE = "KNOWLEDGE"
+    ANALYSIS_STAGE_AI = "AI_ANALYSIS"
+    ANALYSIS_STAGE_DONE = "DONE"
+
+    @staticmethod
+    def _analysis_stage_view(job_stage: Any) -> str:
+        """ProcessingJob 内部阶段 -> 用户级阶段码 (只映射, 不改底层)。"""
+        stage = str(job_stage or "")
+        if stage in ("INGESTING", "QUEUED"):
+            return Workspace.ANALYSIS_STAGE_INGESTION
+        if stage == "EVIDENCE":
+            return Workspace.ANALYSIS_STAGE_EXTRACTION
+        if stage == "KNOWLEDGE":
+            return Workspace.ANALYSIS_STAGE_KNOWLEDGE
+        if stage == "DONE":
+            return Workspace.ANALYSIS_STAGE_DONE
+        return Workspace.ANALYSIS_STAGE_INGESTION
+
+    def _analysis_set(
+        self,
+        course_id: str,
+        material_id: str,
+        status: str,
+        stage: str,
+        error: Optional[str] = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "material_id": material_id,
+            "course_id": course_id,
+            "status": status,
+            "current_stage": stage,
+            "error_message": error,
+            "updated_at": self._clock(),
+        }
+        self._analysis_status[(course_id, material_id)] = payload
+        return dict(payload)
+
+    def analysis_status(
+        self, course_id: str, material_id: str
+    ) -> dict[str, Any]:
+        """统一分析状态的只读视图 (页面加载 / 轮询都用它)。
+
+        服务端没有记录且材料也不存在 -> NotFoundError; 材料存在但从未
+        分析过 -> status=IDLE (前端按"可点 AI分析"渲染)。
+        """
+        self.get_material(course_id, material_id)
+        payload = self._analysis_status.get((course_id, material_id))
+        if payload is not None:
+            return dict(payload)
+        return {
+            "material_id": material_id,
+            "course_id": course_id,
+            "status": "IDLE",
+            "current_stage": None,
+            "error_message": None,
+            "updated_at": None,
+        }
+
+    def analysis_statuses(
+        self, course_id: str
+    ) -> dict[str, dict[str, Any]]:
+        """整门课的统一分析状态 (材料列表一次拉齐, 刷新后服务端真相)。
+
+        并发删除的窄窗口里某条材料可能刚好消失 —— 跳过它而不是让整个
+        列表 404 (列表里本来也不会再有它)。
+        """
+        self.context(course_id)
+        out: dict[str, dict[str, Any]] = {}
+        for record in self.list_materials(course_id):
+            mid = str(record["material_id"])
+            try:
+                out[mid] = self.analysis_status(course_id, mid)
+            except NotFoundError:
+                continue
+        return out
+
+    def analyze_material(
+        self, course_id: str, material_id: str
+    ) -> dict[str, Any]:
+        """一键启动完整材料 → 知识点流水线 (幂等, 防重复任务)。
+
+        幂等保证: 同一材料已在分析中 (``_analysis_inflight`` 命中) 时
+        **不创建第二个任务**, 直接返回当前状态 (``already_running=True``),
+        前端继续轮询即可。同步执行模型下返回时分析**已经结束** ——
+        "进行中"状态只存在于并发请求窗口内, 但状态字典保证刷新页面后
+        仍然能读到最近一次的结局。
+        """
+        started = time.monotonic()
+        ok = False
+        failure_reason: Optional[str] = None
+        key = (course_id, material_id)
+        try:
+            # 幂等闸门: 先于一切领域调用。材料不存在 -> get_material 404。
+            self.get_material(course_id, material_id)
+            with self._inflight_lock:
+                if key in self._analysis_inflight:
+                    current = self._analysis_status.get(key)
+                    if current is not None:
+                        return {**current, "already_running": True}
+                self._analysis_inflight.add(key)
+            try:
+                payload = self._run_full_analysis(course_id, material_id)
+                ok = payload.get("status") != self.ANALYSIS_FAILED
+                return payload
+            finally:
+                self._analysis_inflight.discard(key)
+        except Exception as exc:  # noqa: BLE001
+            failure_reason = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, NotFoundError):
+                raise
+            raise
+        finally:
+            self._record_op(
+                "analyze_material",
+                course=course_id,
+                material=material_id,
+                success=ok,
+                failure=failure_reason,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+
+    def _run_full_analysis(
+        self, course_id: str, material_id: str
+    ) -> dict[str, Any]:
+        """实际执行完整链路 (调用方已持有幂等闸门)。"""
+        self._analysis_set(
+            course_id,
+            material_id,
+            self.ANALYSIS_PROCESSING,
+            self.ANALYSIS_STAGE_INGESTION,
+        )
+        try:
+            # 第一段: 摄取 (解析/OCR/转写 → 证据 → 知识装配)。AI 开启时
+            # 成功摄取会顺手完成自动语义分析 (``_maybe_auto_ai``)。
+            job = self.process_material(course_id, material_id)
+        except Exception as exc:  # noqa: BLE001 - 摄取阶段失败
+            detail = self._sanitize_ai_error(exc)
+            return self._analysis_set(
+                course_id,
+                material_id,
+                self.ANALYSIS_FAILED,
+                self.ANALYSIS_STAGE_INGESTION,
+                detail,
+            )
+
+        if str(job.get("status") or "") == JOB_FAILED:
+            return self._analysis_set(
+                course_id,
+                material_id,
+                self.ANALYSIS_FAILED,
+                self._analysis_stage_view(job.get("stage"))
+                or self.ANALYSIS_STAGE_EXTRACTION,
+                str(job.get("error") or "PROCESSING_FAILED"),
+            )
+
+        # 第二段: 语义分析 (知识点生成/验证/评审)。三种情况需要显式补跑:
+        # AI 刚被关闭 / 材料早就处理过 (process_material 短路, 没走
+        # _maybe_auto_ai) / 自动分析失败但材料摄取成功 (用户点重新分析)。
+        self._analysis_set(
+            course_id,
+            material_id,
+            self.ANALYSIS_PROCESSING,
+            self.ANALYSIS_STAGE_AI,
+        )
+        ai = job.get("ai")
+        if self._ai_enabled and (
+            ai is None or str(ai.get("status") or "") in (AI_AUTO_FAILED, AI_AUTO_SKIPPED)
+        ):
+            try:
+                ai = self.analyze_material_with_ai(course_id, material_id)
+            except Exception as exc:  # noqa: BLE001 - AI 阶段失败, 证据已安全
+                detail = self._sanitize_ai_error(exc)
+                return self._analysis_set(
+                    course_id,
+                    material_id,
+                    self.ANALYSIS_FAILED,
+                    self.ANALYSIS_STAGE_AI,
+                    detail,
+                )
+
+        return self._analysis_set(
+            course_id,
+            material_id,
+            self.ANALYSIS_COMPLETED,
+            self.ANALYSIS_STAGE_DONE,
         )
 
     # ------------------------------------------------------------------

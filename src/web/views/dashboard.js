@@ -69,8 +69,14 @@ function ovCourseRow(row, isCurrent) {
     '</div></a>';
 }
 
-/** 全部课程口径的概览页 (任务书 §3-§4)。 */
-async function pageDashboardGlobal() {
+/**
+ * 全部课程口径的概览页 (任务书 §3-§4)。
+ *
+ * 命名不带 ``page`` 前缀: 它是 pageDashboard() 的**取数+渲染子步骤**, 不是
+ * 用户可达的页面入口 —— ``page*`` 前缀被顶栏高亮清点测试保留给真正的页面
+ * 函数 (每个都必须恰好声明一次 markActiveNav)。
+ */
+async function loadGlobalDashboard() {
   const data = await api('/my-courses', {
     query: { lang: state.lang, preferred: state.courseId || undefined },
   });
@@ -101,14 +107,25 @@ async function pageDashboardGlobal() {
   );
 }
 
-/** 单课程口径的概览页 (state.scope 指到一门课时的筛选视图, 任务书 §6)。 */
-async function pageDashboardCourse(courseId) {
+/**
+ * 单课程口径的概览页 (state.scope 指到一门课时的筛选视图, 任务书 §6)。
+ * 同 loadGlobalDashboard: 取数+渲染子步骤, 不带 ``page`` 前缀。
+ */
+async function loadCourseDashboard(courseId) {
   const data = await api('/dashboard', { query: { course_id: courseId } });
-  if (data.course_id && data.course_id !== state.courseId) setCourse(data.course_id);
+  // 注意: 这里**不**回写 setCourse(data.course_id) —— scope 筛选只是本页的
+  // 查看范围 (任务书 §11), 改写 course context 会让"筛过一次概览"悄悄换掉
+  // 之后所有课程页的上下文。
   pageDashboardCourseBody(data);
 }
+
 async function pageDashboard() {
   markActiveNav('#/');
+  // 声明当前渲染页 (与 markActiveNav 同一条声明式契约): 顶栏选择器的
+  // 全局页/课程页语义跟这份声明走, 不反解析 hash。若侧边栏在本函数之前
+  // 已按旧语义画过选择器 (renderPage 式的直接调用), 这里按新声明重画一次。
+  declareRoute('#/');
+  syncCourseChrome();
   // 概览是全局页: 默认 "全部课程"; 顶栏选择器 (state.scope) 可以把它筛成
   // 单课程。scope 指向的课程必须还在课程列表里, 否则回退到全部 —— 失效的
   // 筛选不应该是"卡住的页面"。
@@ -122,13 +139,13 @@ async function pageDashboard() {
     if (!__courseCache.length) {
       // 课程列表还没加载 (loadSidebar 之前 / 失败): 退回"当前课程"口径的旧
       // 请求, 仍然能渲染出有意义的一屏, 而不是空白或报错。
-      await pageDashboardCourse(state.courseId);
+      await loadCourseDashboard(state.courseId);
       return;
     }
-    await pageDashboardGlobal();
+    await loadGlobalDashboard();
     return;
   }
-  await pageDashboardCourse(effective);
+  await loadCourseDashboard(effective);
 }
 
 /**
@@ -387,6 +404,9 @@ function pageDashboardCourseBody(data) {
 
 async function pageToday() {
   markActiveNav('#/today');
+  // 声明当前渲染页 —— 同 pageDashboard 的理由。
+  declareRoute('#/today');
+  syncCourseChrome();
   // 今日 = 全局页 (2026-09-22): 默认**不传 course_id** —— 后端按全部课程聚合
   // (student_today_view.py 的既有能力); state.scope 只作本页筛选 (任务书 §11)。
   // scope 失效 (课程被删) 时归位到全部, 而不是卡在 404 上。

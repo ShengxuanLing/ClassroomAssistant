@@ -1835,8 +1835,12 @@ async function audit() {
     // "POST /api/courses 这几个字出现过"。现在网页上有真正的创建表单
     // (#/courses 的 courseForm), 空态只负责把人送过去 —— 所以断言改成
     // 两件事同时成立: 入口链接在, 且 curl 教学没有回来。
+    // 2026-09-22 (任务书 §3): 概览默认是全部课程聚合页 (数据来自
+    // /api/my-courses), 所以空态夹具必须同时清空 my-courses —— 否则测到的
+    // 是"两个接口口径不一致"而不是空态本身。
     const noCourse = routes();
     noCourse['/api/dashboard'] = Object.assign(dashboard(), { courses: [] });
+    noCourse['/api/my-courses'] = emptyMyCourses();
     const sandbox = await renderPage(pageByName('dashboard'), noCourse, 'zh');
     const out = html(sandbox);
     check('empty course list points at the in-app create form',
@@ -3070,8 +3074,8 @@ async function audit() {
     );
     check('the session dropdown lists the course sessions',
       selectHtml.indexOf('value="' + SESSION_ID + '"') >= 0, selectHtml);
-    check('the session dropdown labels a session with its number and title',
-      selectHtml.indexOf('第 3 堂 · Tema 3') >= 0, selectHtml);
+    check('the session dropdown labels a session with its real date, weekday, number and title',
+      selectHtml.indexOf('2026-03-01（周日） · 第 3 堂 · Tema 3') >= 0, selectHtml);
     check('the session dropdown never labels an option with the raw id',
       selectHtml.indexOf('>' + SESSION_ID + '<') === -1, selectHtml);
 
@@ -3086,19 +3090,23 @@ async function audit() {
     // 4) 材料列表的"课堂"列 —— 用户真正天天看的是这一列, 不是下拉
     const bodyHtml = out.slice(out.indexOf('<tbody>'), out.indexOf('</tbody>'));
     const bodyText = bodyHtml.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-    check('the materials table shows the session label, not its id',
-      bodyText.indexOf('第 3 堂 · Tema 3') >= 0 && bodyText.indexOf(SESSION_ID) === -1,
+    check('the materials table shows the real session date and label, not its id',
+      bodyText.indexOf('2026-03-01（周日）') >= 0
+      && bodyText.indexOf('第 3 堂') >= 0
+      && bodyText.indexOf('Tema 3') >= 0
+      && bodyText.indexOf(SESSION_ID) === -1,
       bodyText);
 
-    // 5) 材料挂在一个**已不存在**的课堂下: 退回句柄, 不显示空白。
-    //    这是 sessionLabel() 的最后手段, 与 courseLabel() 的契约一致。
+    // 5) 材料挂在一个**已不存在**的课堂下：明确报告记录缺失，不伪造日期，
+    //    也不把内容寻址的 session_id 塞回可见文本。
     {
       const table = routes();
       table['/api/materials'] = { materials: [material({ session_id: 'session-gone' })] };
       const orphan = await renderPage(pageByName('materials'), table, 'zh');
       const orphanText = html(orphan).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
-      check('an orphaned material still shows its session handle',
-        orphanText.indexOf('session-gone') >= 0, orphanText.slice(0, 240));
+      check('an orphaned material reports a missing session without showing its id',
+        orphanText.indexOf('课堂记录缺失') >= 0
+        && orphanText.indexOf('session-gone') === -1, orphanText.slice(0, 240));
     }
 
     // 6) 一堂课都没有: 下拉必须**仍然渲染** (否则表单直接坏掉), 并说明课堂从哪来
@@ -3126,7 +3134,9 @@ async function audit() {
       // 标签本身也必须真的翻了 —— 只查"没有 CJK"是不够的: 标签里全是数字和
       // 拉丁字母, 万一哪天退化成 `第 3 堂 · Tema 3` 的硬编码中文, CJK 检查会红,
       // 但退化成别的拉丁写法就不会。这里钉住两种语言各自的拼法。
-      const localizedLabel = lang === 'ca' ? 'Sessió 3 · Tema 3' : 'Sesión 3 · Tema 3';
+      const localizedLabel = lang === 'ca'
+        ? '01/03/2026 (diumenge) · Sessió 3 · Tema 3'
+        : '01/03/2026 (domingo) · Sesión 3 · Tema 3';
       check('the session label is localized in ' + lang,
         localizedOut.indexOf(localizedLabel) >= 0,
         localizedOut.slice(0, 480));
@@ -3146,19 +3156,18 @@ async function audit() {
       .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
     check('sessionLabel() is defined exactly once',
       labelCode.split('function sessionLabel(').length - 1 === 1);
-    check('the picker and the table both go through sessionLabel()',
-      labelCode.indexOf('esc(sessionLabel(s))') >= 0 &&
-      labelCode.indexOf('esc(sessionLabel(sessionById[m.session_id], m.session_id))') >= 0);
-    // 每个显示课堂的地方都调助手。内联复制一份**输出完全一样**, 所以不会有任何
-    // 渲染断言变红 —— 只有这条计数能抓住它 (见 temp/_mutation_session_picker.py 的
-    // 变异 H)。
-    //
-    // 2026-09-21: 新建课堂表单提交后的 toast 也要报课堂名, 于是站点从 6 处
-    // 变成 7 处 (定义 1 + 调用 7 = 8)。**这个数字只在真的新增显示点时改** ——
-    // 它盯的是"每个显示点都调助手", 不是"助手被调了几次"。
+    check('the picker uses sessionLabel() and the table uses its shared structured fields',
+      labelCode.indexOf('esc(sessionLabel(s))') >= 0
+      && labelCode.indexOf('function materialSessionCell(session)') >= 0
+      && labelCode.indexOf('const parts = sessionDisplayParts(session);') >= 0
+      && labelCode.indexOf('materialSessionCell(sessionById[m.session_id])') >= 0);
+    // 每个显示课堂的地方都走共享格式化入口；材料表为了分行渲染直接消费
+    // sessionDisplayParts()，其余链接/toast 继续走 sessionLabel()。
     const labelSites = labelCode.split('sessionLabel(').length - 1;
-    check('every session-label site calls sessionLabel()',
-      labelSites === 8, 'sessionLabel( 出现 ' + labelSites + ' 次 (定义 1 + 调用 7)');
+    const displayPartSites = labelCode.split('sessionDisplayParts(').length - 1;
+    check('session display sites use the shared formatters',
+      labelSites === 7 && displayPartSites === 3,
+      'sessionLabel=' + labelSites + ', sessionDisplayParts=' + displayPartSites);
 
     // 10) D1 / D4: 处理警告与"成功但零证据"必须被看见, 而且**三处一致**。
     //

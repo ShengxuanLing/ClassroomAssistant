@@ -1013,11 +1013,13 @@ function mistakeDetail(overrides) {
  * 顺序必须与 index.html 的 `<nav class="topnav">` **逐项相同** —— 2026-09-21
  * 按用途分了两组 (P3-3), 概览从第三位提到第一位, 中间多了一个纯装饰的
  * `<span class="topnav-sep">` (它不匹配 `.topnav a`, 所以不进这个数组)。
+ * 2026-09-22: 4 个未实现入口在顶栏里是无 href 的 `<span class="nav-disabled">`
+ * (不可点击、不触发路由、永远进不了 active), 它们同样不进这个数组 ——
+ * `markActiveNav()` 只扫 `.topnav a`, 与真实 DOM 的行为一致。
  */
 const TOPNAV = [
-  '#/', '#/today', '#/review', '#/review-pack', '#/reviews',
-  '#/courses', '#/materials', '#/knowledge', '#/students', '#/exercises',
-  '#/mistakes',
+  '#/', '#/today', '#/reviews',
+  '#/courses', '#/materials', '#/knowledge', '#/students',
 ];
 
 function makeNavLink(href) {
@@ -1993,10 +1995,10 @@ async function main() {
     });
 
     // 每个页面函数都必须把高亮设成**恰好一项**, 且指向自己所在的页面。
+    // (2026-09-22: 只抽仍在顶栏可用的分区 —— 考前复习/复习包/练习/错题本
+    // 已改为无 href 的禁用 span, 真实 DOM 里本就进不了 active。)
     for (const [page, expected] of [
       ['pageMyCourses', '#/courses'],
-      ['pageMistakes', '#/mistakes'],
-      ['pageExercises', '#/exercises'],
       ['pageKnowledge', '#/knowledge'],
       ['pageLearn', '#/today'],
     ]) {
@@ -2390,9 +2392,11 @@ async function main() {
           sessions: [], review_pending: [], students: [], exercises: [],
         },
       };
+      // student-today: course_id=null = 全部课程聚合响应 (2026-09-22 起今日
+      // 默认全局口径); 备注仍按 tag 区分, 供"哪门课的数据在屏上"断言用。
       table['/api/student-today'] = {
         data: {
-          course_id: id, date: '2026-03-01', has_activity: false,
+          course_id: null, date: '2026-03-01', has_activity: false,
           note: 'NOTE-' + tag + '-today', counts: {},
           classes_today: [], study: [], learning_paths: [],
           pending_exercises: [], recent_evaluations: [], attention: [],
@@ -2551,20 +2555,123 @@ async function main() {
         sandbox.window.location.hash + ' / +' + (sandbox.__fetched.length - fetchedAgain));
     }
 
+    // 2026-09-22: 只覆盖仍在顶栏可用的分区。考前复习/复习包/练习/错题本的
+    // 路由与页面函数原样保留 (深链仍可达), 但顶栏已改为禁用 span —— 高亮断言
+    // 只对可用分区有意义, 故从本表移除四项。
+    // 2026-09-22 (任务书 §5): '#/' 与 '#/today' 是**全局页**, 换课语义不同
+    // (视图不跟随当前课程), 单独在下面的专用块里测, 不进这张课程页表。
     const PAGES = [
-      ['#/', '#/', 'FILE-GP-dash.pdf', 'FILE-GEO-dash.pdf'],
-      ['#/today', '#/today', 'NOTE-GP-today', 'NOTE-GEO-today'],
-      ['#/review', '#/review', 'ORDER-GP', 'ORDER-GEO'],
-      ['#/review-pack', '#/review-pack', 'FILE-GP-pack.pdf', 'FILE-GEO-pack.pdf'],
       ['#/reviews', '#/reviews', 'KP-GP', 'KP-GEO'],
       ['#/materials', '#/materials', 'FILE-GP-mat.pdf', 'FILE-GEO-mat.pdf'],
       ['#/knowledge', '#/knowledge', 'TITLE-GP', 'TITLE-GEO'],
       ['#/students', '#/students', 'NAME-GP', 'NAME-GEO'],
-      ['#/exercises', '#/exercises', 'PROMPT-GP', 'PROMPT-GEO'],
-      ['#/mistakes', '#/mistakes', 'stu-gp', 'stu-geo'],
     ];
     for (const [hash, nav, markerBefore, markerAfter] of PAGES) {
       await switchStaysOn(switchTable(), hash, nav, markerBefore, markerAfter);
+    }
+
+    // 概览 / 今日 = **全局页** (2026-09-22 任务书 §5/§11/§13): 左侧换课只换
+    // course context, 视图默认仍是"全部课程"聚合, **绝不**变成单课程内容。
+    // 路由不动 / 状态与持久化是 GEO / 顶栏高亮仍是本页 —— 这些与课程页一致;
+    // 差别在"视图内容": 课程页换成 GEO 内容, 全局页换课前后都是聚合视图,
+    // 且选择器保持「全部课程」。
+    for (const [hash, globalMarker, courseMarker] of [
+      // 概览: 聚合行里有 GP 课程名; 单课程标记 = 旧 dashboard 夹具的材料名。
+      ['#/', 'Gestio de Projectes', 'FILE-GP-dash.pdf'],
+      // 今日: 全局视图显示夹具备注; 单课程标记 = 副标题里的课程名 + 回全部链接
+      // (pageToday 只有 scope 筛选时才把课程名放进副标题)。
+      ['#/today', 'NOTE-GP-today', 'Gestio de Projectes · <a'],
+    ]) {
+      const table = switchTable();
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      const route = grab(sandbox, 'route');
+      const switchCourse = grab(sandbox, 'switchCourse');
+      sandbox.window.location.hash = hash;
+      useCourse(table, GP);
+      await route();
+      const before = html(sandbox);
+      // 副标题必须是"全部课程"口径; 聚合视图来自不筛课的请求。
+      check(hash + ' opens as the all-courses view',
+        before.indexOf('全部课程') >= 0 && before.indexOf(globalMarker) >= 0,
+        before.slice(0, 200));
+      check(hash + ' does not render single-course content by default',
+        before.indexOf(courseMarker) === -1, before.slice(0, 200));
+      // 全局页换课: 上下文换到 GEO, 视图仍聚合 (数据还是不筛课的请求)。
+      useCourse(table, GEO);
+      await switchCourse(GEO);
+      check(hash + ' keeps the route after switching course on a global page',
+        sandbox.window.location.hash === hash, sandbox.window.location.hash);
+      check(hash + ' keeps the all-courses view after switching course',
+        html(sandbox).indexOf('全部课程') >= 0, html(sandbox).slice(0, 200));
+      check(hash + ' does not become a single-course view after switching',
+        html(sandbox).indexOf(courseMarker) === -1, html(sandbox).slice(0, 300));
+      check(hash + ' switches the course state on a global page',
+        grab(sandbox, 'state').courseId === GEO,
+        String(grab(sandbox, 'state').courseId));
+      // 选择器语义 = 查看范围: 保持「全部课程」, 不跟随当前课程。
+      const picker = sandbox.document.getElementById('course-switch').innerHTML;
+      check(hash + ' keeps the switcher on all-courses after a course switch',
+        /<option value="" selected>/.test(picker), picker.slice(0, 200));
+    }
+
+    // 全局页的单课程筛选 (任务书 §6/§11): 选器选 GEO 后本页显示 GEO 的数据,
+    // 且**不**碰 course context / localStorage —— 筛选不是课程上下文。
+    // 概览的筛选视图给一个回全部的出口 (scope.viewAll 链接)。
+    {
+      const table = switchTable();
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      const route = grab(sandbox, 'route');
+      const setScope = grab(sandbox, 'setScope');
+      // 桩的 course-selection 判定钉在 GP: 模拟"用户偏好仍是 GP, 筛选只是
+      // 本页查看范围"。否则桩的判定会把上下文翻成 GEO, 掩盖真正的契约。
+      function pinSelectionToGp() {
+        table['/api/course-selection'] = {
+          data: { preferred: GP, course_id: GP, reason: 'preferred', available: [GP, GEO] },
+        };
+      }
+      sandbox.window.location.hash = '#/today';
+      useCourse(table, GEO);
+      pinSelectionToGp();
+      await route();
+      const fetchedBefore = sandbox.__fetched.length;
+      setScope(GEO);
+      await route();
+      const todayFetched = sandbox.__fetched.slice(fetchedBefore).join(' | ');
+      check('#/today scoped filter re-queries with the scoped course',
+        todayFetched.indexOf('course_id=' + GEO) >= 0, todayFetched.slice(0, 300));
+      const filtered = html(sandbox);
+      check('#/today scoped to GEO renders that course\'s data',
+        filtered.indexOf('NOTE-GEO-today') >= 0 &&
+        filtered.indexOf('NOTE-GP-today') === -1,
+        filtered.slice(0, 200));
+      check('#/today scoping does not touch the course context',
+        grab(sandbox, 'state').courseId === GP &&
+        sandbox.window.localStorage.getItem('ca.course') === GP,
+        String(grab(sandbox, 'state').courseId) + ' / ' +
+        String(sandbox.window.localStorage.getItem('ca.course')));
+      // 概览的筛选视图: 数据走单课程 dashboard 接口 (course_id=GEO), 页面
+      // 给出回全部的出口。
+      sandbox.window.location.hash = '#/';
+      useCourse(table, GEO);
+      pinSelectionToGp();
+      await route();
+      setScope(GEO);
+      sandbox.__fetched.length = 0;
+      await route();
+      const dashFetched = sandbox.__fetched.join(' | ');
+      check('#/ scoped dashboard re-queries with the scoped course',
+        dashFetched.indexOf('course_id=' + GEO) >= 0, dashFetched.slice(0, 300));
+      const dashOut = html(sandbox);
+      check('#/ scoped dashboard renders that course\'s dashboard',
+        dashOut.indexOf('FILE-GEO-dash.pdf') >= 0,
+        dashOut.slice(0, 200));
+      check('#/ scoped dashboard offers a way back to all courses',
+        dashOut.indexOf('查看全部课程') >= 0, dashOut.slice(0, 200));
+      check('#/ scoped dashboard does not touch the course context',
+        grab(sandbox, 'state').courseId === GP &&
+        sandbox.window.localStorage.getItem('ca.course') === GP,
+        String(grab(sandbox, 'state').courseId) + ' / ' +
+        String(sandbox.window.localStorage.getItem('ca.course')));
     }
 
     // 我的课程 (#/courses): 列表页本身渲染两门课, 断言"当前"标记搬到新课程。

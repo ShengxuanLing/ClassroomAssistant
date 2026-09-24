@@ -244,18 +244,21 @@ async function waitForServer(timeoutMs) {
     const labels = decodeEntities(sessionOptions
       .map((o) => o.replace(/^<option value="[^"]*">/, '').replace(/<\/option>$/, ''))
       .join(' | '));
-    check('a session with a title is labelled with number and title',
-      labels.indexOf('第 1 堂 · Tema 1') >= 0, labels);
-    check('a session without a title is labelled with its number only',
-      labels.indexOf('第 2 堂') >= 0 && labels.indexOf('第 2 堂 ·') === -1, labels);
+    check('a session with a title is labelled with real date, number and title',
+      labels.indexOf('2026-03-01（周日） · 第 1 堂 · Tema 1') >= 0, labels);
+    check('a session without a title is labelled with date and number only',
+      labels.indexOf('2026-03-08（周日） · 第 2 堂') >= 0
+      && labels.indexOf('2026-03-08（周日） · 第 2 堂 ·') === -1, labels);
     check('the dropdown never labels an option with the raw id',
       (labels.match(/session-[0-9a-f]{8,}/g) || []).length === 0, labels);
 
     // ---- 材料列表的"课堂"列 ----
     const bodyHtml = out.slice(out.indexOf('<tbody>'), out.indexOf('</tbody>'));
     const bodyText = decodeEntities(visibleText(bodyHtml)).replace(/\s+/g, ' ');
-    check('the materials table labels the session instead of showing its id',
-      bodyText.indexOf('第 1 堂 · Tema 1') >= 0
+    check('the materials table shows the real session date, number and title instead of its id',
+      bodyText.indexOf('2026-03-01（周日）') >= 0
+      && bodyText.indexOf('第 1 堂') >= 0
+      && bodyText.indexOf('Tema 1') >= 0
       && (bodyText.match(/session-[0-9a-f]{8,}/g) || []).length === 0, bodyText);
 
     // ---- 整页可见文本里不许出现课堂哈希 (与 e2e_student_ui.js 同一条规则) ----

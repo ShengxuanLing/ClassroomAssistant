@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import Any, Mapping, Optional, Sequence
 
 from src.application.ai.prompts import ALLOWED_KNOWLEDGE_TYPES
@@ -26,6 +28,9 @@ __all__ = [
     "GroundedCandidate",
     "classify_confidence",
     "ground_candidates",
+    "EVIDENCE_COPY_SIMILARITY_THRESHOLD",
+    "evidence_copy_similarity",
+    "candidate_copy_reason",
     "candidate_knowledge_id",
     "map_candidate_to_kp_payload",
 ]
@@ -71,6 +76,136 @@ def classify_confidence(
     return ConfidenceDecision(decision="reject", confidence=value)
 
 
+#: Exact source equality is always rejected.  Fuzzy rejection is deliberately
+#: stricter than a generic similarity cutoff: substantial ordered coverage plus a
+#: long contiguous run is required, so preserved/reordered terminology alone is
+#: not mistaken for a copied explanation.
+EVIDENCE_COPY_SIMILARITY_THRESHOLD = 0.90
+_COPY_MIN_UNITS = 6
+_COPY_MIN_CHARS = 40
+_COPY_MIN_RUN_RATIO = 0.60
+_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def _normalise_copy_text(value: Any) -> str:
+    """Case/accent/punctuation-insensitive text used only for copy detection."""
+    decomposed = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    plain = "".join(
+        char if char.isalnum() else " "
+        for char in decomposed
+        if not unicodedata.combining(char)
+    )
+    return " ".join(plain.split())
+
+
+def _copy_units(value: str) -> tuple[list[str], int]:
+    """Return ordered word tokens, or character bigrams for unsegmented CJK."""
+    compact = value.replace(" ", "")
+    char_count = len(compact)
+    if _CJK_RE.search(compact):
+        if len(compact) < 2:
+            return ([compact] if compact else []), char_count
+        return [compact[index:index + 2] for index in range(len(compact) - 1)], char_count
+    return _WORD_RE.findall(value), char_count
+
+
+def _copy_metrics(candidate: str, evidence: str) -> tuple[float, int]:
+    candidate_units, _ = _copy_units(candidate)
+    evidence_units, _ = _copy_units(evidence)
+    if not candidate_units or not evidence_units:
+        return 0.0, 0
+    matcher = SequenceMatcher(
+        None, candidate_units, evidence_units, autojunk=False
+    )
+    blocks = matcher.get_matching_blocks()
+    matched = sum(block.size for block in blocks)
+    longest_run = max((block.size for block in blocks), default=0)
+    return matched / len(candidate_units), longest_run
+
+
+def evidence_copy_similarity(candidate_text: str, evidence_text: str) -> float:
+    """Return ordered source-token coverage in the 0..1 range."""
+    candidate = _normalise_copy_text(candidate_text)
+    evidence = _normalise_copy_text(evidence_text)
+    if not candidate or not evidence:
+        return 0.0
+    if candidate == evidence:
+        return 1.0
+    return _copy_metrics(candidate, evidence)[0]
+
+
+def _candidate_knowledge_content(candidate: KnowledgeCandidate) -> str:
+    """The exact prose mapped to ``KnowledgePoint.content`` (without evidence)."""
+    parts = [candidate.description] if candidate.description else []
+    if candidate.examples:
+        parts.append("例子: " + " / ".join(candidate.examples[:5]))
+    if candidate.relations:
+        parts.append("关联: " + " / ".join(candidate.relations[:5]))
+    return "\n".join(parts)
+
+
+def candidate_copy_reason(
+    candidate: KnowledgeCandidate,
+    *,
+    evidence_ids: Sequence[str],
+    evidence_texts: Optional[Mapping[str, Any]],
+) -> Optional[str]:
+    """Explain a source quotation without echoing source text in the reason."""
+    # ``None`` preserves the public helper's legacy unit-level call contract.
+    # The production pipeline supplies this map explicitly.
+    if evidence_texts is None:
+        return None
+    for evidence_id in evidence_ids or ():
+        raw_text = evidence_texts.get(str(evidence_id), "")
+        evidence_text = str(getattr(raw_text, "content", raw_text) or "").strip()
+        if not evidence_text:
+            return (
+                "evidence text unavailable for candidate/evidence separation "
+                "validation: %s" % evidence_id
+            )
+
+        evidence_normal = _normalise_copy_text(evidence_text)
+        title_normal = _normalise_copy_text(candidate.title)
+        if title_normal == evidence_normal:
+            return "candidate title copies evidence exactly: %s" % evidence_id
+        title_units, title_chars = _copy_units(title_normal)
+        title_score, title_run = _copy_metrics(title_normal, evidence_normal)
+        if (
+            len(title_units) >= _COPY_MIN_UNITS
+            and title_chars >= _COPY_MIN_CHARS
+            and title_score >= EVIDENCE_COPY_SIMILARITY_THRESHOLD
+            and title_run >= _COPY_MIN_UNITS
+            and title_run / len(title_units) >= _COPY_MIN_RUN_RATIO
+        ):
+            return (
+                "candidate title closely copies evidence %s "
+                "(ordered-coverage=%.2f)" % (evidence_id, title_score)
+            )
+
+        description = _normalise_copy_text(candidate.description)
+        content = _normalise_copy_text(_candidate_knowledge_content(candidate))
+        if description and description == evidence_normal:
+            return "candidate content copies evidence exactly: %s" % evidence_id
+        if not description:
+            continue
+        units, char_count = _copy_units(content)
+        score, longest_run = _copy_metrics(content, evidence_normal)
+        substantial = len(units) >= _COPY_MIN_UNITS and char_count >= _COPY_MIN_CHARS
+        if (
+            substantial
+            and score >= EVIDENCE_COPY_SIMILARITY_THRESHOLD
+            and longest_run >= _COPY_MIN_UNITS
+            and longest_run / len(units) >= _COPY_MIN_RUN_RATIO
+        ):
+            return (
+                "candidate content closely copies evidence %s "
+                "(ordered-coverage=%.2f)" % (evidence_id, score)
+            )
+    return None
+
+
+
 @dataclass
 class GroundedCandidate:
     """通过 grounding 的候选: 模型引用的 chunk 已翻回真实 Evidence。"""
@@ -94,14 +229,18 @@ def ground_candidates(
     *,
     chunk_to_evidence: Mapping[str, str],
     material_evidence_ids: Sequence[str],
+    evidence_texts: Optional[Mapping[str, Any]] = None,
     policy: Optional[Mapping[str, float]] = None,
 ) -> tuple[list[GroundedCandidate], list[GroundedCandidate]]:
     """Evidence grounding (防幻觉核心)。
 
     - 候选引用的每个 chunk ref 必须存在于 ``chunk_to_evidence`` 且翻出的
       Evidence 属于当前 Material, 否则该候选 ``rejected`` (附原因)。
+    - 候选 ``title``/``description`` 若与其已解析 Evidence 原文相同或达到
+      异常高相似度，则 ``rejected``；拒绝记录仍保留合法 ``evidence_ids``。
+    - 无 ``evidence_texts`` 时保持旧调用兼容，仅执行引用/置信度校验。
     - 无任何合法 Evidence 的候选**永远**不能是 ``auto`` (即使 confidence
-      再高也只能 ``review`` —— 且是"缺证据"的 review)。
+      再高也只能 ``review`` —— 且是"缺证据" 的 review)。
     - 返回 ``(grounded, rejected)``。
     """
     valid_ids = {str(e) for e in (material_evidence_ids or ())}
@@ -138,6 +277,21 @@ def ground_candidates(
                     evidence_ids=[],
                     decision="reject",
                     reject_reason=reason,
+                )
+            )
+            continue
+        copy_reason = candidate_copy_reason(
+            candidate,
+            evidence_ids=resolved,
+            evidence_texts=evidence_texts,
+        )
+        if copy_reason is not None:
+            rejected.append(
+                GroundedCandidate(
+                    candidate=candidate,
+                    evidence_ids=resolved,
+                    decision="reject",
+                    reject_reason=copy_reason,
                 )
             )
             continue
@@ -205,7 +359,10 @@ def map_candidate_to_kp_payload(
 
     映射到**现有 domain model** (不新增字段/表, 无 migration):
 
-    - ``content`` = description + 例子/关系 (原文术语保留在 ``original_terms``)。
+    # ``content`` is knowledge prose, never the Evidence payload itself.  Keep
+    # source quotations confined to explicitly labelled examples/terms.
+    - ``content`` = abstracted description + examples/relations (原文术语保留在
+      ``original_terms``；逐字 Evidence 只留在 evidence store，不作为知识点正文)。
     - ``confidence``: 0.9+ -> HIGH, 0.7+ -> MEDIUM, 否则 LOW。
     - ``knowledge_score``: 由 grounding 后的**证据条数**经
       ``knowledge_score_from_counts`` 派生 (与确定性管线共用同一公式),
@@ -228,21 +385,21 @@ def map_candidate_to_kp_payload(
         confidence = "MEDIUM"
     else:
         confidence = "LOW"
-    parts = [candidate.description] if candidate.description else []
-    if candidate.examples:
-        parts.append("例子: " + " / ".join(candidate.examples[:5]))
-    if candidate.relations:
-        parts.append("关联: " + " / ".join(candidate.relations[:5]))
-    importance = candidate.importance if candidate.importance in ("high", "medium", "low") else _KP_TYPE_IMPORTANCE.get(kp_type, "medium")
+    importance = (
+        candidate.importance
+        if candidate.importance in ("high", "medium", "low")
+        else _KP_TYPE_IMPORTANCE.get(kp_type, "medium")
+    )
     original_terms = list(candidate.original_terms or [])
     if candidate.title and candidate.title not in original_terms:
         original_terms = [candidate.title] + original_terms
+    content = _candidate_knowledge_content(candidate)
     return {
         "knowledge_id": candidate_knowledge_id(
             course_id=course_id, title=candidate.title, kp_type=kp_type
         ),
         "title": candidate.title[:80] if candidate.title else kp_type,
-        "content": "\n".join(parts)[:4000],
+        "content": content[:4000],
         "original_terms": original_terms[:20],
         "importance": importance,
         "confidence": confidence,

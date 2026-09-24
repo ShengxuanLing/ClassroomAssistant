@@ -578,6 +578,7 @@ class AIUnderstandingPipeline:
         *,
         chunk_to_evidence: Mapping[str, str],
         material_evidence_ids: Sequence[str],
+        evidence_texts: Optional[Mapping[str, Any]] = None,
         existing_kps: Sequence[Mapping[str, Any]] = (),
         policy: Optional[Mapping[str, float]] = None,
     ) -> dict[str, Any]:
@@ -585,6 +586,10 @@ class AIUnderstandingPipeline:
 
         返回 ``{grounded, rejected, proposals, auto, review, conflict}``
         (均为可 JSON 序列化的字典, 供 Workspace 落库与报告)。
+
+        ``evidence_texts`` 是生产路径的硬门: 有真实 Evidence 文本时必须传入，
+        ``ground_candidates`` 才会执行 candidate/evidence 复制检测。保留
+        ``None`` 参数只为兼容旧的纯结构单元测试；应用编排不得省略它。
         """
         policy = dict(policy) if policy else dict(self._policy)
         deduped, dropped = deduplicate_candidates(list(merged.candidates))
@@ -592,6 +597,7 @@ class AIUnderstandingPipeline:
             deduped,
             chunk_to_evidence=dict(chunk_to_evidence),
             material_evidence_ids=list(material_evidence_ids),
+            evidence_texts=evidence_texts,
             policy=policy,
         )
         proposals = propose_merge_with_existing(

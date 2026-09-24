@@ -13,7 +13,7 @@
    ``placeholder="session-…"`` 的输入框, 而 ``session_id`` 与 ``course_id``
    同源 —— ``ClassSession._generate_stable_id`` 里
    ``"session-" + sha256(course_id + 课号)[:16]``, 用户既猜不出也记不住。
-   改成下拉列表, 选项标签是 ``第 3 堂 · Tema 3``。
+    改成下拉列表，选项标签使用共享 ``sessionLabel()`` 显示真实日期、星期、课号及课表信息。
 
 修法 (不是"把漏的那遍补上")
 --------------------------
@@ -30,7 +30,7 @@
   文案渲染 (包括 ``名称 || course_id`` 这种兜底),
   ``test_the_course_id_is_never_rendered_as_visible_text`` 就红。
   两者同源: 都是内容寻址的 sha256 句柄, 对用户零信息量。
-- 课堂显示成人话标签 (``第 3 堂 · Tema 3``) 只有一个生产者 ``sessionLabel()``。
+- 课堂显示成人话标签（日期、星期、课号及课表信息）只有一个生产者 ``sessionLabel()``。
 - 课程显示名只有一个来源 ``courseLabel()``; 身份串 (``code · language``) 只有一个
   生产者 ``courseIdentity()``; 侧边栏显示**课程代码**而不是哈希。
 - 学生页**始终**渲染注册表单 —— 包括一个学生都没有的时候 (否则第一个学生
@@ -61,8 +61,10 @@ FIXED_TIME = "2026-01-01T00:00:00+00:00"
 
 #: 11 处"课程 X"的标题 / 面包屑所在页面, 以及它们各自的函数头。
 #: (原为 12 处 —— 课程级「复习中心」页已于 2026-09-21 删除。)
+#: 2026-09-22 (任务书 §3): 概览默认是全部课程聚合页, 单课程标题随 scope 筛选
+#: 视图移到了 pageDashboardCourseBody (渲染体与取数分离的同一处拆分)。
 COURSE_LABEL_PAGES = (
-    "async function pageDashboard(",
+    "function pageDashboardCourseBody(",
     "async function pageLearn(",
     "async function pageReview(",
     "async function pageKnowledge(",
@@ -312,6 +314,19 @@ def run_node_script(script: Path, timeout: int = 300):
     )
 
 
+def run_node_code(source: str, timeout: int = 30):
+    """执行一小段真实前端代码；用于直接求值共享渲染助手。"""
+    return subprocess.run(
+        [node_runtime(), "-e", source],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(WEB_DIR.parent.parent),
+        timeout=timeout,
+    )
+
+
 def i18n_tables() -> dict[str, set[str]]:
     """解析 ``app.js`` 的 ``I18N`` 三语表 (符号 key -> 存在)。"""
     source = read_asset("app.js")
@@ -553,8 +568,15 @@ class TestTheSessionPickerIsADropdown:
     def test_the_materials_table_shows_the_session_label_not_its_id(self):
         """用户天天看的是这一列。修复前它是 ``session-32dde014868219be``。"""
         body = self._page()
-        assert "esc(sessionLabel(sessionById[m.session_id], m.session_id))" in body
+        assert "materialSessionCell(sessionById[m.session_id])" in body
+        assert "esc(sessionLabel(sessionById[m.session_id], m.session_id))" not in body
         assert "esc(m.session_id || '—')" not in body
+
+    def test_an_unlinked_material_says_so_instead_of_showing_a_dash(self):
+        """空 session_id 是合法业务状态，不能只留一个无解释的 ``—``。"""
+        body = self._page()
+        assert "t('未关联课堂')" in body
+        assert "? esc(sessionLabel(sessionById[m.session_id], m.session_id)) : '—'" not in body
 
     def test_the_form_reads_the_session_field_by_name_not_by_tag(self):
         """换控件类型时 ``input[name=…]`` 会静默变成 ``null.value``。
@@ -566,22 +588,209 @@ class TestTheSessionPickerIsADropdown:
         assert 'input[name="session_id"]' not in body
 
     def test_the_label_helper_has_exactly_one_producer(self):
-        """``第 N 堂 · 标题`` 曾经在 app.js 里被抄了两遍 (课堂页 h1 + 溯源链),
-        加上下拉就是第三遍 —— 抄三遍不会让任何断言变红, 只有等将来往标签里加字段
-        (比如加日期) 才会暴露。所以这里盯的是**唯一性**, 不是输出。
-        """
+        """课表字段只在 ``sessionDisplayParts()`` 解析一次，再由标签/材料表复用。"""
         source = strip_js_comments(read_asset("app.js"))
+        assert source.count("function sessionDisplayParts(") == 1
         assert source.count("function sessionLabel(") == 1
-        #: 定义 1 处 + 下拉选项 + 材料列表 + 课堂页 h1
-        #: + 溯源链两处 + Source Material 节点一处 = 7
-        #: + 2026-09-21 新建课堂表单提交后的 toast = 8
-        assert source.count("sessionLabel(") == 8
-        body = function_body(source, "function sessionLabel(session, fallback) {")
-        assert "session_id" not in body, "助手本身不得感知句柄 —— 兜底由调用方给"
-        #: 序数前缀只允许出现在助手里 (内联复制的指纹)。
+        #: sessionLabel 定义 1 处 + 下拉选项 + 课堂页 h1 + 溯源链两处
+        #: + Source Material 节点一处 + 新建课堂 toast = 7；材料表走结构化 helper。
+        assert source.count("sessionLabel(") == 7
+        parts_body = function_body(source, "function sessionDisplayParts(session) {")
+        assert "session_id" not in parts_body, "助手本身不得感知句柄"
+        assert "sessionDateLabel(session.date)" in parts_body
+        assert "parseSessionTitle(session.title)" in parts_body
+        for field in ("parsed.time", "parsed.kind", "parsed.room"):
+            assert field in parts_body
         assert source.count("t('第 ')") == 1
-        assert source.count("t(' 堂 · ')") == 1
-        assert "t('第 ')" in body and "t(' 堂 · ')" in body
+        assert "t('第 ')" in parts_body and "t(' 堂')" in parts_body
+
+    def test_the_shared_label_renders_the_real_schedule_and_localizes_the_weekday(self):
+        """直接执行真实前端助手：真实课表字段一个不少，普通标题仍保留旧前缀。"""
+        script = r"""
+const fs = require('fs');
+const vm = require('vm');
+const root = process.cwd();
+const storage = new Map();
+const element = () => ({
+  innerHTML: '', value: '', className: '', style: {},
+  addEventListener() {}, removeEventListener() {}, appendChild() {},
+});
+const sandbox = {
+  console,
+  window: {
+    localStorage: {
+      getItem: (key) => storage.get(key) || null,
+      setItem: (key, value) => storage.set(key, String(value)),
+      removeItem: (key) => storage.delete(key),
+    },
+    location: { hash: '#/' },
+    addEventListener() {},
+  },
+  document: {
+    documentElement: element(),
+    addEventListener() {},
+    getElementById: () => element(),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => element(),
+  },
+  setTimeout() {},
+  clearTimeout() {},
+};
+vm.createContext(sandbox);
+for (const file of ['i18n.js', 'app.js', 'views/courses.js']) {
+  vm.runInContext(fs.readFileSync(root + '/src/web/' + file, 'utf8'), sandbox, { filename: file });
+}
+function label(lang, session) {
+  return vm.runInContext(
+    'state.lang = ' + JSON.stringify(lang) + '; sessionLabel(' + JSON.stringify(session) + ')',
+    sandbox,
+  );
+}
+const full = {
+  session_number: 1,
+  date: '2026-09-24',
+  title: '15:00–17:00 Teoria | Hiyern Yoon; Genís Riba | Aula Q2/1009',
+};
+const simple = { session_number: 3, date: '2026-03-01', title: 'Tema 3' };
+console.log(JSON.stringify({
+  full_zh: label('zh', full),
+  full_es: label('es', full),
+  full_ca: label('ca', full),
+  datetime_zh: vm.runInContext(
+    "state.lang = 'zh'; sessionDateLabel('2026-09-24T15:00')", sandbox,
+  ),
+  simple_zh: label('zh', simple),
+  unlinked: ['zh', 'es', 'ca'].map((lang) => vm.runInContext(
+    'state.lang = ' + JSON.stringify(lang) + '; t("未关联课堂")', sandbox,
+  )),
+}));
+"""
+        result = run_node_code(script)
+        assert result.returncode == 0, result.stdout + result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["full_zh"] == (
+            "2026-09-24（周四） · 第 1 堂 · 15:00–17:00 · Teoria · "
+            "Hiyern Yoon; Genís Riba · Aula Q2/1009"
+        )
+        assert payload["full_es"] == (
+            "24/09/2026 (jueves) · Sesión 1 · 15:00–17:00 · Teoria · "
+            "Hiyern Yoon; Genís Riba · Aula Q2/1009"
+        )
+        assert payload["full_ca"] == (
+            "24/09/2026 (dijous) · Sessió 1 · 15:00–17:00 · Teoria · "
+            "Hiyern Yoon; Genís Riba · Aula Q2/1009"
+        )
+        for field in ("2026-09-24", "15:00–17:00", "Teoria", "Aula Q2/1009"):
+            assert field in payload["full_zh"]
+        for field in ("24/09/2026", "15:00–17:00", "Teoria", "Aula Q2/1009"):
+            assert field in payload["full_es"]
+            assert field in payload["full_ca"]
+        for lang in ("es", "ca"):
+            assert not re.search(r"[\u4e00-\u9fff]", payload["full_" + lang])
+        assert payload["datetime_zh"] == "2026-09-24（周四）"
+        assert payload["simple_zh"] == "2026-03-01（周日） · 第 3 堂 · Tema 3"
+        assert payload["unlinked"] == ["未关联课堂", "Sin sesión asociada", "Sense sessió associada"]
+
+    def test_the_materials_page_uses_the_full_label_and_keeps_the_real_option_value(self):
+        """真实执行 pageMaterials：下拉值仍是 session_id，列表/下拉显示完整课表，未关联可读。"""
+        script = r"""
+const fs = require('fs');
+const vm = require('vm');
+const root = process.cwd();
+const elements = new Map();
+const storage = new Map([['ca.course', 'course-1']]);
+const element = (id) => {
+  if (!elements.has(id)) {
+    elements.set(id, {
+      id, innerHTML: '', value: '', className: '', style: {},
+      addEventListener() {}, removeEventListener() {}, appendChild() {},
+    });
+  }
+  return elements.get(id);
+};
+const session = {
+  session_id: 'session-real-123',
+  session_number: 1,
+  date: '2026-09-24',
+  title: '15:00–17:00 Teoria | Hiyern Yoon; Genís Riba | Aula Q2/1009',
+};
+const sandbox = {
+  console,
+  window: {
+    localStorage: {
+      getItem: (key) => storage.get(key) || null,
+      setItem: (key, value) => storage.set(key, String(value)),
+      removeItem: (key) => storage.delete(key),
+    },
+    location: { hash: '#/materials' }, addEventListener() {}, scrollTo() {},
+  },
+  document: {
+    documentElement: element('html'), addEventListener() {},
+    getElementById: element, querySelector: () => null, querySelectorAll: () => [],
+    createElement: element,
+  },
+  setTimeout() {}, clearTimeout() {},
+};
+vm.createContext(sandbox);
+for (const file of ['i18n.js', 'app.js', 'views/materials.js', 'views/courses.js']) {
+  vm.runInContext(fs.readFileSync(root + '/src/web/' + file, 'utf8'), sandbox, { filename: file });
+}
+sandbox.api = async (path) => {
+  if (path === '/materials') return {
+    materials: [
+      {
+        material_id: 'mat-linked', filename: 'linked.txt', extension: '.txt', size: 10,
+        material_type: 'document', processing_status: 'SUCCEEDED', session_id: session.session_id,
+      },
+      {
+        material_id: 'mat-unlinked', filename: 'unlinked.txt', extension: '.txt', size: 10,
+        material_type: 'document', processing_status: 'SUCCEEDED', session_id: null,
+      },
+    ],
+    analysis_statuses: {},
+  };
+  if (path === '/sessions') return { sessions: [session] };
+  if (path === '/processing') return { by_status: {} };
+  throw new Error('unexpected route ' + path);
+};
+(async () => {
+  const out = {};
+  for (const lang of ['zh', 'es', 'ca']) {
+    vm.runInContext('state.lang = ' + JSON.stringify(lang), sandbox);
+    await sandbox.pageMaterials();
+    out[lang] = element('view').innerHTML;
+  }
+  console.log(JSON.stringify(out));
+})().catch((error) => { console.error(error.stack); process.exitCode = 1; });
+"""
+        result = run_node_code(script)
+        assert result.returncode == 0, result.stdout + result.stderr
+        rendered = json.loads(result.stdout)
+        expected = {
+            "zh": "2026-09-24（周四） · 第 1 堂 · 15:00–17:00 · Teoria · Hiyern Yoon; Genís Riba · Aula Q2/1009",
+            "es": "24/09/2026 (jueves) · Sesión 1 · 15:00–17:00 · Teoria · Hiyern Yoon; Genís Riba · Aula Q2/1009",
+            "ca": "24/09/2026 (dijous) · Sessió 1 · 15:00–17:00 · Teoria · Hiyern Yoon; Genís Riba · Aula Q2/1009",
+        }
+        material_parts = {
+            "zh": ("2026-09-24（周四）", "第 1 堂 · 15:00–17:00", "Teoria · Aula Q2/1009"),
+            "es": ("24/09/2026 (jueves)", "Sesión 1 · 15:00–17:00", "Teoria · Aula Q2/1009"),
+            "ca": ("24/09/2026 (dijous)", "Sessió 1 · 15:00–17:00", "Teoria · Aula Q2/1009"),
+        }
+        unlinked = {
+            "zh": "未关联课堂",
+            "es": "Sin sesión asociada",
+            "ca": "Sense sessió associada",
+        }
+        for lang, html in rendered.items():
+            assert '<option value="session-real-123">' in html
+            assert ">" + expected[lang] + "</option>" in html
+            for part in material_parts[lang]:
+                assert ">" + part + "<" in html
+            assert unlinked[lang] in html
+            assert "session-real-123</td>" not in html
+            if lang != "zh":
+                assert not re.search(r"[\u4e00-\u9fff]", html)
 
     def test_the_session_page_no_longer_prints_the_raw_id(self):
         """课堂页副标题与课程页对齐: 课程页显示 ``code · language``, 不是 course_id。
@@ -995,7 +1204,7 @@ class TestUiAuditCoversTheReportedProblems:
         script = self._script()
         assert "materials page renders a session dropdown" in script
         assert "the session dropdown lists the course sessions" in script
-        assert "the materials table shows the session label, not its id" in script
+        assert "the materials table shows the real session date and label, not its id" in script
         assert "table['/api/sessions']" in script
 
     def test_the_audit_passes(self):

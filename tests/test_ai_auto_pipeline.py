@@ -360,10 +360,11 @@ class TestIdempotencyDedupConflict:
         ws.process_material(cid, second["material_id"])
         matches = [
             k for k in ws.knowledge_points(cid)
-            if k.get("title") == sentence
-            and str(k.get("knowledge_id") or "").startswith("aikp-")
+            if str(k.get("knowledge_id") or "").startswith("aikp-")
+            and k.get("content") != sentence
         ]
-        assert len(matches) == 1  # 不能出现 Derivative / Derivative
+        assert len(matches) == 1  # 同一概念只能有一个 AI 知识点
+        assert matches[0].get("title") != sentence
         assert len(matches[0].get("evidence_refs") or []) >= 1
 
     def test_conflict_rule_and_review_entry(self, tmp_path):
@@ -696,17 +697,17 @@ class TestProviderErrorsAndKeySafety:
 
 
 # ======================================================================
-# 9. 提示词 v2: 浓缩改写（考前复习导向，拒绝原文复读）
+# 9. 提示词 v3: 抽象/证据分离（考前复习导向，拒绝原文复读）
 # ======================================================================
 
 
-class TestPromptDistillationV2:
-    def test_versions_bumped_to_v2(self):
-        assert CHUNK_EXTRACTION_PROMPT_VERSION.endswith(":extract-v2")
-        assert MERGE_PROMPT_VERSION.endswith(":merge-v2")
-        assert SUMMARY_PROMPT_VERSION.endswith(":summary-v2")
-        assert IMAGE_PROMPT_VERSION.endswith(":image-v2")
-        assert AUDIO_PROMPT_VERSION.endswith(":audio-v2")
+class TestPromptDistillationV3:
+    def test_versions_bumped_to_v3(self):
+        assert CHUNK_EXTRACTION_PROMPT_VERSION.endswith(":extract-v3")
+        assert MERGE_PROMPT_VERSION.endswith(":merge-v3")
+        assert SUMMARY_PROMPT_VERSION.endswith(":summary-v3")
+        assert IMAGE_PROMPT_VERSION.endswith(":image-v3")
+        assert AUDIO_PROMPT_VERSION.endswith(":audio-v3")
 
     def test_chunk_prompt_demands_condensation(self):
         prompt = build_chunk_extraction_prompt(chunk_id="c", chunk_text="t")

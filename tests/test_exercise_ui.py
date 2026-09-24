@@ -1129,9 +1129,12 @@ class TestUiContract:
         assert "pageExercises(" in source
 
     def test_index_html_nav_exposes_exercises(self):
+        # 2026-09-22: 练习入口暂时禁用 —— 仍显示文字但改为无 href 的禁用 span
+        # (不可点击、不触发路由), 路由分支与页面函数原样保留。重启用时换回 <a>。
         html = read_asset("index.html")
-        assert 'href="#/exercises"' in html
         assert 'data-i18n="nav.exercises"' in html
+        assert 'href="#/exercises"' not in html
+        assert 'class="nav-disabled"' in html
 
     def test_app_js_renders_the_evaluation_panel_with_an_explicit_warning(self):
         source = read_asset("app.js")

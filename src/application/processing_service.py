@@ -508,6 +508,37 @@ class ClassroomProcessingService:
             raise NotFoundError(f"no processing job for material {material_id!r}")
         return job.to_dict()
 
+    def peek_job(self, material_id: str) -> Optional[dict[str, Any]]:
+        """作业状态的非抛异常视图 (材料页统一分析状态用)。
+
+        与 :meth:`get_job` 的区别: 没有作业返回 ``None`` 而不是 404 ——
+        "还没处理过"是一条正常信息, 不是错误。
+        """
+        job = self._jobs.get(str(material_id))
+        return job.to_dict() if job is not None else None
+
+    def discard_job(self, material_id: str) -> dict[str, Any]:
+        """删除材料时移除其处理作业 (材料页「删除」的后半段)。
+
+        语义: 作业从 ``_jobs`` 里**移除** (之后 ``get_job`` 404, 轮询自然
+        收尾), 同时把内存里的作业对象标记 CANCELLED —— 同步执行模型下,
+        若删除恰好与另一次 ``process_material`` 并发, 那个线程手里已持有
+        作业引用; CANCELLED 标记保证它收尾时不会把作业报成 SUCCEEDED。
+        摄取产物不会复活: 注册表行与 ``_flush_materials`` 都来自
+        ``list_materials()``, 而那条记录已被删除。
+        """
+        job = self._jobs.pop(str(material_id), None)
+        if job is None:
+            return {"existed": False, "was_running": False}
+        was_running = job.status == JOB_RUNNING
+        job.status = JOB_CANCELLED
+        job.finished_at = self._clock()
+        return {
+            "existed": True,
+            "was_running": was_running,
+            "job_id": job.job_id,
+        }
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

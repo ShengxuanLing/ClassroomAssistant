@@ -247,7 +247,10 @@ def build_router(workspace: Workspace) -> Router:
             {
                 "materials": workspace.list_materials(
                     course_id, request.q("session_id")
-                )
+                ),
+                # 材料页一键分析: 整门课的统一分析状态随列表一次拉齐,
+                # 刷新后前端直接按服务端状态渲染 (不依赖任何本地 loading)。
+                "analysis_statuses": workspace.analysis_statuses(course_id),
             }
         )
 
@@ -397,6 +400,31 @@ def build_router(workspace: Workspace) -> Router:
             workspace.ai_summary(course_id, request.params["material_id"])
         )
 
+    def analyze_material(request: Request) -> ApiResponse:
+        """一键完整分析 (材料页「AI分析」按钮): 摄取 → 证据 → 知识 → AI。
+
+        幂等: 同一材料已有进行中的分析时不创建第二个任务, 返回当前
+        状态 (``already_running: true``)。失败带 ``current_stage`` +
+        ``error_message``, 不暴露堆栈。
+        """
+        course_id = request.require_q("course_id")
+        return success(
+            workspace.analyze_material(course_id, request.params["material_id"])
+        )
+
+    def analysis_status(request: Request) -> ApiResponse:
+        course_id = request.require_q("course_id")
+        return success(
+            workspace.analysis_status(course_id, request.params["material_id"])
+        )
+
+    def delete_material(request: Request) -> ApiResponse:
+        """真实删除一份材料及其全部派生数据 (确认由前端负责)。"""
+        course_id = request.require_q("course_id")
+        return success(
+            workspace.delete_material(course_id, request.params["material_id"])
+        )
+
     router.post("/api/materials/{material_id}/ai-analyze", ai_analyze_material)
     router.get("/api/materials/{material_id}/ai-summary", ai_material_summary)
 
@@ -406,6 +434,9 @@ def build_router(workspace: Workspace) -> Router:
     router.post("/api/materials/{material_id}/process", process_material)
     router.post("/api/materials/{material_id}/retry", retry_material)
     router.get("/api/materials/{material_id}/evidence", material_evidence)
+    router.post("/api/materials/{material_id}/analyze", analyze_material)
+    router.get("/api/materials/{material_id}/analysis", analysis_status)
+    router.delete("/api/materials/{material_id}", delete_material)
 
     # ------------------------------------------------------------------
     # processing
