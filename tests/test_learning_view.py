@@ -1247,32 +1247,19 @@ class TestAnswerTimestampsAndIsolation:
 
 
 class TestUiContract:
-    def test_app_js_calls_every_task40_endpoint(self):
-        """学生页只打两个请求: dashboard (内嵌 learning_paths) + explanation。
-
-        ``/learning-paths/{kp}`` 是独立端点 (直接深链时用), 学生首页从
-        dashboard 的 ``learning_paths`` 取路径, 避免 N+1 请求。
-        """
+    def test_app_js_keeps_shared_student_support_endpoints(self):
+        """隐式学生支撑页仍读学生 API；已删除的详情端点不再由前端调用。"""
         source = read_asset("app.js")
-        for fragment in (
-            "/students/",
-            "/learning-events",
-            "/dashboard",
-            "/explanation",
-        ):
+        for fragment in ("/students/", "/explanation"):
             assert fragment in source, fragment
+        assert "/students/' + encodeURIComponent(studentId) + '/dashboard'" not in source
+        assert "/learning-events" not in source
 
-    def test_app_js_renders_paths_from_the_dashboard_payload(self):
+    def test_removed_student_detail_renderer_is_absent(self):
         source = read_asset("app.js")
-        assert "renderPathChain" in source
-        assert "entry.path" in source or ".path)" in source
-
-    def test_app_js_shows_the_raw_task30_state_next_to_the_navigation_status(self):
-        """导航状态绝不能单独出现, 否则会被误读成掌握度。"""
-        source = read_asset("app.js")
-        assert "path.rawState" in source
-        assert "statusLabel" in source
-        assert "stateLabel" in source
+        assert "renderPathChain" not in source
+        assert "async function pageStudent(" not in source
+        assert "async function pageStudents(" not in source
 
     def test_app_js_contains_the_exact_fallback_message(self):
         assert NO_EXPLANATION in read_asset("app.js")
@@ -1289,20 +1276,20 @@ class TestUiContract:
         for code in UI_LANGUAGES:
             assert f'value="{code}"' in html
 
-    def test_index_html_nav_exposes_students_and_i18n_hooks(self):
+    def test_index_html_does_not_expose_student_pages(self):
         html = read_asset("index.html")
-        assert 'href="#/students"' in html
+        assert 'href="#/students"' not in html
         assert "data-i18n" in html
 
-    def test_learning_event_action_is_wired_in_the_router(self):
+    def test_learning_event_action_is_not_exposed_without_a_student_page(self):
         source = read_asset("app.js")
-        assert "learning-event" in source
-        assert "actionLearningEvent" in source
-        assert "learning-events" in source
+        assert "learning-event" not in source
+        assert "actionLearningEvent" not in source
 
-    def test_students_route_is_registered(self):
+    def test_student_page_routes_are_not_registered(self):
         source = read_asset("app.js")
-        assert "parts[0] === 'students'" in source
+        assert "parts[0] === 'students'" not in source
+        assert "parts[2] === 'students'" not in source
 
     def test_explanation_panel_mount_point_exists(self):
         assert "explanation-panel" in read_asset("app.js")

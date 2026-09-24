@@ -448,11 +448,11 @@ async function pageToday() {
   // ---- Today's Classes ------------------------------------------------
   //
   // 全部课程口径下按课程分组 (任务书 §9): 只显示**今天真的有课**的课程,
-  // 没课的课程不出空卡片; 单课程筛选时仍是一张平表 (课程名在副标题里)。
+  // 没课的课程不出空卡片; 单课程筛选时课程名已在副标题里, 不再重复组头。
   // 分组是**渲染层**对后端已给数据的重组, 不发第二个请求。
   function groupedClassesHtml() {
     if (data.course_id) {
-      return classesTable(classes);
+      return todayClassesCard(classes);
     }
     const byCourse = [];
     const index = {};
@@ -470,26 +470,55 @@ async function pageToday() {
     }
     return byCourse.map((group) => (
       '<div class="today-group"><h3>' + esc(group.course_name || '') + '</h3>' +
-      classesTable(group.sessions) + '</div>'
+      todayClassesCard(group.sessions) + '</div>'
     )).join('');
   }
 
-  /** 今日课堂表 (分组内外共用同一张表结构, 无第二份列定义)。 */
-  function classesTable(rows) {
-    return '<table class="data">' + tableCaption(t('today.classesCard')) + '<thead><tr><th scope="col">' + t('class.session') + '</th><th scope="col">' +
-      t('common.status') + '</th><th scope="col" class="num">' + t('course.knowledge') +
-      '</th><th scope="col" class="num">' + t('course.pendingReview') +
-      '</th></tr></thead><tbody>' +
-      rows.map((s) => (
-        '<tr><td><a href="#/courses/' + encodeURIComponent(s.course_id) + '/sessions/' +
-        encodeURIComponent(s.session_id) + '">' + esc(s.title || t('(无标题)')) + '</a>' +
-        '<div class="tiny muted">' +
-        (data.course_id ? esc(s.course_name || '') : '') +
-        (s.date ? (data.course_id ? ' · ' : '') + esc(s.date) : '') + '</div></td>' +
-        '<td>' + pill(sessionStatusLabel(s.status), s.status) + '</td>' +
-        '<td class="num">' + esc((s.counts || {}).knowledge_points || 0) + '</td>' +
-        '<td class="num">' + esc((s.counts || {}).pending_review || 0) + '</td></tr>'
-      )).join('') + '</tbody></table>';
+  /** 今日课堂的一行: 与课程页共用解析器及 session-row 两行版式。 */
+  function todaySessionRow(courseId, session) {
+    const parsed = parseSessionTitle(session.title);
+    const counts = session.counts || {};
+    const primary = parsed.kind || parsed.head || '';
+    const who = [parsed.mid, parsed.room].filter(Boolean).join(' · ');
+    const href = '#/courses/' + encodeURIComponent(courseId) +
+      '/sessions/' + encodeURIComponent(session.session_id);
+    const meta = [];
+    if (counts.materials) {
+      meta.push(esc(t('材料')) + ' ' + esc(String(counts.materials)));
+    }
+    if (counts.knowledge_points) {
+      meta.push(esc(t('course.knowledge')) + ' ' + esc(String(counts.knowledge_points)));
+    }
+    if (counts.pending_review) {
+      meta.push(esc(t('course.pendingReview')) + ' ' + esc(String(counts.pending_review)));
+    }
+    return '<div class="session-row">' +
+      '<a class="session-row-main" href="' + href + '">' +
+      '<div class="session-row-top">' +
+      (parsed.time ? '<span class="session-time">' + esc(parsed.time) + '</span>' : '') +
+      (parsed.kind
+        ? '<span class="pill pill-accent session-kind">' + esc(parsed.kind) + '</span>'
+        : '<span class="session-title">' + esc(primary || t('未命名课堂')) + '</span>') +
+      '</div>' +
+      '<div class="session-row-sub">' +
+      (who ? '<span class="session-who">' + esc(who) + '</span>' : '') +
+      pill(sessionStatusLabel(session.status), session.status) +
+      '</div>' +
+      (meta.length
+        ? '<div class="session-row-meta tiny muted">' + meta.join(' · ') + '</div>'
+        : '') +
+      '</a>' +
+      '<button type="button" class="session-row-action" data-action="process-session"' +
+      ' data-course="' + esc(courseId) + '" data-session="' + esc(session.session_id) + '">' +
+      t('整堂处理') + '</button>' +
+      '</div>';
+  }
+
+  /** 今日全部课堂都在同一天: 同课程直接追加行, 不再画日期组头。 */
+  function todayClassesCard(rows) {
+    return '<div class="session-day-card">' +
+      rows.map((session) => todaySessionRow(session.course_id, session)).join('') +
+      '</div>';
   }
 
   const classesHtml = classes.length
@@ -527,9 +556,7 @@ async function pageToday() {
                   kpHref(block.course_id, nextTask.knowledge_point_id) + '">' +
                   esc(nextTask.knowledge_point_id) + '</a></p>'
                 : '') +
-              '<p><a class="btn primary" href="#/courses/' +
-              encodeURIComponent(block.course_id) + '/students/' +
-              encodeURIComponent(block.student_id) + '">' + t('today.continue') + '</a></p>'
+              '<p><a class="btn primary" href="#/learn">' + t('today.continue') + '</a></p>'
             : '<p class="muted small">' + esc(block.note || t('today.noActivity')) + '</p>') +
           '</div>';
       }).join('')

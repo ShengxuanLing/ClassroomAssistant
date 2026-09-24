@@ -33,8 +33,8 @@
  * 未覆 (本脚本**不**覆盖, 不得宣称已验证):
  *   - CSS 布局与视觉呈现: 不解析 styles.css, 不做排版/重排/响应式断言。
  *   - 真实点击事件: 只调用页面函数, 不派发真实的 click / submit 事件;
- *     表单接线函数 (wireUploadForm / wireAnswerForm / wireStudentForm) 只做
- *     "是否存在且被接上"的静态断言, 不模拟用户操作。
+ *     表单接线函数 (wireUploadForm / wireAnswerForm) 只做"是否存在且被接上"的
+ *     静态断言, 不模拟用户操作。
  *   - 真实浏览器事件: hashchange / DOMContentLoaded / 键盘 / 焦点 / 滚动 /
  *     剪贴板 / 拖拽上传 等均未覆盖。
  *   - 异步竞态与真实网络: fetch 由桩返回固定响应, 不覆盖超时、重试、
@@ -554,42 +554,6 @@ function trace() {
   };
 }
 
-function studentDashboard() {
-  return {
-    course_id: COURSE_ID,
-    student: { student_id: STUDENT_ID, display_name: 'Ana' },
-    learning_path: {
-      nodes: [
-        {
-          knowledge_point_id: KP_ID,
-          title: 'Definicion de funcion',
-          state: 'not_started',
-          next_event: 'viewed',
-          prerequisites: [],
-          blocked_by: [],
-          activity: { answer_count: 0 },
-          exercises: [{ exercise_id: EXERCISE_ID, prompt: 'El grado es ___' }],
-          evaluations: [],
-        },
-      ],
-    },
-    study_plan: { items: [{ knowledge_point_id: KP_ID, title: 'Definicion' }] },
-    exercises: [{ exercise_id: EXERCISE_ID, prompt: 'El grado es ___', submitted: false }],
-    evaluations: [
-      {
-        evaluation_id: 'eval-1',
-        exercise_id: EXERCISE_ID,
-        status: 'correct',
-        score: 1,
-        submitted_at: '2026-03-02T10:00:00+00:00',
-      },
-    ],
-    gaps: [{ gap_type: 'MISSING_PREREQUISITE', description: 'no prerequisite' }],
-    state_counts: { not_started: 1 },
-    average_score: 0.5,
-  };
-}
-
 function exerciseView() {
   return {
     course_id: COURSE_ID,
@@ -986,7 +950,6 @@ function routes() {
   // Task 65: 错题与薄弱知识点中心
   table['/api/students/' + STUDENT_ID + '/mistakes'] = mistakeCenter();
   table['/api/students/' + STUDENT_ID + '/mistakes/' + KP_ID] = mistakeDetail();
-  table['/api/students/' + STUDENT_ID + '/dashboard'] = studentDashboard();
   return table;
 }
 
@@ -1653,12 +1616,10 @@ const PAGES = [
   { name: 'course', args: [COURSE_ID] },
   { name: 'session', args: [COURSE_ID, SESSION_ID] },
   { name: 'knowledgeDetail', args: [COURSE_ID, KP_ID] },
-  { name: 'students', args: [] },
   { name: 'exercises', args: [] },
   { name: 'mistakes', args: [] },
   { name: 'mistakeDetail', args: [COURSE_ID, KP_ID] },
   { name: 'exercise', args: [COURSE_ID, EXERCISE_ID, STUDENT_ID] },
-  { name: 'student', args: [COURSE_ID, STUDENT_ID] },
   // Task 66: 今天的学习流程 (入口 + 知识点学习页)
   { name: 'learn', args: [] },
   { name: 'learnKnowledge', args: [COURSE_ID, KP_ID] },
@@ -1924,13 +1885,13 @@ async function audit() {
     const table = largeRoutes(kpCount, studentCount, exerciseCount);
     const started = Date.now();
     const knowledge = await renderPage(pageByName('knowledge'), table, 'zh');
-    const students = await renderPage(pageByName('students'), table, 'zh');
     const exercises = await renderPage(pageByName('exercises'), table, 'zh');
     const dashboardPage = await renderPage(pageByName('dashboard'), table, 'zh');
     const elapsed = Date.now() - started;
 
     check('large knowledge base renders every point', (html(knowledge).match(/kp-\d+/g) || []).length >= kpCount);
-    check('many students render', (html(students).match(/student-\d+/g) || []).length >= studentCount);
+    check('the implicit-student exercise page renders with many students',
+      html(exercises).includes('student-0'));
     check(
       'many exercises render',
       (html(exercises).match(/exercise-\d+/g) || []).length >= exerciseCount
@@ -2040,8 +2001,86 @@ async function audit() {
 
   // ---- 9) Task 63: 学生今日首页必须如实显示, 且不能出现"掌握度"话术 ----
   {
-    const sandbox = await renderPage(pageByName('today'), routes(), 'zh');
+    const todayTable = routes();
+    const todayPayload = studentToday();
+    const secondCourseId = 'course-2';
+    todayPayload.classes_today = [
+      Object.assign({}, todayPayload.classes_today[0], {
+        title: '15:00–17:00 Teoria | 图中未显示 | Aula Q2/1009',
+        counts: { materials: 2, knowledge_points: 8, pending_review: 3 },
+      }),
+      Object.assign({}, todayPayload.classes_today[0], {
+        session_id: 'session-zero',
+        course_id: secondCourseId,
+        course_name: 'Calculo',
+        title: 'Tema 3',
+        counts: { materials: 0, knowledge_points: 0, pending_review: 0 },
+      }),
+    ];
+    todayPayload.courses_today.push({
+      course_id: secondCourseId, name: 'Calculo', code: 'CAL',
+      language: 'es', sessions_today: 1,
+    });
+    todayPayload.counts.classes_today = 2;
+    todayTable['/api/student-today'] = todayPayload;
+    const sandbox = await renderPage(pageByName('today'), todayTable, 'zh');
     const out = html(sandbox);
+    const classesRegion = (() => {
+      const at = out.indexOf('<h2>今天的课程</h2>');
+      const to = out.indexOf('<h2>待审核</h2>', at);
+      return at >= 0 && to > at ? out.slice(at, to) : '';
+    })();
+    const todayRows = classesRegion.split('<div class="session-row">').slice(1);
+    const actionButtons = classesRegion.match(
+      /<button[^>]*class="session-row-action"[^>]*data-action="process-session"[^>]*>/g
+    ) || [];
+    const rowLinks = classesRegion.match(
+      /<a class="session-row-main" href="#\/courses\/[^"]+\/sessions\/[^"]+">/g
+    ) || [];
+    // Task 78: 今日课程区从四列表格换成课程页同款 session-row, 从结构上
+    // 消除半宽卡片里的中文表头逐字竖排。每行都真给链接与处理按钮。
+    check('today classes render a session card', classesRegion.includes('<div class="session-day-card">'));
+    check('today classes contain no table', !classesRegion.includes('<table'));
+    check('today classes render one session row per class', todayRows.length === 2,
+      'rows=' + todayRows.length);
+    check('today classes keep their course group headings',
+      classesRegion.includes('<div class="today-group"><h3>Algebra Lineal</h3>')
+        && classesRegion.includes('<div class="today-group"><h3>Calculo</h3>'));
+    check('today class rows keep the full session-detail link',
+      rowLinks.length === 2
+        && rowLinks.some((link) => link.includes(encodeURIComponent(COURSE_ID))
+          && link.includes(encodeURIComponent(SESSION_ID)))
+        && rowLinks.some((link) => link.includes(encodeURIComponent(secondCourseId))
+          && link.includes('session-zero')),
+      rowLinks.join(' '));
+    check('every today class row has one sibling process-session button',
+      actionButtons.length === 2
+        && actionButtons.every((button) => /data-course="[^"]+"/.test(button)
+          && /data-session="[^"]+"/.test(button)),
+      actionButtons.join(' '));
+    check('today process buttons are siblings of the row links, not nested inside them',
+      todayRows.every((row) => {
+        const anchorEnd = row.indexOf('</a>');
+        const buttonAt = row.indexOf('data-action="process-session"');
+        return anchorEnd >= 0 && buttonAt > anchorEnd;
+      }));
+    check('today class rows render the shared two-line session structure',
+      todayRows.every((row) => row.includes('session-row-top')
+        && row.includes('session-row-sub') && row.includes('session-row-main')));
+    check('today class title is parsed instead of rendered as a raw pipe title',
+      classesRegion.includes('15:00–17:00')
+        && classesRegion.includes('Teoria')
+        && classesRegion.includes('Aula Q2/1009')
+        && !classesRegion.includes('15:00–17:00 Teoria |'));
+    check('today class technical placeholder never renders',
+      !classesRegion.includes('图中未显示'));
+    check('today class nonzero counts render only on their own metadata line',
+      todayRows[0].includes('材料 2 · 知识点 8 · 待审核 3')
+        && !todayRows[1].includes('session-row-meta'),
+      todayRows[1] ? todayRows[1].slice(0, 220) : 'no second row');
+    check('today classes no longer render repeated zero table columns',
+      !/knowledge_points\s*<\/th>[\s\S]*?pendingReview\s*<\/th>/.test(classesRegion));
+
     // 63.6 / 63.7: 待审核与练习必须可点击进入既有页面
     check('today links to the review center', out.includes('href="#/reviews"'));
     check('today links to the exercise center', out.includes('href="#/exercises"'));
@@ -2062,6 +2101,7 @@ async function audit() {
     empty['/api/student-today'] = Object.assign(studentToday(), {
       has_activity: false,
       note: 'No learning activity yet.',
+      classes_today: [],
       study: [],
       learning_paths: [],
       pending_exercises: [],
@@ -2073,16 +2113,52 @@ async function audit() {
     const emptyOut = html(emptySandbox);
     check('empty student shows the no-activity note', emptyOut.includes('No learning activity yet.'));
     check('empty student still renders a page', emptyOut.length > 0);
+    check('empty student shows the no-sessions copy', emptyOut.includes('今天没有课堂。'));
     check(
       'empty student never renders a stack trace',
       !/Traceback|at Object\.|File "/.test(emptyOut)
     );
 
-    // 63.15: 单课程过滤时不再重复显示课程名 (course_id 已固定)
+    // 63.15: 单课程过滤时不再重复显示课程名 (course_id 已固定), 但仍成卡。
     const single = routes();
-    single['/api/student-today'] = Object.assign(studentToday(), { course_id: COURSE_ID });
+    single['/api/student-today'] = Object.assign(studentToday(), {
+      course_id: COURSE_ID,
+      classes_today: [Object.assign({}, todayPayload.classes_today[0], {
+        course_id: COURSE_ID,
+        course_name: 'Algebra Lineal',
+      })],
+    });
     const singleSandbox = await renderPage(pageByName('today'), single, 'zh');
-    check('single-course today renders', html(singleSandbox).length > 0);
+    const singleOut = html(singleSandbox);
+    const singleRegion = (() => {
+      const at = singleOut.indexOf('<h2>今天的课程</h2>');
+      const to = singleOut.indexOf('<h2>待审核</h2>', at);
+      return at >= 0 && to > at ? singleOut.slice(at, to) : '';
+    })();
+    check('single-course today renders', singleOut.length > 0);
+    check('single-course today uses the same card row without a group heading',
+      singleRegion.includes('<div class="session-day-card">')
+        && singleRegion.includes('<div class="session-row">')
+        && !singleRegion.includes('today-group'),
+      singleRegion.slice(0, 200));
+    check('single-course today keeps its process-session button',
+      singleRegion.includes('data-action="process-session"')
+        && singleRegion.includes('data-course="' + COURSE_ID + '"')
+        && singleRegion.includes('data-session="' + SESSION_ID + '"'));
+
+    // es/ca 的今日课程输出不得泄漏中文界面文案；夹具标题/教师/教室均 ASCII。
+    for (const lang of ['es', 'ca']) {
+      const localized = await renderPage(pageByName('today'), todayTable, lang);
+      const localizedRegion = (() => {
+        const localizedOut = html(localized);
+        const at = localizedOut.indexOf('<h2>');
+        const to = localizedOut.indexOf('<h2>', at + 4);
+        return at >= 0 && to > at ? localizedOut.slice(at, to) : localizedOut;
+      })();
+      check('today classes render in ' + lang, localizedRegion.includes('session-row'));
+      check('today classes have no untranslated CJK in ' + lang,
+        !CJK.test(localizedRegion), 'CJK leaked: ' + firstCjk(localizedRegion));
+    }
   }
 
   // ---- 10) Task 64: 出题面板 + 出题依据链必须如实显示 ----
@@ -2851,11 +2927,11 @@ async function audit() {
     //: 侧边栏 / 顶栏切换器在 #view 之外, 由下面单独一节覆盖。
     //:
     //: 各有一处"课程 X"标题 / 面包屑的页面 (2026-09-20 从 course_id 改成课程名的
-    //: 所在页面; pageStudent 占两处)。这些页面上**必须**出现课程名。
+    //: 所在页面)。这些页面上**必须**出现课程名。
     //: 2026-09-21 删掉 courseReview 页后, 这份名单随之少一项。
     const SHOWS_THE_COURSE_NAME = [
       'dashboard', 'learn', 'review', 'knowledge', 'materials', 'reviews',
-      'session', 'students', 'mistakes', 'student',
+      'session', 'mistakes',
     ];
     const COURSE_NAME = course().name;
 
@@ -3020,30 +3096,16 @@ async function audit() {
       switchFn.slice(0, 120));
   }
 
-  // ---- 学生注册: 表单必须**始终**在, 而且真的接在 POST /api/students 上 ----
-  //
-  // 用户报的第二个问题: 注册学生只能手写 HTTP 请求。静态 HTML 里有表单不等于
-  // 能提交, 所以两头都查 —— 渲染出来的表单字段 + 接线是否真的存在。
+  // ---- 学生页面移除: 保留后端学生 API, 但前端不再暴露列表 / 详情入口 ----
   {
-    const cases = [['with students', routes()], ['without students', emptyRoutes()]];
-    for (const [label, table] of cases) {
-      const sandbox = await loadApp(table, 'zh');
-      await sandbox.loadSidebar();
-      await sandbox.pageStudents();
-      const out = html(sandbox);
-      check('students page renders the registration form (' + label + ')',
-        out.indexOf('id="student-form"') >= 0);
-      check('students page form has a student_id field (' + label + ')',
-        out.indexOf('name="student_id"') >= 0);
-      check('students page form has a display_name field (' + label + ')',
-        out.indexOf('name="display_name"') >= 0);
-      check('students page form has a submit button (' + label + ')',
-        out.indexOf('type="submit"') >= 0);
-    }
-    check('the registration form is wired to POST /api/students',
-      APP_JS.indexOf("api('/students', { method: 'POST', body })") >= 0);
-    check('pageStudents wires the registration form',
-      /async function pageStudents\(\)[\s\S]*?wireStudentForm\(\);/.test(APP_JS));
+    check('student list and detail page functions are absent',
+      typeof (await loadApp(routes(), 'zh')).pageStudents !== 'function' &&
+      typeof (await loadApp(routes(), 'zh')).pageStudent !== 'function');
+    check('the student registration form is not wired into the frontend',
+      APP_JS.indexOf('wireStudentForm') < 0 && APP_JS.indexOf('student-form') < 0);
+    check('no frontend student-detail route is registered',
+      APP_JS.indexOf("parts[0] === 'students'") < 0 &&
+      APP_JS.indexOf("parts[2] === 'students'") < 0);
   }
 
   // ---- 材料页: "课堂 (可选)" 必须是下拉, 而且选项是人话标签而不是哈希 ----

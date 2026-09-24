@@ -1318,7 +1318,7 @@ class TestUi:
         assert "__courseCache.some((c) => c.course_id === courseId)" in js
 
     def test_every_route_driven_page_uses_the_validating_entry(self):
-        """8 个从路由拿 course_id 的页面函数都必须走 ``setRouteCourse()``。
+        """6 个从路由拿 course_id 的页面函数都必须走 ``setRouteCourse()``。
 
         ``pageReview`` / ``pageDashboard`` / ``pageMyCourses`` / ``loadSidebar``
         不在这个名单里 —— 它们的 course_id 来自后端 (requireCourse /
@@ -1331,7 +1331,6 @@ class TestUi:
             "async function pageKnowledgeDetail(courseId, knowledgeId)",
             "async function pageExercise(courseId, exerciseId, studentId)",
             "async function pageMistakeDetail(courseId, knowledgeId)",
-            "async function pageStudent(courseId, studentId)",
             "async function pageLearnKnowledge(courseId, knowledgeId)",
         ):
             body = js[js.index(signature):]
@@ -1358,7 +1357,7 @@ class TestUi:
         assert "state.studentId = studentId || null;" in js
 
     def test_every_page_that_picks_a_student_goes_through_set_student(self):
-        """6 个会设定"当前学生"的页面函数都必须走 ``setStudent()``。"""
+        """5 个会设定"当前学生"的页面函数都必须走 ``setStudent()``。"""
         js = _app_js()
         for signature in (
             "async function pageLearn()",
@@ -1366,7 +1365,6 @@ class TestUi:
             "async function pageReview()",
             "async function pageExercise(courseId, exerciseId, studentId)",
             "async function pageMistakes()",
-            "async function pageStudent(courseId, studentId)",
         ):
             body = js[js.index(signature):]
             body = body[: body.index("\n}")]
@@ -1389,7 +1387,7 @@ class TestUi:
         """
         js = _app_js()
         pages = re.findall(r"^async function (page[A-Za-z]+)\(", js, re.M)
-        assert len(pages) >= 19, pages
+        assert len(pages) >= 17, pages
         for name in pages:
             body = js[js.index("async function %s(" % name):]
             body = body[: body.index("\n}")]
@@ -1416,7 +1414,6 @@ class TestUi:
             "pageKnowledge": "#/knowledge",
             "pageMaterials": "#/materials",
             "pageReviews": "#/reviews",
-            "pageStudents": "#/students",
             "pageExercises": "#/exercises",
             "pageMistakes": "#/mistakes",
             "pageMistakeDetail": "#/mistakes",
@@ -1429,7 +1426,6 @@ class TestUi:
             "pageCourse": "",
             "pageSession": "",
             "pageKnowledgeDetail": "",
-            "pageStudent": "",
         }
         js = _app_js()
         observed = {}

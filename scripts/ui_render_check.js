@@ -365,34 +365,6 @@ function myCoursesPayload(overrides) {
   );
 }
 
-/** 学生首页 (Task 40) 的快照形状。 */
-function studentDashboard(overrides) {
-  return Object.assign(
-    {
-      course_id: COURSE_ID,
-      student_id: STUDENT_ID,
-      display_name: 'Ana',
-      progress: {
-        states: [], state_counts: {}, registered_knowledge_points: [],
-        course_knowledge_points: ['kp-1'], not_started_knowledge_points: ['kp-1'],
-        exercise_count: 1, answered_count: 0, practice_counts: {},
-        recent_incorrect_kps: [], evaluation_counts: {}, average_score: null,
-      },
-      study_plan: { items: [] },
-      learning_paths: [],
-      pending_exercises: [{
-        exercise_id: EXERCISE_ID, exercise_type: 'fill_blank',
-        prompt: 'El grado de la funcion es ___', knowledge_point_ids: ['kp-1'], difficulty: 2,
-      }],
-      recent_evaluations: [],
-      knowledge_gaps: {
-        student_gaps: [], not_started_knowledge_points: ['kp-1'], course_gaps: [],
-      },
-    },
-    overrides
-  );
-}
-
 const ROUTES = {
   '/api/courses': { data: { courses: [{ course_id: COURSE_ID, name: 'Algebra Lineal' }] } },
   // Task 68: 全部课程总览。两门课, 其中一门不是当前课程 —— 这样"当前
@@ -1019,7 +991,7 @@ function mistakeDetail(overrides) {
  */
 const TOPNAV = [
   '#/', '#/today', '#/reviews',
-  '#/courses', '#/materials', '#/knowledge', '#/students',
+  '#/courses', '#/materials', '#/knowledge',
 ];
 
 function makeNavLink(href) {
@@ -1442,19 +1414,18 @@ async function main() {
       sandbox.__fetched.join(', '));
   }
 
-  // 5) 学生首页 (Task 40) 仍可渲染, 且练习可点进详情
+  // 5) 学生详情页面已移除；依赖页仍使用学生 API 支撑隐式单学生流程。
   {
-    const routes = Object.assign({}, ROUTES);
-    routes[`/api/students/${STUDENT_ID}/dashboard`] = { data: studentDashboard() };
-    routes['/api/courses'] = { data: { courses: [] } };
-    const sandbox = await loadApp(routes);
-    await sandbox.pageStudent(COURSE_ID, STUDENT_ID);
-    const out = html(sandbox);
-    check('student page still renders', out.includes('Ana') || out.includes('student'));
-    check(
-      'pending exercise links to the exercise page',
-      out.includes('#/courses/' + COURSE_ID + '/exercises/' + EXERCISE_ID)
-    );
+    const sandbox = await loadApp(ROUTES);
+    check('student list and detail page functions are not exposed',
+      typeof sandbox.pageStudents !== 'function' && typeof sandbox.pageStudent !== 'function');
+    for (const hash of ['#/students', '#/courses/' + COURSE_ID + '/students/' + STUDENT_ID]) {
+      const oldRoute = await loadApp(ROUTES);
+      oldRoute.window.location.hash = hash;
+      await oldRoute.route();
+      const out = html(oldRoute);
+      check(hash + ' falls back to the not-found page', out.includes('未找到页面'), out);
+    }
   }
 
   // 6) i18n: 三语表 key 完全一致
@@ -1478,7 +1449,10 @@ async function main() {
   // 7) Task 63: 学生今日首页 —— 派生视图, 只读, 不得出现掌握度话术
   {
     const todayRoutes = Object.assign({}, ROUTES);
-    todayRoutes['/api/student-today'] = { data: studentToday() };
+    const todayPayload = studentToday();
+    todayPayload.classes_today[0].title =
+      '15:00–17:00 Teoria | Dario Cottava | Aula Q2/1009';
+    todayRoutes['/api/student-today'] = { data: todayPayload };
     const sandbox = await loadApp(todayRoutes);
     await sandbox.pageToday();
     const out = html(sandbox);
@@ -1494,6 +1468,16 @@ async function main() {
       sandbox.__fetched.length <= 3,
       'fetched=' + sandbox.__fetched.length
     );
+    // Task 78: 今日课程必须是课程页同款 session-row, 而不是 4 列表格。
+    check('today page renders classes as session rows',
+      out.includes('<div class="session-day-card">')
+        && out.includes('<div class="session-row">'));
+    check('today class row keeps its session detail link',
+      out.includes('href="#/courses/' + COURSE_ID + '/sessions/session-1"'));
+    check('today class row keeps its process-session button',
+      out.includes('data-action="process-session"')
+        && out.includes('data-course="' + COURSE_ID + '"')
+        && out.includes('data-session="session-1"'));
     // 63.6 / 63.7: 必须能点进既有页面
     check('today links to the review center', out.includes('href="#/reviews"'));
     check('today links to the exercise center', out.includes('href="#/exercises"'));
@@ -1518,6 +1502,40 @@ async function main() {
     check('today never renders a stack trace', !/Traceback|at Object\.|File "/.test(out));
   }
 
+  // 7b) Task 78: 今日课程空态与单课程筛选仍沿用同一卡片契约。
+  {
+    const emptyRoutes = Object.assign({}, ROUTES);
+    const emptyToday = studentToday();
+    emptyToday.classes_today = [];
+    emptyToday.counts.classes_today = 0;
+    emptyRoutes['/api/student-today'] = { data: emptyToday };
+    const empty = await loadApp(emptyRoutes);
+    await empty.pageToday();
+    const emptyOut = html(empty);
+    check('empty today classes show today.noSessions', emptyOut.includes('今天没有课堂。'));
+    check('empty today classes do not render a session card or row',
+      !emptyOut.includes('<div class="session-day-card">')
+        && !emptyOut.includes('<div class="session-row">'));
+
+    const singleRoutes = Object.assign({}, ROUTES);
+    const singleToday = studentToday();
+    singleToday.course_id = COURSE_ID;
+    singleToday.classes_today = [Object.assign({}, singleToday.classes_today[0], {
+      title: 'Tema 3',
+      counts: { materials: 0, knowledge_points: 0, pending_review: 0 },
+    })];
+    singleRoutes['/api/student-today'] = { data: singleToday };
+    const single = await loadApp(singleRoutes);
+    await single.pageToday();
+    const singleOut = html(single);
+    check('single-course today classes still render a session card',
+      singleOut.includes('<div class="session-day-card">'));
+    check('single-course today classes still render a session row',
+      singleOut.includes('<div class="session-row">'));
+    check('single-course today classes keep the process-session action',
+      singleOut.includes('data-action="process-session"'));
+  }
+
   // 8) Task 63.10: 空学生 —— "No learning activity yet." 必须正常, 不能崩
   {
     const emptyRoutes = Object.assign({}, ROUTES);
@@ -1525,6 +1543,7 @@ async function main() {
       data: Object.assign(studentToday(), {
         has_activity: false,
         note: 'No learning activity yet.',
+        classes_today: [],
         study: [],
         learning_paths: [],
         pending_exercises: [],
@@ -2098,64 +2117,7 @@ async function main() {
     }
   }
 
-  // ---- "当前学生"的内存与持久化必须同步 ---------------------------------
-  //
-  // 回归: 6 处页面函数各自写一遍 `state.studentId` + `localStorage`, 其中
-  // `pageExercise()` **漏了持久化那一步**。从错题本点「Practice Again」进
-  // `#/courses/<c>/exercises/<e>/<sid>` 之后, 内存里是 sid, localStorage 里还是
-  // 上一个学生 —— 刷新一下学生就悄悄换人了。
-  {
-    const OTHER_STUDENT = 'stu-bob';
-    const routes = Object.assign({}, ROUTES, {
-      [`/api/students/${OTHER_STUDENT}/exercises/${EXERCISE_ID}`]: { data: baseView() },
-      [`/api/students/${OTHER_STUDENT}/dashboard`]: { data: studentDashboard({ student_id: OTHER_STUDENT }) },
-    });
-
-    const open = async (page, ...args) => {
-      // `ca.student` 必须在 app.js 执行**之前**写好 —— `const state = {...}`
-      // 加载时就读它。先建 sandbox 再 setItem 的话 `state.studentId` 还是 null,
-      // "不带 sid 时沿用当前学生" 那条用例就成了空跑。
-      const sandbox = await loadApp(routes, { 'ca.student': STUDENT_ID });
-      await grab(sandbox, 'loadSidebar')();
-      await grab(sandbox, page)(...args);
-      return sandbox;
-    };
-    const stored = (sandbox) => sandbox.window.localStorage.getItem('ca.student');
-    const inMemory = (sandbox) => grab(sandbox, 'state.studentId');
-    // 注意: 这里必须**真的比较两个值**。"内存等于期望值" 是另一回事 ——
-    // 只写 state 不写 localStorage 的旧写法同样能让它通过。
-    const inSync = (sandbox) =>
-      inMemory(sandbox) === stored(sandbox) &&
-      inMemory(sandbox) !== undefined &&
-      inMemory(sandbox) !== null;
-
-    // 练习页: 路由显式给了另一个学生 —— 必须持久化, 否则刷新就切回去。
-    {
-      const sandbox = await open('pageExercise', COURSE_ID, EXERCISE_ID, OTHER_STUDENT);
-      check('the exercise page persists an explicitly routed student',
-        stored(sandbox) === OTHER_STUDENT, String(stored(sandbox)));
-      check('the exercise page keeps memory and storage in sync',
-        inSync(sandbox), inMemory(sandbox) + ' vs ' + stored(sandbox));
-    }
-    // 学生页: 同一条路径, 本来就持久化 —— 对照组。
-    {
-      const sandbox = await open('pageStudent', COURSE_ID, OTHER_STUDENT);
-      check('the student page persists an explicitly routed student',
-        stored(sandbox) === OTHER_STUDENT, String(stored(sandbox)));
-      check('the student page keeps memory and storage in sync',
-        inSync(sandbox), inMemory(sandbox) + ' vs ' + stored(sandbox));
-    }
-    // 练习页不带 sid 时, 沿用当前学生, 不能凭空改。
-    {
-      const sandbox = await open('pageExercise', COURSE_ID, EXERCISE_ID);
-      check('the exercise page keeps the current student when the route has none',
-        stored(sandbox) === STUDENT_ID, String(stored(sandbox)));
-      check('the current student is the one loaded from storage',
-        inMemory(sandbox) === STUDENT_ID, String(inMemory(sandbox)));
-      check('no route without a student desyncs memory and storage',
-        inSync(sandbox), inMemory(sandbox) + ' vs ' + stored(sandbox));
-    }
-  }
+  // 学生详情页面已移除；当前学生的同步行为由练习页用例继续覆盖。
 
   // ---- 存储的界面语言必须先校验再使用 -----------------------------------
   //
@@ -2629,7 +2591,6 @@ async function main() {
       ['#/reviews', '#/reviews', 'KP-GP', 'KP-GEO'],
       ['#/materials', '#/materials', 'FILE-GP-mat.pdf', 'FILE-GEO-mat.pdf'],
       ['#/knowledge', '#/knowledge', 'TITLE-GP', 'TITLE-GEO'],
-      ['#/students', '#/students', 'NAME-GP', 'NAME-GEO'],
     ];
     for (const [hash, nav, markerBefore, markerAfter] of PAGES) {
       await switchStaysOn(switchTable(), hash, nav, markerBefore, markerAfter);

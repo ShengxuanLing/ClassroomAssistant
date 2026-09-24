@@ -1248,11 +1248,13 @@ class TestUiRenderExecution:
         assert "answer is NOT in the rendered HTML" in source
         assert "explanation is NOT in the rendered HTML" in source
 
-    def test_render_harness_covers_all_three_pages(self):
+    def test_render_harness_covers_the_remaining_exercise_pages(self):
         script = Path(__file__).resolve().parent.parent / "scripts" / "ui_render_check.js"
         source = script.read_text(encoding="utf-8")
-        for page in ("pageExercise", "pageExercises", "pageStudent"):
+        for page in ("pageExercise", "pageExercises"):
             assert page in source, page
+        assert "await sandbox.pageStudent(" not in source
+        assert "open('pageStudent'" not in source
 
 
 class TestI18nTables:

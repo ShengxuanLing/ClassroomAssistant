@@ -342,6 +342,18 @@ classroom-data/
 
 - **2026-09-22（课程页课堂列表二次优化：月份切换 + 同日合并 + 紧凑两行）**：用户反馈卡片版 28 节课一学期全展开、要一直滚动才找得到 12 月的课、单卡偏大。**方案**：不再一次性铺开整个学期，也**不做无限滚动**（课表是有明确日期范围的数据，不是无穷流）——改用月份切换 + 日期分组 + 同日合并成一张卡 + 每节课两行。`views/courses.js` 新增月份层（零后端改动，课表接口照旧）：`sessionMonthGroups/Tabs/Label/DefaultMonth/Plan/Nav/View` 一组函数从 `date` 派生月份；默认月 = 当前月，当前月没课就取**离今天最近**的有课月（同距取更晚那个——学期没开始时应显示即将到来的月份，而不是已经上完的）；切换条 = 首个有课月 → 末个有课月**逐月补齐**（只列有课月份时"空月份"分支不可达、且跳过 11 月会让用户以为课表漏了一段；空月点进去给「本月没有安排课堂。」+ 月份组头，不留白页）。没有日期的课堂**不随月切换隐藏**，永远画在末尾并带「日期未定」组头（藏起来会以为这课不存在；不加组头又会被读成"这个月的课"）。卡片：**同一天合并成一张卡**（行间只有一条分隔线），每节课压成两行（第一层 时间+类型徽章；第二层 教师·教室 + 材料状态 pill；非 0 计数仍另起一行），「整堂处理」缩成小按钮放在行右侧（`.session-row-action` z-index:1，仍是锚点的兄弟节点，不嵌 `<a>`）；整行可点仍是 stretched-link，但定位祖先从整张卡收拢到 `.session-row`（否则第 1 行的命中区会盖住第 2 行）。当前月高亮 = `aria-current="true"`，CSS 直接选该属性（视觉与语义同一处取值，不存在类名与 aria 不同步）。月份选择只活在内存（`sessionMonthPicks`，按 course_id 记）——不写 localStorage：月份是"正在看哪一段"，不是跨会话偏好，刷新回到"当前/最近"最可预期；**顺带发现并删掉一段不可观测代码**——渲染器曾把自动默认月写回 picks，但同一数据同一时钟下重算结果不变、永远不产生可观测差异，现在的规则是"只有用户点了月份才记"。月份标签走 Intl：zh 用 `{year:'numeric', month:'short'}` → `2026年9月`（`month:'numeric'` 会得到 `2026/9`——Intl 把"年月都数字"当日期格式）；es/ca 用 `long` → `septiembre de 2026` / `setembre del 2026`；Intl 挂了退化为 `YYYY-MM`，绝不退回中文；locale 表收进共享的 `uiLocale()`（`sessionDayLabel` 也改用它）。月份切换**不进 hash**：月份是课程页内部的浏览位置，深链进课程页永远落在当前/最近月；委托链加一条 `data-action="session-month"` → `actionSessionMonth(courseId, data-month)`（非法月份直接忽略、点当前月份不重画不重取，只改显示哪一段、不发写请求）。i18n 新增 2 key × 2 语（`本月没有安排课堂。`、`日期未定`，按 Unicode 序插进译文表）。**守卫**：`ui_audit.js` 469 → **506**（+37：默认月不变量 ×5（切换条恰 1 个 aria-current 且与月份行互相印证、报数=画出的行数、不全铺开）、月份切换走真实 action ×6、同日合并 2+2 且一天一张卡、两行结构、时间/类型/教师/教室/占位符防线/计数行/按钮/链接、空月份文案、选择跨重绘存活、纯函数规则 ×9、无日期课堂两种情形 ×4、每个按钮带齐 data-course+data-month、委托接线（action 名 + 读对 `data-month`）、es/ca 月份行本地化 + CJK 扫描 ×6、CSS ×7）；`ui_render_check.js` **360** 不变。**12 个变异测试全部精准命中**：铺回整学期 → 10 条红；切换条只列有课月 → 5 条；一天一节一卡 → 1 条（为此专门加的断言）；空月份不画 → 2 条；默认月改取第一个 → 2 条；月份标签退化成原始 key → 10 条；丢 aria-current → 3 条；删同日分隔线 CSS → 1 条；月视图藏掉无日期课 → 1 条（为此补的"有日期+无日期混合"夹具）；按钮丢 data-month → 1 条；app.js 读错属性名 → 1 条。Python：读取前端源码的七个测试文件（test_exercise_ui / test_learning_view 的 i18n 表、test_web_ui、test_web_ui_invariants、test_web_source_manifest、test_multi_course、test_student_ui）**521 passed / 0 failed**（10m19s）；其余读前端的五个文件（test_knowledge_density、test_task_dock、test_course_review、test_persistence_layering、test_stress_semester，含学期的真实渲染与 live-server 十页渲染）**176 passed / 0 failed**（20m00s）。**真实环境验证**：本机 127.0.0.1:8765 + 真实课程数据 + 无头 Edge（独立 `--user-data-dir`，否则单实例转发输出 0 字节）：GEO（28 节，4 个月各 8/8/8/4）`--dump-dom` 实测默认只画 9 月——4 个月份按钮 / 4 张日卡 / 8 行 / 8 个「整堂处理」/ 恰 1 个 aria-current / summary `28 节课堂 · 2026-09-09 → 2026-12-09` / 月份行 `2026年9月 · 8 节课堂` / 组头 `09/09 · 周三…09/30 · 周三` / 占位符 0；GP（28 节，含教师段与 `Aules` 教室）截图与需求版式逐项一致（时间+类型徽章 / `Dario Cottava · Aula Q2/1009` / 右侧「整堂处理」+ 状态 pill）。布局实测（DOM 快照 + 页面内只读测量脚本，file:// 二次 dump）：每行 71px、日卡 145px/2 节、切换条 30px、9 月整卡 1110px、无横向溢出（docScrollWidth 1239 ≤ winWidth 1254）；520px 窄屏截图正常折行。
 
+- **2026-09-24（TASK-78 今日课程卡两行重排）**：`#/today`「今天的课程」从半宽卡内
+  的 4 列表格改为课程页同款 `.session-day-card/.session-row`：第一行时间＋类型徽章，
+  第二行教师·教室＋状态 pill，材料/知识点/待审核仅非 0 时另起一行；表格、表头与逐行
+  日期全部移除。`parseSessionTitle` 与 `SESSION_TITLE_PLACEHOLDER` 从
+  `views/courses.js` 原样上移到先加载的 `app.js`，课程页与今日页共用一份标题规则；
+  深链接及右侧「整堂处理」按钮语义不变，按钮仍是锚点兄弟节点。零后端改动、零 i18n
+  新 key、零 CSS 新设计语言。守卫：`ui_audit.js` 517、`ui_render_check.js` 314、
+  `test_web_ui_invariants.py` 12 条全绿；相关 Python 子集 520 passed；真实服务在
+  1280/520 两档视口及深浅两色下实测今日卡与三行均无内部横向溢出。全量回归在 600s
+  工具上限前未返回，明确记为未完成而非通过。详见
+  `docs/task-78-today-classes-restack.md`。
+
 ---
 
 *本规范是项目的基础指导文件。随着项目发展，可根据实际需要补充和细化。核心原则——证据优先、绝不编造、明确标注不确定性——始终不变。*

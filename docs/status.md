@@ -8370,3 +8370,74 @@ Known limitation (explicit, not hidden)
    `views/materials.js`、`views/courses.js` 本次**未编辑**（`node --check`
    通过），且 `ui_audit.js` 里"三处一致"的 4 条断言 × 3 个站点全部通过。
    没有 golden 文件做字节级 diff。
+
+---
+
+# TASK-78 今日课程卡两行重排（2026-09-24）
+
+## 问题与目标
+
+`#/today` 的「今天的课程」在半宽 `grid-2` 卡内仍用 4 列表格（课堂 / 状态 /
+知识点 / 待审核）。中文表头因此会逐字竖排，种子标题
+`15:00–17:00 Teoria | Dario Cottava | Aula Q2/1009` 被挤成多行。
+
+本次目标是把该区域改为课程页已经过两轮验证的 `.session-row` 版式，从结构上
+去掉表格与表头。课程分组、课堂深链、右侧「整堂处理」、failed / retry 语义、
+复习 / 练习 / 评估 / 关注卡片及后端均不变。
+
+## 实现
+
+- `parseSessionTitle` 与 `SESSION_TITLE_PLACEHOLDER` 从
+  `views/courses.js` 原样上移到 `app.js`。`app.js` 先于页面视图加载，课程页与
+  今日页共用唯一标题解析实现；`Aulas?` 教室识别正则逐字保持不变。
+- `pageToday()` 用 `todaySessionRow()` / `todayClassesCard()` 替换
+  `classesTable()`：复用 `.session-day-card/.session-row/.session-row-main/
+  .session-row-action`，每行两行文字、右侧处理按钮，非 0 计数才另起 meta 行。
+- 全部课程继续按课程分组并保留 h3；单课程筛选省略重复组头。今日页不再逐行
+  重画日期，页面副标题已给出同一天。
+- 零后端改动、零 migration、零新 i18n key、零新增 CSS。
+
+## 守卫
+
+- `scripts/ui_audit.js`：今日课程区无 table；有 session card / row；行数、
+  分组 h3、完整深链、按钮双属性、按钮为锚点兄弟节点、两层结构、标题解析、
+  占位符不泄漏、非 0 / 全 0 计数、空态、单课程口径、es/ca 无 CJK 均有断言。
+- `scripts/ui_render_check.js`：覆盖 session-row、深链接、process-session、
+  `classes_today: []` 的 `today.noSessions`、单课程筛选。
+- `tests/test_web_ui_invariants.py`：新增结构不变量，今日课堂渲染体不得含
+  `<table>` 或 `class="data"`。
+
+## 验证
+
+```text
+node scripts/ui_audit.js
+  UI audit OK (517 checks)
+
+node scripts/ui_render_check.js
+  UI RENDER CHECK: OK (314 checks)
+
+node --check src/web/app.js
+node --check src/web/views/dashboard.js
+node --check src/web/views/courses.js
+  PASS
+
+pytest -q tests/test_web_ui_invariants.py
+  12 passed
+
+pytest -q -m "not integration" tests/test_student_today.py \
+  tests/test_web_ui.py tests/test_web_ui_invariants.py \
+  tests/test_multi_course.py tests/test_exercise_ui.py tests/test_learning_view.py
+  520 passed in 144.36s
+```
+
+真实服务 `127.0.0.1:8765` + 真实课程数据，在 `#/today` 实测：1280px 下今日卡
+`scrollWidth == clientWidth == 468`，3 行无溢出，页面无溢出；520px 下今日卡
+`scrollWidth == clientWidth == 462`，3 行均无溢出，处理按钮仍位于卡内；深色 /
+浅色各检查一版，无控制台错误。真实 DOM 为 2 个课程组 / 3 张日卡 / 3 行 / 3
+个完整 session 链接 / 3 个处理按钮，今日区 table=0、原始 `|`=0、`图中未显示`=0。
+
+全量 `pytest -m "not integration"` 已启动，但在工具 600 秒上限前没有返回结果；
+明确记为**未完成**，未宣称全量通过。520px 整个文档仍有既有顶栏健康 pill 横向
+溢出，但今日课程卡和每行自身溢出均为 0；该顶栏问题不属于本任务。
+
+完整记录见 `docs/task-78-today-classes-restack.md`。

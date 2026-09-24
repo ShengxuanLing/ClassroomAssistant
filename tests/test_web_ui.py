@@ -473,8 +473,10 @@ class TestAssetSelfContainment:
                        "pageKnowledgeDetail", "pageMaterials", "pageReviews"):
             assert "function " + marker in js, marker
         for route in ("'knowledge'", "'materials'", "'reviews'", "'courses'",
-                      "'sessions'", "'students'"):
+                      "'sessions'"):
             assert route in js, route
+        assert "pageStudents" not in js
+        assert "pageStudent" not in js
 
     def test_javascript_escapes_api_text_before_inserting_into_dom(self):
         """API 返回的原文是任意用户内容, 必须转义后才能进 innerHTML。"""

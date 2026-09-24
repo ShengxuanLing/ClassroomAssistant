@@ -546,12 +546,10 @@ function confirmDestructive(message) {
 /**
  * "该课程还没有学生" 的统一空态。
  *
- * 注册入口**只有一处** (学生页的表单), 所以这里只放一个链接, 不再在练习页
- * 复刻一份表单 —— 同一条规则抄两遍, 迟早有一遍会漏。
+ * 学生列表 / 注册页面已删除；依赖页只显示事实提示，不替后端自动创建学生。
  */
 function noStudentsCard() {
-  return '<p class="muted">' + esc(t('student.none')) + '</p>' +
-    '<p><a class="btn" href="#/students">' + esc(t('student.register')) + '</a></p>';
+  return '<p class="muted">' + esc(t('student.none')) + '</p>';
 }
 
 function sourceLocation(source) {
@@ -1008,6 +1006,55 @@ function syncCourseChrome() {
   renderCourseSwitcher(__courseCache);
 }
 
+//: 历史种子脚本在"教师未知"时写入的技术占位串 —— 绝不渲染给用户。
+const SESSION_TITLE_PLACEHOLDER = '图中未显示';
+
+/**
+ * 把编码进 title 的课表行拆成结构化字段。
+ *
+ * 种子格式: ``15:00–17:00 Teoria | Hiyern Yoon; Genís Riba | Aula Q2/1009``。
+ *
+ * - ``time`` / ``kind`` 来自首段的 "HH:MM–HH:MM + 类型" 前缀;
+ * - ``mid`` 是中间段 (教师) —— 它是原始标题里唯一的"人话"部分, 卡片标题行
+ *   优先显示它;
+ * - ``room`` 是末段; 两段式 (教师段已被清洗掉) 里靠 ``Aula/Aules`` 前缀识别
+ *   教室, 认不出来就当 mid, 不猜;
+ * - 空段与技术占位段直接丢弃 —— 这是"图中未显示"的渲染侧防线;
+ * - 不匹配种子格式的标题 (如手工建的 "Tema 3") 原样放进 ``head``, 不猜结构。
+ *
+ * 返回的 ``head`` = 首段去掉时间前缀后的文本 (无前缀时就是首段本身)。
+ */
+function parseSessionTitle(rawTitle) {
+  const text = String(rawTitle || '').trim();
+  const out = { text, time: '', kind: '', mid: '', room: '', head: text };
+  if (!text) return out;
+  const parts = text.split('|')
+    .map((part) => part.trim())
+    .filter((part) => part && part !== SESSION_TITLE_PLACEHOLDER);
+  if (!parts.length) return out;
+  const head = parts[0];
+  out.head = head;
+  const timeMatch = /^(\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2})\s+(.*)$/.exec(head);
+  if (timeMatch) {
+    out.time = timeMatch[1].replace(/\s+/g, '');
+    out.kind = timeMatch[2].trim();
+    out.head = out.kind;
+  }
+  const tail = parts.slice(1);
+  if (tail.length === 1) {
+    // 两段式 (教师段已清洗): 末段像 "Aula/Aules …" 才算教室。
+    // 拼写注意: 是 Aula + 可选 s (= Aulas?), **不是** Aules? —— 后者匹配
+    // "Aule", 第 4 字母对不上 (2026-09-22 实测: 整段被误当 mid, 教室丢了)。
+    // 不用 \b, 用负向前瞻: "Aula(s)" 后必须不是字母数字。
+    if (/^Aulas?(?![A-Za-z0-9])/i.test(tail[0])) out.room = tail[0];
+    else out.mid = tail[0];
+  } else if (tail.length >= 2) {
+    out.mid = tail.slice(0, -1).join('; ');
+    out.room = tail[tail.length - 1];
+  }
+  return out;
+}
+
 /**
  * 课程的**显示名** —— 用户界面里一律显示名称, 不显示内容寻址的 course_id。
  *
@@ -1216,16 +1263,15 @@ function renderCourseSwitcher(courses) {
  *   #/materials         #/materials
  *   #/reviews           #/reviews
  *   #/courses           #/courses
- *   #/students          #/students
  *   #/exercises         #/exercises, #/courses/<c>/exercises/<e>/<sid>
  *   #/mistakes          #/mistakes, #/mistakes/<c>/<k>
  *   #/review-pack       #/review-pack
  *
  *   清空 ('')           #/courses/<c>, #/courses/<c>/sessions/<s>,
- *                       #/courses/<c>/knowledge/<k>, #/courses/<c>/students/<sid>
+ *                       #/courses/<c>/knowledge/<k>
  *
- * 清空的那四页是"课程内部"的详情, 顶栏没有对应分区, 而且它们各有多条进入路径
- * (课程页 / 知识点 / 今日 / 学生列表 / 错题本…) —— 跟随"上一页"会得到一个由
+ * 清空的那三页是"课程内部"的详情, 顶栏没有对应分区, 而且它们各有多条进入路径
+ * (课程页 / 知识点 / 今日 / 错题本…) —— 跟随"上一页"会得到一个由
  * 用户上一秒在看哪页决定的高亮, 那不是"确定"。**关键不是"选哪一个", 而是"确定"。**
  *
  * 这张表由 ``test_the_top_nav_ownership_table_is_exactly_as_declared`` 逐项锁住;
@@ -1340,15 +1386,6 @@ document.addEventListener('click', (event) => {
   else if (action === 'review-reject') actionReview(courseId, knowledgeId, 'reject', target);
   else if (action === 'review-keep') actionReview(courseId, knowledgeId, 'keep', target);
   else if (action === 'review-resolve') actionReview(courseId, knowledgeId, 'resolve', target);
-  else if (action === 'learning-event') {
-    actionLearningEvent(
-      courseId,
-      target.getAttribute('data-student'),
-      target.getAttribute('data-knowledge'),
-      target.getAttribute('data-event'),
-      target
-    );
-  }
 });
 
 function parseHash() {
@@ -1401,7 +1438,6 @@ async function route() {
     else if (parts[0] === 'knowledge') await pageKnowledge();
     else if (parts[0] === 'materials') await pageMaterials();
     else if (parts[0] === 'reviews') await pageReviews();
-    else if (parts[0] === 'students') await pageStudents();
     else if (parts[0] === 'exercises') await pageExercises();
     else if (parts[0] === 'mistakes' && parts.length === 1) await pageMistakes();
     // 错题详情是 ``#/mistakes/<course>/<kp>`` —— **三段**。旧条件是
@@ -1419,9 +1455,6 @@ async function route() {
     }
     else if (parts[0] === 'courses' && parts.length === 4 && parts[2] === 'knowledge') {
       await pageKnowledgeDetail(parts[1], parts[3]);
-    }
-    else if (parts[0] === 'courses' && parts.length === 4 && parts[2] === 'students') {
-      await pageStudent(parts[1], parts[3]);
     }
     // 练习页的学生段是**可选**的 (``#/courses/<c>/exercises/<e>`` 与
     // ``#/courses/<c>/exercises/<e>/<sid>`` 都在用), 所以这条接受 4 与 5。

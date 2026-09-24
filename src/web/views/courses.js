@@ -11,10 +11,9 @@
 //
 // 三条共同约束:
 //
-// 1. 表单**永远渲染** —— 空态下更是必须的, 否则第一门课永远建不出来
-//    (与 ``pageStudents`` 的注册表单同一条理由);
+// 1. 表单**永远渲染** —— 空态下更是必须的, 否则第一门课永远建不出来;
 // 2. 空值**不发送** —— 后端把字段缺省当"没给", 把 ``''`` 当"给了个空值",
-//    两者在幂等键上不是一回事 (与 ``wireStudentForm`` 同一条规则);
+//    两者在幂等键上不是一回事;
 // 3. 幂等由后端保证 (同名同代码 / 同课号返回已有实体, HTTP 200 而不是 201),
 //    前端只如实显示结果, 不自己判重。
 
@@ -426,54 +425,8 @@ function wireGuiaBrief() {
 // 教师位写过技术占位串 (转录课表图时教师栏不可见), 数据源已修 (脚本不再产出,
 // 库内 28 条已由 temp/fix_session_titles.py 清洗), 这里再兜一层尚未迁移的旧库。
 
-//: 历史种子脚本在"教师未知"时写入的技术占位串 —— 绝不渲染给用户。
-const SESSION_TITLE_PLACEHOLDER = '图中未显示';
-
-/**
- * 把编码进 title 的课表行拆成结构化字段。
- *
- * 种子格式: ``15:00–17:00 Teoria | Hiyern Yoon; Genís Riba | Aula Q2/1009``。
- *
- * - ``time`` / ``kind`` 来自首段的 "HH:MM–HH:MM + 类型" 前缀;
- * - ``mid`` 是中间段 (教师) —— 它是原始标题里唯一的"人话"部分, 卡片标题行
- *   优先显示它;
- * - ``room`` 是末段; 两段式 (教师段已被清洗掉) 里靠 ``Aula/Aules`` 前缀识别
- *   教室, 认不出来就当 mid, 不猜;
- * - 空段与技术占位段直接丢弃 —— 这是"图中未显示"的渲染侧防线;
- * - 不匹配种子格式的标题 (如手工建的 "Tema 3") 原样放进 ``head``, 不猜结构。
- *
- * 返回的 ``head`` = 首段去掉时间前缀后的文本 (无前缀时就是首段本身)。
- */
-function parseSessionTitle(rawTitle) {
-  const text = String(rawTitle || '').trim();
-  const out = { text, time: '', kind: '', mid: '', room: '', head: text };
-  if (!text) return out;
-  const parts = text.split('|')
-    .map((part) => part.trim())
-    .filter((part) => part && part !== SESSION_TITLE_PLACEHOLDER);
-  if (!parts.length) return out;
-  const head = parts[0];
-  out.head = head;
-  const timeMatch = /^(\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2})\s+(.*)$/.exec(head);
-  if (timeMatch) {
-    out.time = timeMatch[1].replace(/\s+/g, '');
-    out.kind = timeMatch[2].trim();
-    out.head = out.kind;
-  }
-  const tail = parts.slice(1);
-  if (tail.length === 1) {
-    // 两段式 (教师段已清洗): 末段像 "Aula/Aules …" 才算教室。
-    // 拼写注意: 是 Aula + 可选 s (= Aulas?), **不是** Aules? —— 后者匹配
-    // "Aule", 第 4 字母对不上 (2026-09-22 实测: 整段被误当 mid, 教室丢了)。
-    // 不用 \b, 用负向前瞻: "Aula(s)" 后必须不是字母数字。
-    if (/^Aulas?(?![A-Za-z0-9])/i.test(tail[0])) out.room = tail[0];
-    else out.mid = tail[0];
-  } else if (tail.length >= 2) {
-    out.mid = tail.slice(0, -1).join('; ');
-    out.room = tail[tail.length - 1];
-  }
-  return out;
-}
+// 标题解析器与 ``SESSION_TITLE_PLACEHOLDER`` 已上移到 ``app.js``: 课程页与
+// 今日页共享同一实现, 标题规则只有一份真源。
 
 /**
  * 按 ``date`` 分组: 有日期的组按日期升序 (ISO 字符串比较 = 时间序),
@@ -1202,9 +1155,7 @@ async function pageSession(courseId, sessionId) {
 
     '<div class="card"><div class="card-head"><h2>' + t('session.learning') + '</h2>' +
     (learning.student_id
-      ? '<a class="small" href="#/courses/' + encodeURIComponent(courseId) + '/students/' +
-        encodeURIComponent(learning.student_id) + '">' + esc(learning.display_name || learning.student_id) +
-        ' →</a>'
+      ? '<span class="small">' + esc(learning.display_name || learning.student_id) + '</span>'
       : '') + '</div>' +
     (learning.available
       ? '<dl class="kv">' +

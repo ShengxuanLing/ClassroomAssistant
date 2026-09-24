@@ -323,9 +323,29 @@ class TestHashRoutesAreReachable:
         prefixes = {parts[0] for _where, parts in built if parts}
         for expected in (
             "courses", "today", "learn", "review", "review-pack", "knowledge",
-            "materials", "reviews", "students", "exercises", "mistakes",
+            "materials", "reviews", "exercises", "mistakes",
         ):
             assert expected in prefixes, f"没扫到 {expected!r} 开头的哈希: {sorted(prefixes)}"
+
+    def test_removed_student_pages_are_not_registered(self):
+        """学生列表与详情是刻意删除的路由, 不能再被静态守卫漏掉。"""
+        source = _frontend()
+        assert "pageStudents" not in source
+        assert "pageStudent" not in source
+        assert "parts[0] === 'students'" not in source
+        assert "parts[2] === 'students'" not in source
+
+    def test_today_classes_use_session_cards_instead_of_a_table(self):
+        """Task 78: 今日课程卡必须从结构上不再是表格。"""
+        source = (WEB_DIR / "views/dashboard.js").read_text(encoding="utf-8")
+        body = _function_body(source, "function pageToday()")
+        row_at = body.index("function todaySessionRow(")
+        today_classes_end = body.index("const classesHtml", row_at)
+        classes_body = body[row_at:today_classes_end]
+        assert "session-day-card" in classes_body
+        assert "session-row" in classes_body
+        assert "<table" not in classes_body
+        assert "class=\"data\"" not in classes_body
 
     def test_every_built_hash_is_routable(self):
         branches = _route_branches()

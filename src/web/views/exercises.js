@@ -84,7 +84,7 @@ async function pageExercise(courseId, exerciseId, studentId) {
   // (那条 href 不带学生段) 时, 会以 A 课程记住的那个学生身份作答 ——
   // 而作答会写 StudentState, 也就是把成绩记到了别人名下。
   //
-  // 其它页面 (learn / mistakes / review / students) 早就是"先按课程校验再退回
+  // 其它页面 (learn / mistakes / review) 早就是"先按课程校验再退回
   // 第一个"的写法, 这里当时漏了。
   const students = (await api('/students', { query: { course_id: courseId } })).students || [];
   const sid = studentId || (

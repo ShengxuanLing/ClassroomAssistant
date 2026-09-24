@@ -59,8 +59,8 @@ from tests.support import read_web_source
 WEB_DIR = Path(default_static_dir())
 FIXED_TIME = "2026-01-01T00:00:00+00:00"
 
-#: 11 处"课程 X"的标题 / 面包屑所在页面, 以及它们各自的函数头。
-#: (原为 12 处 —— 课程级「复习中心」页已于 2026-09-21 删除。)
+#: 仍有课程标题 / 面包屑的页面, 以及它们各自的函数头。
+#: 学生列表 / 详情页面已删除, 不再属于课程标题清单。
 #: 2026-09-22 (任务书 §3): 概览默认是全部课程聚合页, 单课程标题随 scope 筛选
 #: 视图移到了 pageDashboardCourseBody (渲染体与取数分离的同一处拆分)。
 COURSE_LABEL_PAGES = (
@@ -71,13 +71,21 @@ COURSE_LABEL_PAGES = (
     "async function pageMaterials(",
     "async function pageReviews(",
     "async function pageSession(",
-    "async function pageStudents(",
     "async function pageMistakes(",
-    "async function pageStudent(",
 )
 
-#: 本次新增 / 改写的学生页文案 key (三语都必须有)。
-NEW_I18N_KEYS = (
+#: 删除学生页专属的三语 key; student.none 仍被依赖页的空态使用。
+REMOVED_STUDENT_UI_KEYS = (
+    "student.dashboard",
+    "student.courses",
+    "student.progress",
+    "student.studyPlan",
+    "student.recentEval",
+    "student.gaps",
+    "student.notStarted",
+    "student.answered",
+    "student.average",
+    "student.stateCounts",
     "student.register",
     "student.registerNote",
     "student.idLabel",
@@ -88,6 +96,7 @@ NEW_I18N_KEYS = (
     "student.registeredOk",
     "student.registerFailed",
 )
+RETAINED_STUDENT_KEYS = ("student.none",)
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +416,7 @@ class TestCourseNameIsShownInsteadOfItsId:
             assert course_id_text_offenders(shape) == [], shape
 
     def test_every_course_heading_goes_through_the_shared_helper(self):
-        """11 处标题 / 面包屑全部走 ``courseLabel()``, 没有一处漏掉。"""
+        """8 处标题 / 面包屑全部走 ``courseLabel()``, 没有一处漏掉。"""
         source = read_asset("app.js")
         for header in COURSE_LABEL_PAGES:
             body = function_body(source, header)
@@ -418,14 +427,14 @@ class TestCourseNameIsShownInsteadOfItsId:
     def test_the_helper_is_defined_exactly_once(self):
         """显示名只能有一个来源 —— 抄第二遍迟早会漂移。
 
-        下限是**实测值**: 2026-09-21 删掉课程复习中心页 (``pageCourseReview``) 后,
-        站点由 12 处降到 11 处 (``COURSE_LABEL_PAGES`` 10 项 + ``pageStudent`` 的
-        第二处面包屑)。这条是 ``test_every_course_heading_goes_through_the_shared_helper``
-        之外的冗余网 —— 那个测试只覆盖清单里的页面, 这条盯的是"总数没有悄悄变少"。
+        下限是**实测值**: 2026-09-21 删掉课程复习中心页 (``pageCourseReview``)、
+        本次删掉学生列表 / 详情页后, 课程标题清单剩 8 项。这条是
+        ``test_every_course_heading_goes_through_the_shared_helper`` 之外的冗余网 ——
+        那个测试只覆盖清单里的页面, 这条盯的是"总数没有悄悄变少"。
         """
         source = strip_js_comments(read_asset("app.js"))
         assert source.count("function courseLabel(") == 1
-        assert source.count("esc(courseLabel(courseId))") >= 11
+        assert source.count("esc(courseLabel(courseId))") >= 8
 
 
     def test_the_course_identity_string_has_exactly_one_producer(self):
@@ -894,72 +903,41 @@ class TestTheSessionIdIsNeverRenderedAsVisibleText:
 
 
 # ===========================================================================
-# 2. 学生注册表单 (静态契约)
+# 2. 学生页面删除 (反向契约)
 # ===========================================================================
 
 
-class TestRegistrationFormContract:
-    """表单必须真的接在 ``POST /api/students`` 上, 而且空课程时也在。"""
+class TestRemovedStudentPages:
+    """前端不再提供学生列表 / 注册 / 详情, 后端学生 API 不受此影响。"""
 
-    def test_the_students_page_renders_a_registration_form(self):
-        body = function_body(read_asset("app.js"), "async function pageStudents(")
-        assert 'id="student-form"' in body
-        assert 'name="student_id"' in body
-        assert 'name="display_name"' in body
-        assert 'type="submit"' in body
-
-    def test_the_form_is_rendered_even_when_there_are_no_students(self):
-        """空课程时**更要**渲染 —— 否则第一个学生永远建不出来。
-
-        真实证明在 ``scripts/ui_audit.js`` ("students page renders the
-        registration form (without students)") —— 那里真的执行了页面函数。
-        这里只钉住形状: 注册卡片必须**无条件**拼接, 不能落在任何三元分支里。
-        """
-        body = function_body(read_asset("app.js"), "async function pageStudents(")
-        assert "const registerCard =" in body
-        assert body.count("listCard + registerCard") == 1
-        # 三元表达式只包住**列表**卡片: 空态分支以 `+` 收尾。
-        assert ": emptyState(t('student.none'))) +" in body
-
-    def test_the_form_posts_to_the_students_endpoint(self):
-        source = read_asset("app.js")
-        assert "api('/students', { method: 'POST', body })" in source
-
-    def test_the_page_wires_the_form_after_rendering(self):
-        body = function_body(read_asset("app.js"), "async function pageStudents(")
-        assert "wireStudentForm();" in body
-        source = read_asset("app.js")
-        assert source.count("function wireStudentForm(") == 1
-        assert source.count("wireStudentForm();") == 1, "接线点也只能有一处"
-
-    def test_a_blank_id_is_rejected_before_hitting_the_api(self):
-        source = read_asset("app.js")
-        body = function_body(source, "function wireStudentForm(")
-        assert "student.idRequired" in body
-        assert "studentId" in body
-
-    def test_an_empty_name_is_not_sent(self):
-        """后端把 ``None`` 当"没给", 把 ``''`` 当"给了个空名" —— 两者不同。"""
-        body = function_body(read_asset("app.js"), "function wireStudentForm(")
-        assert "if (displayName) body.display_name = displayName;" in body
-
-    def test_the_empty_state_no_longer_tells_the_user_to_call_the_api(self):
-        """空态是给用户看的 —— 不该再出现一条 curl 指令。
-
-        先剥注释: 代码注释里提到这个历史写法是**说明**, 不是界面文案。
-        """
+    def test_student_page_functions_are_removed(self):
         source = strip_js_comments(read_asset("app.js"))
-        assert "POST /api/students" not in source
-        assert "POST /api/students" not in read_asset("index.html")
+        assert "async function pageStudents(" not in source
+        assert "async function pageStudent(" not in source
+        assert "function wireStudentForm(" not in source
+        assert "function renderPathChain(" not in source
 
-    def test_the_no_student_empty_state_points_at_the_single_entry_point(self):
-        """练习页 / 单题页不再复刻表单, 只链到学生页。"""
+    def test_student_page_routes_and_nav_link_are_removed(self):
+        source = read_asset("app.js")
+        html = read_asset("index.html")
+        assert "parts[0] === 'students'" not in source
+        assert "parts[2] === 'students'" not in source
+        assert 'href="#/students"' not in html
+        assert "nav.students" not in html
+
+    def test_the_empty_state_is_text_only(self):
         source = strip_js_comments(read_asset("app.js"))
+        body = function_body(source, "function noStudentsCard(")
+        assert "student.none" in body
+        assert 'href="#/students"' not in body
+        assert "student.register" not in body
         assert source.count("function noStudentsCard(") == 1
-        assert source.count("noStudentsCard()") == 3, (
-            "定义 1 处 + 练习页 1 处 + 单题页 1 处"
-        )
-        assert 'href="#/students"' in function_body(source, "function noStudentsCard(")
+        assert source.count("noStudentsCard()") == 3
+
+    def test_backend_student_endpoints_are_not_removed(self):
+        """反向契约不能误伤后端 API。"""
+        source = read_asset("app.js")
+        assert "'/students/'" in source
 
 
 # ===========================================================================
@@ -968,27 +946,29 @@ class TestRegistrationFormContract:
 
 
 class TestI18n:
-    def test_the_new_keys_exist_in_all_three_languages(self):
+    def test_student_none_remains_in_all_three_languages(self):
         tables = i18n_tables()
         for lang in ("zh", "es", "ca"):
-            missing = sorted(k for k in NEW_I18N_KEYS if k not in tables[lang])
+            missing = sorted(k for k in RETAINED_STUDENT_KEYS if k not in tables[lang])
             assert not missing, f"{lang} 缺少: {missing}"
         assert tables["zh"] == tables["es"] == tables["ca"]
 
-    def test_every_used_key_resolves(self):
+    def test_removed_student_detail_keys_are_gone(self):
+        tables = i18n_tables()
+        for lang in ("zh", "es", "ca"):
+            present = sorted(k for k in REMOVED_STUDENT_UI_KEYS if k in tables[lang])
+            assert not present, f"{lang} 仍保留已删除的详情 key: {present}"
+
+    def test_every_used_student_key_still_resolves(self):
         source = read_asset("app.js")
         tables = i18n_tables()
         for key in re.findall(r"\bt\(\s*'(student\.[A-Za-z0-9_]+)'", source):
             assert key in tables["zh"], f"悬空 key: {key}"
 
-    def test_the_translations_are_not_chinese_copies(self):
-        """译文里出现中文 = 等于没翻。"""
+    def test_detail_keys_do_not_reappear_in_sentence_translations(self):
         source = read_asset("app.js")
-        start = source.index("const TRANSLATIONS = {")
-        block = source[start:]
-        cjk = re.compile(r"[\u4e00-\u9fff]")
-        for key in NEW_I18N_KEYS:
-            # 该 key 只出现在 I18N (符号 key), TRANSLATIONS 里不该有它。
+        block = source[source.index("const TRANSLATIONS = {"):]
+        for key in REMOVED_STUDENT_UI_KEYS:
             assert f"'{key}':" not in block, f"{key} 不该出现在整句译文表里"
 
 
@@ -1188,11 +1168,11 @@ class TestUiAuditCoversTheReportedProblems:
         assert "never renders the raw course id as text" in script
         assert "loadSidebar" in script, "必须先跑侧边栏, 否则 courseLabel 拿到的是空缓存"
 
-    def test_the_audit_checks_the_registration_form_on_an_empty_course(self):
+    def test_the_audit_checks_the_removed_student_pages(self):
         script = self._script()
-        assert 'id="student-form"' in script
-        assert "students page renders the registration form (" in script
-        assert "'without students'" in script
+        assert "pageStudents" in script
+        assert "student list and detail page functions are absent" in script
+        assert "registration form is not wired" in script
 
     def test_the_audit_checks_the_session_dropdown(self):
         """静态检查只能证明"源码里写了 select", 证明不了表单里真有选项。

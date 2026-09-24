@@ -24,9 +24,9 @@
          无 href、无点击、无路由、无数据加载; markActiveNav() 只扫 `.topnav a`,
          它们永远进不了 active。重启用时把 span 换回 <a href="..."> 即可,
          路由分支与页面函数均原样保留。
-         顺序: 7 个可用 <a> → 分隔符 → 4 个禁用 span (可用项保持原相对顺序)。
+         顺序: 6 个可用 <a> → 分隔符 → 4 个禁用 span (可用项保持原相对顺序)。
          这份可用 href 顺序必须与 scripts/ui_render_check.js 的 TOPNAV 逐项一致
-         (TOPNAV 只收可用 <a>; 禁用 span 不进该数组, 见该文件注释)。 -->
+         (TOPNAV 只收可用 <a>; 禁用 span 不进该数组, 见该文件注释)。学生页面已移除。 -->
     <nav class="topnav">
       <a href="#/" data-i18n="nav.overview">概览</a>
       <a href="#/today" data-i18n="nav.today">今日</a>
@@ -34,7 +34,6 @@
       <a href="#/courses" data-i18n="nav.myCourses">我的课程</a>
       <a href="#/materials" data-i18n="nav.materials">材料</a>
       <a href="#/knowledge" data-i18n="nav.knowledge">知识点</a>
-      <a href="#/students" data-i18n="nav.students">学生</a>
       <span class="topnav-sep" aria-hidden="true"></span>
       <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewMode">考前复习</span>
       <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewPack">复习包</span>

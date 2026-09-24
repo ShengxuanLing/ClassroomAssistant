@@ -178,7 +178,7 @@ function html(sandbox) {
 
 // ---------------------------------------------------------------- 页面清单
 
-// 10 个页面。参数来自 config.ids —— 全是真实库里存在的 id,
+// 页面清单。参数来自 config.ids —— 全是真实库里存在的 id,
 // 由 Python 侧从真实工作区里取出来传进来。
 const PAGES = [
   { name: 'pageDashboard', args: [] },
@@ -188,7 +188,6 @@ const PAGES = [
   { name: 'pageSession', args: ['course_id', 'session_id'] },
   { name: 'pageKnowledge', args: [] },
   { name: 'pageKnowledgeDetail', args: ['course_id', 'knowledge_id'] },
-  { name: 'pageStudents', args: [] },
   { name: 'pageExercises', args: [] },
   { name: 'pageExercise', args: ['course_id', 'exercise_id', 'student_id'] },
   { name: 'pageMistakes', args: [] },
