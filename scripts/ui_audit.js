@@ -897,7 +897,10 @@ function routes() {
     status: 'ok',
     version: '0.35.0',
     storage: { courses: 1 },
-    evidence_count: 4,
+    processing: { asr: 'mock', ocr: 'mock', evidence_count: 4 },
+    ai_mode: 'disabled',
+    ai_enabled: false,
+    ai: { mode: 'disabled', enabled: false },
     asr_mode: 'mock',
     ocr_mode: 'mock',
   };
@@ -3169,7 +3172,104 @@ async function audit() {
       labelSites === 7 && displayPartSites === 3,
       'sessionLabel=' + labelSites + ', sessionDisplayParts=' + displayPartSites);
 
-    // 10) D1 / D4: 处理警告与"成功但零证据"必须被看见, 而且**三处一致**。
+    // 10) AI 状态语义: 没跑 / 跑了但 0 KP / 有产出必须彼此可区分。
+    //     这些是服务端 analysis_statuses 的真实形状, 不是从材料
+    //     processing_status=COMPLETED 猜出来的。
+    {
+      const cases = [
+        {
+          label: 'disabled',
+          analysis: {
+            status: 'SKIPPED', current_stage: 'AI_ANALYSIS', ai_status: 'disabled',
+            knowledge_point_count: 3,
+          },
+          expected: ['AI 未启用，已跳过', '确定性处理已完成', '启用 AI 后重试', '知识点 3'],
+          forbidden: ['已完成全部 AI 分析', 'AI 已完成，生成知识点'],
+        },
+        {
+          label: 'zero',
+          analysis: {
+            status: 'COMPLETED', current_stage: 'DONE', ai_status: 'completed',
+            knowledge_point_count: 0,
+          },
+          expected: ['AI 已运行，但没有生成知识点（0 个）', '检查证据后重试 AI 分析'],
+          forbidden: ['已完成全部 AI 分析'],
+        },
+        {
+          label: 'counted',
+          analysis: {
+            status: 'COMPLETED', current_stage: 'DONE', ai_status: 'completed',
+            knowledge_point_count: 2,
+          },
+          expected: ['AI 已完成，生成知识点：', ' 2'],
+          forbidden: ['没有生成知识点'],
+        },
+      ];
+      for (const item of cases) {
+        const table = routes();
+        const row = material();
+        table['/api/materials'] = {
+          materials: [row],
+          analysis_statuses: { [row.material_id]: item.analysis },
+        };
+        const out = html(await renderPage(pageByName('materials'), table, 'zh'));
+        for (const text of item.expected) {
+          check('material AI status ' + item.label + ' explains ' + text,
+            out.includes(text), out.slice(out.indexOf('<tbody>'), out.indexOf('</tbody>')));
+        }
+        for (const text of item.forbidden) {
+          check('material AI status ' + item.label + ' never claims ' + text,
+            !out.includes(text), out.slice(out.indexOf('<tbody>'), out.indexOf('</tbody>')));
+        }
+      }
+
+      for (const lang of ['es', 'ca']) {
+        const table = routes();
+        const row = material();
+        table['/api/materials'] = {
+          materials: [row],
+          analysis_statuses: {
+            [row.material_id]: {
+              status: 'SKIPPED', current_stage: 'AI_ANALYSIS', ai_status: 'disabled',
+              knowledge_point_count: 3,
+            },
+          },
+        };
+        const out = html(await renderPage(pageByName('materials'), table, lang));
+        check('disabled AI material status is localized in ' + lang,
+          !/[\u4e00-\u9fff]/.test(out), 'CJK leaked: ' + firstCjk(out));
+      }
+    }
+
+    // 11) 顶栏 AI pill 与 /api/health 使用同一口径; 旧服务缺字段时必须
+    //     明示 unknown, 不能把“没有字段”悄悄画成 real。
+    {
+      const table = routes();
+      table['/api/health'] = {
+        application: 'classroom-assistant', status: 'ok', version: 't',
+        processing: { asr: 'real', ocr: 'real', evidence_count: 2 },
+        storage: { courses: 1 },
+        ai_mode: 'real', ai_enabled: true, ai: { mode: 'real', enabled: true },
+      };
+      const sandbox = await loadApp(table, 'zh');
+      await sandbox.loadChrome();
+      const pill = sandbox.__elements.get('pill-ai').textContent;
+      check('top bar renders the runtime AI mode', pill.includes('AI real'), pill);
+      check('top bar does not invent a key or provider credential',
+        !/api[_-]?key|sk-/i.test(pill), pill);
+
+      table['/api/health'] = {
+        application: 'classroom-assistant', status: 'ok', version: 't',
+        processing: { asr: 'real', ocr: 'real', evidence_count: 2 },
+        storage: { courses: 1 },
+      };
+      const legacy = await loadApp(table, 'zh');
+      await legacy.loadChrome();
+      const legacyPill = legacy.__elements.get('pill-ai').textContent;
+      check('top bar marks missing AI health as unknown', legacyPill.includes('unknown'), legacyPill);
+    }
+
+    // 12) D1 / D4: 处理警告与"成功但零证据"必须被看见, 而且**三处一致**。
     //
     // 契约: "文档可解析但没有可提取文本"是合法成功 (COMPLETED + 0 证据),
     // 但旧界面只画 processing_status —— 用户看到"成功"、拿到 0 条证据, 却

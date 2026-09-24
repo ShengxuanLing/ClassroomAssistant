@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -39,6 +40,7 @@ from src.application.config import (
     LOG_LEVELS,
     ASR_MODES,
     OCR_KINDS,
+    load_local_environment,
 )
 from src.application.errors import ApplicationError, ConfigurationError, PortInUseError
 from src.application.logging_setup import configure_logging, log_event
@@ -195,6 +197,11 @@ def build_config(
     cwd: Optional[str] = None,
 ) -> AppConfig:
     """把解析结果交给配置层 (唯一校验入口)。"""
+    # The batch wrapper and an IDE/debug launch must observe the same local
+    # AI environment.  Never do this for an explicitly supplied test mapping
+    # (or under pytest), so fixtures cannot inherit a developer's credentials.
+    if env is None and not os.environ.get("PYTEST_CURRENT_TEST"):
+        load_local_environment()
     return AppConfig.load(
         config_path=options.config_path,
         env=env,

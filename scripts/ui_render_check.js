@@ -1756,6 +1756,70 @@ async function main() {
     check('empty my courses has no stack trace', !/Traceback|at Object\./.test(out));
   }
 
+  // ---- AI 状态: skipped / zero / counted 必须由 analysis_statuses 决定 -----
+  {
+    const row = Object.assign({}, {
+      material_id: 'mat-ai-status',
+      filename: 'lecture.pdf',
+      extension: '.pdf', size: 100, material_type: 'text', source_type: 'document',
+      processing_status: 'COMPLETED', session_id: null, error: null, warning: null,
+      evidence_ids: ['ev-1'], evidence_count: 1,
+    });
+    const renderStatus = async (analysis) => {
+      const table = Object.assign({}, ROUTES, {
+        '/api/materials': {
+          data: {
+            materials: [row],
+            analysis_statuses: { [row.material_id]: analysis },
+          },
+        },
+        '/api/sessions': { data: { sessions: [] } },
+        '/api/processing': { data: { by_status: { SUCCEEDED: 1 } } },
+      });
+      const sandbox = await loadApp(table);
+      await sandbox.pageMaterials();
+      return html(sandbox);
+    };
+
+    const skipped = await renderStatus({
+      status: 'SKIPPED', current_stage: 'AI_ANALYSIS', ai_status: 'disabled',
+      knowledge_point_count: 3,
+    });
+    check('disabled AI renders a skipped state and deterministic count',
+      skipped.includes('AI 未启用，已跳过') && skipped.includes('知识点 3'), skipped);
+    check('disabled AI never claims all AI analysis completed',
+      !skipped.includes('已完成全部 AI 分析'), skipped);
+
+    const zero = await renderStatus({
+      status: 'COMPLETED', current_stage: 'DONE', ai_status: 'completed',
+      knowledge_point_count: 0,
+    });
+    check('zero-KP AI completion renders the exact count and next step',
+      zero.includes('没有生成知识点（0 个）') && zero.includes('检查证据后重试'), zero);
+
+    const counted = await renderStatus({
+      status: 'COMPLETED', current_stage: 'DONE', ai_status: 'completed',
+      knowledge_point_count: 2,
+    });
+    check('nonzero AI completion renders its knowledge-point count',
+      counted.includes('AI 已完成，生成知识点：') && counted.includes(' 2'), counted);
+
+    const health = await loadApp(Object.assign({}, ROUTES, {
+      '/api/health': {
+        data: {
+          status: 'ok', application: 'classroom', version: 't',
+          processing: { asr: 'real', ocr: 'real', evidence_count: 0 },
+          storage: { courses: 1 },
+          ai_mode: 'real', ai_enabled: true, ai: { mode: 'real', enabled: true },
+        },
+      },
+    }));
+    await health.loadChrome();
+    check('top chrome renders the AI runtime mode',
+      health.__elements.get('pill-ai').textContent.includes('AI real'),
+      health.__elements.get('pill-ai').textContent);
+  }
+
   // ---- D1 / D4: 处理警告与"成功但零证据"必须被看见 ------------------------
   //
   // 契约: "文档可解析但没有可提取文本"是**合法成功**
@@ -2455,6 +2519,7 @@ async function main() {
             status: 'ok', application: 'classroom', version: 't',
             processing: { asr: 'real', ocr: 'real', evidence_count: 0 },
             storage: { courses: 2 },
+            ai_mode: 'real', ai_enabled: true, ai: { mode: 'real', enabled: true },
           },
         },
         '/api/courses': { data: { courses: twoCourses } },

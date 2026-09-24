@@ -442,6 +442,13 @@ def test_bat_scripts_present_and_well_formed() -> None:
         assert name.split(".")[0] in content
 
 
+def test_start_bat_defers_ai_env_loading_to_python() -> None:
+    """One loader owns precedence; the batch wrapper must not pre-inject a fallback."""
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+    content = open(os.path.join(base, "start.bat"), encoding="utf-8").read().lower()
+    assert "call" not in content or "ai-env.bat" not in content
+
+
 # ----------------------------------------------------------------------
 # PID 复用防护 (Task 47 硬化: stop 不得误杀无关进程)
 # ----------------------------------------------------------------------

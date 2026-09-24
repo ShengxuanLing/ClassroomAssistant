@@ -130,6 +130,58 @@ python -m src.application.cli --check
 - OCR 不可用 → 检查 `rapidocr-onnxruntime==1.2.3`。**版本必须精确是 1.2.3**：
   1.3.x 声明 `Requires-Python <3.13`，在 3.13/3.14 上装不上。
 
+### 点「AI 分析」很快结束，但 AI 实际没运行
+
+先看 `GET /api/health` 的 `ai_mode` / `ai_enabled`，再看材料分析状态：
+
+```json
+{
+  "status": "SKIPPED",
+  "ai_status": "disabled",
+  "knowledge_point_count": 3,
+  "next_action": "enable_ai_and_retry"
+}
+```
+
+`SKIPPED` 表示确定性解析已完成，但 AI 阶段没有运行；这不是 AI 成功。检查仓库根目录
+`.env`（或进程环境）中的 `CLASSROOM_AI_ENABLED=true`，再重启服务。`start.bat`、IDE
+直启和 `--check` 现在共用同一加载器与优先级：进程环境 > `.env` >
+`scripts/ai-env.bat`。用下面命令确认最终模式，输出不含 Key：
+
+```bash
+python -m src.application.cli --check --json
+```
+
+若模式是 `fake`，说明 AI 已开但没有可用凭证，界面中的结果只是确定性测试 provider，
+不是真实模型输出。
+
+### AI 显示完成，但知识点仍是 0
+
+完整分析状态会返回：
+
+```json
+{
+  "status": "COMPLETED",
+  "knowledge_point_count": 0,
+  "next_action": "inspect_evidence_and_retry"
+}
+```
+
+先打开材料的证据列表确认 `GET /api/materials/{id}/evidence` 非空，再重试 AI。系统
+不会为了制造知识点而放宽 Evidence 引用规则；没有合法证据支撑时保持 0 是预期行为。
+
+### 材料删除后重传，证据仍为空
+
+当前版本会在同一内容重新登记时把原 `RETIRED` 证据复活为 `ACTIVE`，并把状态写回
+SQLite。若进程是在修复前启动的，内存里仍可能是旧状态；先重启服务，再打开证据
+列表确认。数据库中的真值可用只读查询核对：
+
+```sql
+SELECT evidence_id, state
+FROM evidence
+WHERE material_id = '<material-id>';
+```
+
 ### 材料处理失败，重试被拒绝
 
 失败分两类：

@@ -985,6 +985,16 @@ class EvidenceIngestionService:
         added_ids = tuple(
             eid for eid in batch_result.evidence_ids if eid is not None
         )
+        # A duplicate is not necessarily an already-active row.  The material
+        # workflow retires evidence when a material is deleted; re-registering
+        # the same content must make that existing, content-addressed row
+        # visible again.  Do this at the ingestion boundary (rather than in
+        # the UI or in a later knowledge pass) so every consumer -- evidence
+        # listing, deterministic assembly and AI -- observes the same state.
+        # Added rows are already ACTIVE, so reviving the complete returned ID
+        # tuple is harmless and also covers a mixed batch.
+        for evidence_id in added_ids:
+            self._store.revive(evidence_id)
         rejection_errors: List[IngestionError] = []
         if batch_result.rejected > 0:
             for idx, eid in enumerate(batch_result.evidence_ids):

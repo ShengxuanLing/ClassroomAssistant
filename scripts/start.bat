@@ -8,9 +8,8 @@ set "PYTHON=%~dp0..\Python\pythoncore-3.14-64\python.exe"
 if not exist "%PYTHON%" set "PYTHON=python"
 
 cd /d "%~dp0.."
-REM Local AI credentials (if present): scripts\ai-env.bat is gitignored and
-REM lives on this machine only. Loaded in the same process before launch
-REM (TASK-77), so double-click start needs no manual env setup afterwards.
-if exist "%~dp0ai-env.bat" call "%~dp0ai-env.bat"
+REM Local AI credentials (if present) are loaded by the Python startup chain.
+REM Keeping one loader makes start.bat, IDE/debug launch and --check agree on
+REM precedence: process environment > .env > scripts\ai-env.bat.
 "%PYTHON%" -m src.application.launcher start %*
 exit /b %errorlevel%

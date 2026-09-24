@@ -252,10 +252,14 @@ class Workspace:
         # 最近一次分析报告缓存在内存 (KP 本体经组织层正常落盘, 报告本身
         # 可由 KP + Evidence 重新推导, 不新增数据库表, 见 service.py)。
         self._ai_enabled = False
+        # The workspace owns the same public mode reported by the runtime
+        # descriptor.  Keep it separate from the boolean so health remains
+        # honest when the provider is a deterministic fake.
+        self._ai_mode = "disabled"
         self._ai_provider: Optional[Any] = None
         self._ai_reports: dict[tuple[str, str], dict[str, Any]] = {}
         # 材料页一键分析 (「AI分析」按钮): 每份材料最近一次的统一状态
-        # (QUEUED/PROCESSING/COMPLETED/FAILED + current_stage)。内存字典 +
+        # (QUEUED/PROCESSING/COMPLETED/SKIPPED/FAILED + current_stage)。内存字典 +
         # 进程内锁即可: HTTP 服务器是多线程的, 幂等闸门必须跨线程; 状态
         # 本身以服务端为真相, 前端刷新后重读 (不依赖前端 loading 标志)。
         self._analysis_status: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1124,11 +1128,15 @@ class Workspace:
     # 状态是服务端真相 (内存字典 + 事务内落盘与推导), 前端刷新页面后
     # 仍然读得到 —— 不依赖任何前端 loading 标志。
 
-    #: 统一分析状态的高层取值 (对任务书 QUEUED/PROCESSING/COMPLETED/FAILED
-    #: 的直译; ``current_stage`` 用内部阶段码, 前端负责翻成人话)。
+    #: 统一分析状态的高层取值 (``SKIPPED`` 明确表示 AI 未运行；
+    #: ``current_stage`` 用内部阶段码, 前端负责翻成人话)。
     ANALYSIS_QUEUED = "QUEUED"
     ANALYSIS_PROCESSING = "PROCESSING"
     ANALYSIS_COMPLETED = "COMPLETED"
+    #: AI was not run.  This is deliberately distinct from COMPLETED:
+    #: deterministic ingestion may have succeeded, but claiming that all AI
+    #: analysis completed would be false.
+    ANALYSIS_SKIPPED = "SKIPPED"
     ANALYSIS_FAILED = "FAILED"
 
     #: 用户级阶段码 (``current_stage`` 取值)。与 ProcessingJob 的内部
@@ -1161,6 +1169,12 @@ class Workspace:
         status: str,
         stage: str,
         error: Optional[str] = None,
+        *,
+        ai: Optional[Mapping[str, Any]] = None,
+        knowledge_point_count: Optional[int] = None,
+        next_action: Optional[str] = None,
+        message: Optional[str] = None,
+        terminal_reason: Optional[str] = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "material_id": material_id,
@@ -1170,6 +1184,22 @@ class Workspace:
             "error_message": error,
             "updated_at": self._clock(),
         }
+        # Optional fields are additive so old clients can continue to read the
+        # original six-field shape.  They carry the distinction that the old
+        # COMPLETED value erased: whether AI ran, how many KPs it produced,
+        # and what the user can do next.
+        if ai is not None:
+            ai_payload = dict(ai)
+            payload["ai"] = ai_payload
+            payload["ai_status"] = ai_payload.get("status")
+        if knowledge_point_count is not None:
+            payload["knowledge_point_count"] = int(knowledge_point_count)
+        if next_action is not None:
+            payload["next_action"] = next_action
+        if message is not None:
+            payload["message"] = message
+        if terminal_reason is not None:
+            payload["terminal_reason"] = terminal_reason
         self._analysis_status[(course_id, material_id)] = payload
         return dict(payload)
 
@@ -1257,6 +1287,63 @@ class Workspace:
                 duration_ms=(time.monotonic() - started) * 1000,
             )
 
+    def _knowledge_count_for_material(
+        self, course_id: str, material_id: str
+    ) -> int:
+        """Count KPs whose evidence chain includes this material.
+
+        This is a read-only projection used only for status messaging.  It
+        never creates a KP and falls back to zero when the course structure
+        has not been assembled yet.
+        """
+        try:
+            ctx = self.context(course_id)
+        except NotFoundError:
+            return 0
+        structure = ctx.processing.structure
+        if structure is None:
+            return 0
+        evidence_ids = {
+            evidence.evidence_id
+            for evidence in self.store.get_by_source(material_id)
+        }
+        if not evidence_ids:
+            return 0
+        return sum(
+            1
+            for point in structure.knowledge_points.values()
+            if evidence_ids.intersection(point.evidence_refs)
+        )
+
+    @staticmethod
+    def _reported_ai_knowledge_count(ai: Any) -> Optional[int]:
+        """Read a count from either a full report or an auto-job summary."""
+        if not isinstance(ai, Mapping):
+            return None
+        raw = ai.get("knowledge_points_total")
+        if raw is not None:
+            try:
+                return max(0, int(raw))
+            except (TypeError, ValueError):
+                pass
+        values: list[Any] = [
+            ai.get("auto_accepted"),
+            ai.get("needs_review"),
+            ai.get("conflicts"),
+        ]
+        if any(value is not None for value in values):
+            total = 0
+            for value in values:
+                if isinstance(value, (list, tuple)):
+                    total += len(value)
+                else:
+                    try:
+                        total += max(0, int(value or 0))
+                    except (TypeError, ValueError):
+                        return None
+            return total
+        return None
+
     def _run_full_analysis(
         self, course_id: str, material_id: str
     ) -> dict[str, Any]:
@@ -1291,9 +1378,8 @@ class Workspace:
                 str(job.get("error") or "PROCESSING_FAILED"),
             )
 
-        # 第二段: 语义分析 (知识点生成/验证/评审)。三种情况需要显式补跑:
-        # AI 刚被关闭 / 材料早就处理过 (process_material 短路, 没走
-        # _maybe_auto_ai) / 自动分析失败但材料摄取成功 (用户点重新分析)。
+        # 第二段: 语义分析 (知识点生成/验证/评审)。AI 未启用时摄取已经
+        # 成功，但绝不能把“跳过 AI”伪装成“完成全部 AI 分析”。
         self._analysis_set(
             course_id,
             material_id,
@@ -1301,9 +1387,34 @@ class Workspace:
             self.ANALYSIS_STAGE_AI,
         )
         ai = job.get("ai")
-        if self._ai_enabled and (
-            ai is None or str(ai.get("status") or "") in (AI_AUTO_FAILED, AI_AUTO_SKIPPED)
-        ):
+        if not self._ai_enabled:
+            count = self._knowledge_count_for_material(course_id, material_id)
+            return self._analysis_set(
+                course_id,
+                material_id,
+                self.ANALYSIS_SKIPPED,
+                self.ANALYSIS_STAGE_AI,
+                ai={
+                    "status": AI_AUTO_DISABLED,
+                    "enabled": False,
+                    "mode": self._ai_mode,
+                    "reason": "AI is disabled; deterministic processing completed",
+                },
+                knowledge_point_count=count,
+                next_action="enable_ai_and_retry",
+                message=(
+                    "AI analysis was skipped because AI is disabled; "
+                    "deterministic processing completed"
+                ),
+                terminal_reason="AI_DISABLED",
+            )
+
+        # 进程/作业摘要可能是 None、failed 或 skipped；只有明确 completed
+        # 才能直接进入成功终态。其余情况显式补跑一次，保留原 Evidence。
+        if not isinstance(ai, Mapping) or str(ai.get("status") or "") not in {
+            AI_AUTO_COMPLETED,
+            "completed",
+        }:
             try:
                 ai = self.analyze_material_with_ai(course_id, material_id)
             except Exception as exc:  # noqa: BLE001 - AI 阶段失败, 证据已安全
@@ -1314,13 +1425,40 @@ class Workspace:
                     self.ANALYSIS_FAILED,
                     self.ANALYSIS_STAGE_AI,
                     detail,
+                    ai=(
+                        {"status": AI_AUTO_FAILED, "error": detail, "retryable": True}
+                        if isinstance(ai, Mapping)
+                        else None
+                    ),
+                    terminal_reason="AI_FAILED",
                 )
 
+        ai_payload = dict(ai) if isinstance(ai, Mapping) else {
+            "status": AI_AUTO_COMPLETED
+        }
+        count = self._reported_ai_knowledge_count(ai_payload)
+        if count is None:
+            count = self._knowledge_count_for_material(course_id, material_id)
+        if count == 0:
+            return self._analysis_set(
+                course_id,
+                material_id,
+                self.ANALYSIS_COMPLETED,
+                self.ANALYSIS_STAGE_DONE,
+                ai=ai_payload,
+                knowledge_point_count=0,
+                next_action="inspect_evidence_and_retry",
+                message="AI analysis completed but produced 0 knowledge points",
+                terminal_reason="NO_KNOWLEDGE_POINTS",
+            )
         return self._analysis_set(
             course_id,
             material_id,
             self.ANALYSIS_COMPLETED,
             self.ANALYSIS_STAGE_DONE,
+            ai=ai_payload,
+            knowledge_point_count=count,
+            terminal_reason="AI_COMPLETED",
         )
 
     # ------------------------------------------------------------------
@@ -1383,6 +1521,7 @@ class Workspace:
             "auto_accepted": len(report.get("auto_accepted") or []),
             "needs_review": len(report.get("needs_review") or []),
             "conflicts": len(report.get("conflicts") or []),
+            "knowledge_points_total": report.get("knowledge_points_total"),
             "chunk_total": report.get("chunk_total"),
             "chunk_succeeded": report.get("chunk_succeeded"),
             "chunk_failed": report.get("chunk_failed"),
@@ -1481,6 +1620,7 @@ class Workspace:
             "auto_accepted": len(payload.get("auto_accepted") or []),
             "needs_review": len(payload.get("needs_review") or []),
             "conflicts": len(payload.get("conflicts") or []),
+            "knowledge_points_total": payload.get("knowledge_points_total"),
             "retryable": False,
         }
 
@@ -1627,19 +1767,39 @@ class Workspace:
         *,
         enabled: Optional[bool] = None,
         provider: Optional[Any] = None,
+        mode: Optional[str] = None,
     ) -> dict[str, Any]:
         """配置 AI 管线 (显式调用, 内存生效, 不落盘、不读 key 明文)。
 
         ``provider=None`` 时保留当前 provider (默认 FakeAIProvider, 零出站)。
+        ``mode`` 与启动装配使用同一口径 ``disabled/fake/real``；未显式
+        给出时，从 provider 的稳定名称推导，避免 health 与启动快照漂移。
         返回可安全展示的 provider 描述 (无 key)。
         """
         if enabled is not None:
             self._ai_enabled = bool(enabled)
         if provider is not None:
             self._ai_provider = provider
+        if mode is not None:
+            normalized_mode = str(mode).strip().lower()
+            if normalized_mode not in {"disabled", "fake", "real"}:
+                raise ValueError("AI mode must be disabled, fake or real")
+            self._ai_mode = normalized_mode
+        elif not self._ai_enabled:
+            self._ai_mode = "disabled"
+        elif provider is not None or self._ai_mode == "disabled":
+            name_hint = str(
+                getattr(self._ai_provider, "name", None) or "fake-deterministic"
+            ).lower()
+            self._ai_mode = (
+                "fake"
+                if any(word in name_hint for word in ("fake", "mock", "deterministic"))
+                else "real"
+            )
         name = getattr(self._ai_provider, "name", None) or "fake-deterministic"
         return {
             "enabled": self._ai_enabled,
+            "mode": self._ai_mode,
             "provider": name,
             "model": getattr(self._ai_provider, "model", name),
         }
@@ -2916,6 +3076,16 @@ class Workspace:
                 "ocr": self._ocr_mode,
                 "sequential": True,
                 "evidence_count": len(self.store.all()),
+            },
+            # AI mode/enabled are part of the same public runtime truth as
+            # describe_runtime().  Keep both the historical top-level names
+            # and a small nested object for clients that group capabilities.
+            # No credential or provider secret is exposed here.
+            "ai_mode": self._ai_mode,
+            "ai_enabled": bool(self._ai_enabled),
+            "ai": {
+                "mode": self._ai_mode,
+                "enabled": bool(self._ai_enabled),
             },
             # §1: LLM 模式显式可见 (与 asr/ocr 同语义)。绝不静默把 Mock
             # 当作真实模型; key 永不出现在 health 里。

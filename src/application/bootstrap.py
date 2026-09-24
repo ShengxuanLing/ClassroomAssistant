@@ -55,7 +55,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from src.application.config import AppConfig
+from src.application.config import AppConfig, load_local_environment
 from src.application.data_dirs import DataLayout, ensure_data_layout
 from src.application.errors import ConfigurationError
 from src.application.logging_setup import configure_logging, get_logger, log_event
@@ -272,6 +272,11 @@ def build_runtime(
     ``llm_mode`` 是显式参数 (mock / real / auto), 默认 ``mock``: 没有
     显式要求就绝不出站。
     """
+    # ``build_runtime`` is also a supported embedding/IDE entry point, so it
+    # must not depend on the caller having gone through ``cli.build_config``.
+    # The loader is process-local and never logs or persists values.
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        load_local_environment()
     if not isinstance(config, AppConfig):
         raise ConfigurationError(
             f"build_runtime expects an AppConfig (got {type(config).__name__})"
@@ -324,7 +329,7 @@ def build_runtime(
     # TASK-76 的默认关闭形状; ``fake``/``real`` 时打开自动触发
     # (process_material 摄取成功后自动分析, 失败不污染材料)。
     if ai_mode != "disabled":
-        workspace.configure_ai(enabled=True, provider=ai_provider)
+        workspace.configure_ai(enabled=True, provider=ai_provider, mode=ai_mode)
 
     from src.api.server import create_server
 

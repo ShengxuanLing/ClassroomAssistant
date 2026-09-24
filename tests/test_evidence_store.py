@@ -517,12 +517,20 @@ class TestLifecycle(unittest.TestCase):
         self.assertTrue(store.retire(ev.evidence_id))
         self.assertEqual(store.get_state(ev.evidence_id), EvidenceState.RETIRED)
 
-    def test_restore_is_idempotent(self):
+    def test_revive_is_idempotent(self):
         store = EvidenceStore()
         ev = make_evidence(content="A", material_id="M")
         store.add(ev)
         store.retire(ev.evidence_id)
-        self.assertTrue(store.restore(ev.evidence_id))
+        self.assertTrue(store.revive(ev.evidence_id))
+        self.assertTrue(store.revive(ev.evidence_id))
+        self.assertEqual(store.get_state(ev.evidence_id), EvidenceState.ACTIVE)
+
+    def test_restore_remains_a_compatible_alias(self):
+        store = EvidenceStore()
+        ev = make_evidence(content="A", material_id="M")
+        store.add(ev)
+        store.retire(ev.evidence_id)
         self.assertTrue(store.restore(ev.evidence_id))
         self.assertEqual(store.get_state(ev.evidence_id), EvidenceState.ACTIVE)
 

@@ -40,7 +40,7 @@ import os
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from src.models import Course, Language, Material, MaterialType
-from src.evidence_store import EvidenceStore
+from src.evidence_store import EvidenceState, EvidenceStore
 from src.evidence_ingestion import EvidenceIngestionService
 from src.application.data_dirs import (
     DataLayout,
@@ -628,8 +628,12 @@ class MaterialWorkflowService:
         if not ids:
             # 合法情况: 空文档 / 无可提取文本, 证据本来就是 0 条。
             return True
+        # Presence alone is not enough: a row can exist for auditability while
+        # being RETIRED after its material was deleted.  Such a row must make
+        # the idempotent path reprocess/revive it instead of reporting a false
+        # COMPLETED state.
         return all(
-            self._store.get(eid, include_retired=True) is not None for eid in ids
+            self._store.get_state(eid) == EvidenceState.ACTIVE for eid in ids
         )
 
     def retry_material(self, material_id: str) -> dict[str, Any]:

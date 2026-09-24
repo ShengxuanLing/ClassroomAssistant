@@ -54,7 +54,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, MutableMapping, Optional, Sequence
 
 from src.application.errors import ConfigurationError
 from src.whisper_provider import (
@@ -109,6 +109,7 @@ __all__ = [
     "normalise_overrides",
     "discover_config_file",
     "load_config",
+    "load_local_environment",
 ]
 
 # ----------------------------------------------------------------------
@@ -211,6 +212,101 @@ _MIN_PLAUSIBLE_UPLOAD_SIZE = 1024
 
 #: 项目内**绝不允许**作为 data_dir 的目录名 (AGENTS.md 硬性规则的可执行版本)。
 _FORBIDDEN_DATA_DIR_NAMES: tuple[str, ...] = ("src", "tests")
+
+# ----------------------------------------------------------------------
+# 本地启动环境加载
+# ----------------------------------------------------------------------
+
+
+def _parse_local_environment_file(path: str) -> dict[str, str]:
+    """Parse a small, deliberately narrow env-file subset.
+
+    This parser never raises and never includes a value in an error/log.  It
+    accepts ordinary ``KEY=VALUE`` lines as well as the ``set "KEY=VALUE"``
+    form used by ``scripts/ai-env.bat``.  Quoted values are unwrapped; no
+    interpolation, command execution, or variable expansion is performed.
+    """
+    values: dict[str, str] = {}
+    try:
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            lines = handle.readlines()
+    except (OSError, UnicodeError):
+        return values
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("REM "):
+            continue
+        if line.lower().startswith("set "):
+            line = line[4:].strip()
+        elif line.lower().startswith("set"):
+            # Ignore setlocal/endlocal and other batch directives.
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if len(line) >= 2 and line[0] == line[-1] and line[0] in ("'", '"'):
+            line = line[1:-1]
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not key.startswith(ENV_PREFIX):
+            continue
+        # Only inject runtime AI/LLM settings.  Other CLASSROOM_* values
+        # remain the responsibility of the explicit config/CLI layers, and a
+        # local helper file must not unexpectedly relocate the data directory.
+        if not (key.startswith("CLASSROOM_AI_") or key.startswith("CLASSROOM_LLM_")):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def load_local_environment(
+    project_root: Optional[str] = None,
+    *,
+    env: Optional[MutableMapping[str, str]] = None,
+) -> tuple[str, ...]:
+    """Load ignored local AI env files into the process environment.
+
+    ``.env`` is preferred over ``scripts/ai-env.bat`` when both define a
+    variable, and an already-present process variable always wins.  The
+    returned tuple contains file paths only -- never parsed values -- so it is
+    safe to use in diagnostics.  This function is intentionally a startup
+    convenience, not a persistence mechanism: it does not write files, logs,
+    responses, or database rows.
+
+    Callers running under pytest should skip this helper (the test suite must
+    never inherit a developer's real credentials).  Production CLI/launcher
+    entry points call it before configuration/runtime assembly.
+    """
+    target: MutableMapping[str, str] = os.environ if env is None else env
+    root = os.path.abspath(
+        project_root
+        or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
+    candidates = (
+        os.path.join(root, ".env"),
+        os.path.join(root, "scripts", "ai-env.bat"),
+    )
+    loaded: list[str] = []
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+        parsed = _parse_local_environment_file(path)
+        changed = False
+        for key, value in parsed.items():
+            # Process environment has precedence over both local files.  The
+            # first file also wins over the legacy batch fallback.
+            if key not in target:
+                target[key] = value
+                changed = True
+        if changed:
+            loaded.append(path)
+    return tuple(loaded)
+
 
 # ----------------------------------------------------------------------
 # 密钥与隐私原语 (规范: Secrets + Privacy)

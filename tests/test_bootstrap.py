@@ -302,6 +302,8 @@ def test_describe_runtime_reports_the_essentials(runtime):
         "backups_dir",
         "asr_mode",
         "ocr_mode",
+        "ai_mode",
+        "ai_enabled",
         "host",
         "port",
         "log_level",
@@ -318,6 +320,51 @@ def test_describe_runtime_is_json_serialisable(runtime):
 def test_describe_runtime_reports_the_configured_schema_version(tmp_path):
     with build_runtime(_config(tmp_path), logger=logging.getLogger("x")) as built:
         assert describe_runtime(built)["database_schema_version"] == built.database.schema_version()
+
+
+def test_build_runtime_loads_local_ai_environment_before_assembly(tmp_path, monkeypatch):
+    """IDE/debug entry points use the same local env as the batch launchers."""
+    import src.application.bootstrap as bootstrap
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    for name in (
+        "CLASSROOM_AI_API_KEY",
+        "CLASSROOM_AI_BASE_URL",
+        "CLASSROOM_LLM_API_KEY",
+        "CLASSROOM_LLM_API_BASE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def _load():
+        monkeypatch.setenv("CLASSROOM_AI_ENABLED", "true")
+
+    monkeypatch.setattr(bootstrap, "load_local_environment", _load)
+    with build_runtime(_config(tmp_path), logger=logging.getLogger("x")) as built:
+        assert built.ai_mode == "fake"
+        assert built.workspace.ai_enabled is True
+        assert built.workspace.health()["ai"] == {"mode": "fake", "enabled": True}
+
+
+def test_runtime_ai_mode_stays_real_without_exposing_credentials(tmp_path, monkeypatch, capsys):
+    secret = "sk-test-bootstrap-ai-key-0123456789"
+    for name in ("CLASSROOM_AI_ENABLED", "CLASSROOM_AI_API_KEY", "CLASSROOM_AI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CLASSROOM_AI_ENABLED", "true")
+    monkeypatch.setenv("CLASSROOM_AI_API_KEY", secret)
+    monkeypatch.setenv("CLASSROOM_AI_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("CLASSROOM_AI_MODEL", "test-model")
+    monkeypatch.delenv("CLASSROOM_LLM_API_KEY", raising=False)
+
+    stream = io.StringIO()
+    built = build_runtime(_config(tmp_path), log_stream=stream, clock=lambda: "T")
+    try:
+        assert built.ai_mode == "real"
+        assert built.workspace.ai_enabled is True
+        assert secret not in stream.getvalue()
+        assert secret not in repr(describe_runtime(built))
+        assert secret not in repr(built.workspace.health())
+    finally:
+        close_runtime(built)
 
 
 def test_close_runtime_closes_the_database(runtime):
@@ -408,13 +455,24 @@ def test_the_startup_log_does_not_leak_the_config_secret_shape(tmp_path):
 # ======================================================================
 
 
-def test_the_http_health_endpoint_reflects_the_configured_modes(tmp_path):
+def test_the_http_health_endpoint_reflects_the_configured_modes(tmp_path, monkeypatch):
+    for name in (
+        "CLASSROOM_AI_ENABLED",
+        "CLASSROOM_AI_API_KEY",
+        "CLASSROOM_AI_BASE_URL",
+        "CLASSROOM_LLM_API_KEY",
+        "CLASSROOM_LLM_API_BASE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     with build_runtime(_config(tmp_path, port=0), logger=logging.getLogger("x")) as built:
         built.server.start()
         with urllib.request.urlopen(built.server.url + "/api/health", timeout=10) as response:
             body = json.loads(response.read())
     assert body["data"]["processing"]["asr"] == "mock"
     assert body["data"]["processing"]["ocr"] == "mock"
+    assert body["data"]["ai_mode"] == "disabled"
+    assert body["data"]["ai_enabled"] is False
+    assert body["data"]["ai"] == {"mode": "disabled", "enabled": False}
 
 
 def test_a_config_that_requests_real_modes_is_reported_as_real(tmp_path):

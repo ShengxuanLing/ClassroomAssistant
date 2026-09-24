@@ -15,6 +15,7 @@ UI 部分由 ``tests/test_material_ui_actions.py`` (固定断言) 覆盖。
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -77,6 +78,22 @@ class _FailingAIProvider(AIProvider):
         raise AIRequestError(
             "AI request failed",
             detail={"provider": self.name, "http_status": 429},
+        )
+
+
+class _EmptyAIProvider(FakeAIProvider):
+    """Valid AI response with no grounded candidate (zero-KP path)."""
+
+    name = "empty-test"
+
+    def generate_structured(self, prompt, *, timeout_seconds=60, max_output_chars=8000):
+        return json.dumps(
+            {
+                "summary": "No grounded knowledge candidate was produced.",
+                "topics": [],
+                "knowledge_points": [],
+            },
+            ensure_ascii=False,
         )
 
 
@@ -332,14 +349,50 @@ class TestAnalyzeMaterial:
         with pytest.raises(NotFoundError):
             ws.analyze_material(course_id, "mat-nope")
 
-    def test_ai_disabled_still_completes_ingestion_pipeline(self, tmp_path):
-        """AI 关闭: 一键分析仍完成摄取段 (旧行为兼容), 状态 COMPLETED。"""
+    def test_ai_disabled_reports_skipped_after_deterministic_success(self, tmp_path):
+        """AI 关闭: 摄取成功仍保留, 但绝不冒充“全部 AI 分析完成”。"""
         ws = _workspace(tmp_path)
         course_id = ws.create_course("Demo", "D1")["course_id"]
         mid = _register(ws, tmp_path, course_id)["material_id"]
+
         result = ws.analyze_material(course_id, mid)
-        assert result["status"] == "COMPLETED"
+
+        assert result["status"] == "SKIPPED"
+        assert result["current_stage"] == "AI_ANALYSIS"
+        assert result["ai_status"] == "disabled"
+        assert result["ai"]["enabled"] is False
+        assert result["terminal_reason"] == "AI_DISABLED"
+        assert result["next_action"] == "enable_ai_and_retry"
+        assert result["knowledge_point_count"] > 0
         assert ws.knowledge_points(course_id)  # 确定性装配仍在
+        with pytest.raises(NotFoundError):
+            ws.ai_summary(course_id, mid)  # 跳过不等于伪造 AI 报告
+
+    def test_ai_zero_knowledge_points_is_explicit_and_actionable(self, tmp_path):
+        ws = _workspace(tmp_path)
+        ws.configure_ai(enabled=True, provider=_EmptyAIProvider())
+        course_id = ws.create_course("Demo", "D1")["course_id"]
+        mid = _register(ws, tmp_path, course_id)["material_id"]
+
+        result = ws.analyze_material(course_id, mid)
+
+        assert result["status"] == "COMPLETED"
+        assert result["knowledge_point_count"] == 0
+        assert result["terminal_reason"] == "NO_KNOWLEDGE_POINTS"
+        assert result["next_action"] == "inspect_evidence_and_retry"
+        assert ws.ai_summary(course_id, mid)["knowledge_points_total"] == 0
+
+    def test_health_exposes_the_same_ai_mode_as_the_runtime(self, tmp_path):
+        ws = _workspace(tmp_path)
+        assert ws.health()["ai_mode"] == "disabled"
+        assert ws.health()["ai_enabled"] is False
+        assert ws.health()["ai"] == {"mode": "disabled", "enabled": False}
+
+        ws.configure_ai(enabled=True, provider=FakeAIProvider())
+        health = ws.health()
+        assert health["ai_mode"] == "fake"
+        assert health["ai_enabled"] is True
+        assert health["ai"] == {"mode": "fake", "enabled": True}
 
     def test_delete_after_failed_analysis_is_clean(self, tmp_path):
         ws = _workspace(tmp_path)
@@ -383,5 +436,93 @@ class TestDeletePersistence:
         assert db.query("SELECT * FROM knowledge_points") == []
         assert db.query("SELECT * FROM course_knowledge_points") == []
         states = [str(r["state"]) for r in db.query("SELECT state FROM evidence")]
-        assert states == ["RETIRED"]  # 退休写穿, 重启后不会复活为 ACTIVE
+        assert states == ["RETIRED"]  # 退休写穿, 未重传前不会自行复活
         ws.close()
+
+    def test_delete_then_reregister_same_content_revives_evidence_and_knowledge(
+        self, tmp_path
+    ):
+        """删除后上传同一内容: 复活原证据行并重新装配, 且跨重启仍成立。"""
+        from src.application.persistence_wiring import WorkspacePersistence
+
+        data = str(tmp_path / "data")
+        db_path = os.path.join(data, "database", "classroom.sqlite")
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        persistence = WorkspacePersistence.open(db_path)
+        ws = _workspace(tmp_path, persistence=persistence)
+        course_id = ws.create_course("Demo", "D1")["course_id"]
+        first = _register(ws, tmp_path, course_id)
+        mid = first["material_id"]
+        ws.process_material(course_id, mid)
+        retired_ids = ws.delete_material(course_id, mid)["retired_evidence_ids"]
+        assert retired_ids
+        assert all(
+            ws.store.get_state(evidence_id).value == "RETIRED"
+            for evidence_id in retired_ids
+        )
+
+        second = _register(ws, tmp_path, course_id)
+        assert second["material_id"] == mid  # 内容寻址 ID 不变
+        ws.process_material(course_id, mid)
+        assert ws.get_material(course_id, mid)["duplicate_evidence_count"] == len(retired_ids)
+
+        visible = ws.material_evidence(course_id, mid)
+        assert len(visible) == len(retired_ids)
+        assert all(
+            ws.store.get_state(evidence_id).value == "ACTIVE"
+            for evidence_id in retired_ids
+        )
+        assert ws.knowledge_points(course_id)
+        db = persistence.database
+        assert [
+            str(row["state"])
+            for row in db.query(
+                "SELECT state FROM evidence WHERE material_id = ? ORDER BY evidence_id",
+                (mid,),
+            )
+        ] == ["ACTIVE"] * len(retired_ids)
+        assert len(
+            db.query(
+                "SELECT evidence_id FROM material_evidence WHERE material_id = ?",
+                (mid,),
+            )
+        ) == len(retired_ids)
+        ws.close()
+
+        restarted = _workspace(
+            tmp_path, persistence=WorkspacePersistence.open(db_path)
+        )
+        try:
+            assert len(restarted.material_evidence(course_id, mid)) == len(retired_ids)
+            assert restarted.knowledge_points(course_id)
+        finally:
+            restarted.close()
+
+    def test_reregistering_different_content_does_not_revive_old_evidence(
+        self, tmp_path
+    ):
+        ws = _workspace(tmp_path)
+        course_id = ws.create_course("Demo", "D1")["course_id"]
+        first = _register(ws, tmp_path, course_id)
+        first_job = ws.process_material(course_id, first["material_id"])
+        old_ids = tuple(first_job["evidence_ids"])
+        ws.delete_material(course_id, first["material_id"])
+
+        second_path = _write(
+            tmp_path,
+            "different.txt",
+            "La Fotosíntesis ocurre en los cloroplastos de las células vegetales.",
+        )
+        second = ws.register_material(
+            course_id, second_path, filename="different.txt"
+        )
+        os.remove(second_path)
+        assert second["material_id"] != first["material_id"]
+        second_job = ws.process_material(course_id, second["material_id"])
+
+        assert all(ws.store.get_state(eid).value == "RETIRED" for eid in old_ids)
+        assert all(
+            ws.store.get_state(eid).value == "ACTIVE"
+            for eid in second_job["evidence_ids"]
+        )
+        assert set(old_ids).isdisjoint(second_job["evidence_ids"])

@@ -459,22 +459,33 @@ class WorkspacePersistence:
     def save_evidence_store(self, store: EvidenceStore) -> int:
         """把内存证据库增量写入数据库 (保留插入顺序与生命周期状态)。
 
-        为什么增量: 证据库是全课程共享的, 每次摄取后整体重写会让"处理一节课"
-        的代价随历史证据数线性增长。这里只写**数据库里还没有的**记录,
-        因此单次摄取的成本只取决于新增证据数。
+        新证据只插入一次；已经存在的行还要同步 **状态变化**。这正是
+        删除后同哈希重传需要的 ``RETIRED -> ACTIVE`` 回写：旧的增量实现
+        只看数据库里有没有 evidence_id，因而看不见状态被内存恢复这件事。
+        状态查询/比较本身不产生额外写入，未变化的行仍保持真正的增量写。
         """
         snapshot = store.to_dict()
         evidences = list(snapshot.get("evidences") or ())
         if not evidences:
             return 0
         existing = set(self._repos.evidence.insertion_order())
+        existing_states = dict(self._repos.evidence.state_map())
         next_seq = self._repos.evidence.next_insertion_seq()
         written = 0
         for payload in evidences:
             evidence = Evidence.from_dict(payload)
-            if evidence.evidence_id in existing:
-                continue
             state = str(payload.get("state") or "ACTIVE")
+            if evidence.evidence_id in existing:
+                if existing_states.get(evidence.evidence_id) == state:
+                    continue
+
+                def _set_state(evidence_id=evidence.evidence_id, state=state) -> None:
+                    self._repos.evidence.set_state(evidence_id, state)
+
+                self._write("evidence_state", _set_state)
+                existing_states[evidence.evidence_id] = state
+                written += 1
+                continue
             seq = next_seq
 
             def _save_one(evidence=evidence, state=state, seq=seq) -> None:
@@ -482,6 +493,7 @@ class WorkspacePersistence:
 
             self._write("evidence", _save_one)
             existing.add(evidence.evidence_id)
+            existing_states[evidence.evidence_id] = state
             next_seq += 1
             written += 1
         return written

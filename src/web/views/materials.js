@@ -81,7 +81,7 @@ async function pageMaterials() {
     '</form></div>' +
 
     '<div class="card"><div class="card-head"><h2>' + t('材料列表') + '</h2>' +
-    '<span class="small muted">' + t('AI分析将自动完成从材料解析到知识点生成的全部流程。') + '</span></div>' +
+    '<span class="small muted">' + t('materials.aiFlowNote') + '</span></div>' +
     (materials.length
       ? '<table class="data">' + tableCaption(t('材料列表')) + '<thead><tr><th scope="col">' + t('文件') + '</th><th scope="col">' + t('类型') + '</th><th scope="col">' + t('状态') + '</th><th scope="col">' + t('课堂') + '</th>' +
         '<th scope="col">' + t('操作') + '</th></tr></thead><tbody>' + rows + '</tbody></table>'
@@ -105,6 +105,25 @@ function materialStageLabel(stage) {
   return label === key ? (stage || '') : label;
 }
 
+function analysisKnowledgeHint(analysis) {
+  if (!analysis || analysis.knowledge_point_count === undefined ||
+      analysis.knowledge_point_count === null) return '';
+  const count = Number(analysis.knowledge_point_count);
+  if (!isFinite(count)) return '';
+  if (analysis.status === 'SKIPPED' || analysis.ai_status === 'disabled') {
+    return '<br><span class="tiny muted">' + esc(t('mat.aiSkippedDetail')) + ' (' +
+      esc(t('ai.kpSummary')) + ' ' + esc(count) + ')</span>';
+  }
+  if (analysis.status === 'COMPLETED' && count === 0) {
+    return '<br><span class="tiny pill pill-warn">' + esc(t('mat.aiZero')) + '</span>' +
+      '<br><span class="tiny muted">' + esc(t('mat.aiZeroNext')) + '</span>';
+  }
+  if (analysis.status === 'COMPLETED') {
+    return '<br><span class="tiny muted">' + esc(t('mat.aiCompletedCount')) + ' ' + esc(count) + '</span>';
+  }
+  return '';
+}
+
 function materialAnalysisCell(m, analysis) {
   const status = analysis ? analysis.status : null;
   let html = pill(m.processing_status) + (m.duplicate ? ' <span class="pill pill-info">' + t('重复') + '</span>' : '');
@@ -119,9 +138,12 @@ function materialAnalysisCell(m, analysis) {
     if (analysis.error_message) {
       html += '<br><span class="tiny pill pill-bad">' + esc(analysis.error_message) + '</span>';
     }
+  } else if (status === 'SKIPPED') {
+    html += '<br><span class="pill pill-warn">' + esc(t('mat.aiSkipped')) + '</span>';
   } else if (status === 'COMPLETED') {
     html += '<br><span class="tiny muted">' + esc(t('mat.completed')) + '</span>';
   }
+  html += analysisKnowledgeHint(analysis);
   // 摄取层自己的错误行 (FAILED / warning / 零证据) 原样保留 —— 它们是
   // 服务端诊断, 不是用户可执行的内部操作。
   if (m.error) html += '<br><span class="tiny pill pill-bad">' + esc(m.error) + '</span>';
@@ -139,6 +161,9 @@ function materialActionButtons(courseId, m, analysis) {
   } else if (status === 'FAILED') {
     // 失败态恢复操作: 重新分析 (重新跑完整链路, 系统不支持安全断点恢复)。
     html += '<button data-action="analyze-material" ' + base + '>' + esc(t('mat.retry')) + '</button> ';
+  } else if (status === 'SKIPPED') {
+    // SKIPPED 不是“全部 AI 完成”：按钮明确提示需要启用 AI 后再试。
+    html += '<button data-action="analyze-material" ' + base + '>' + esc(t('mat.retryAfterEnable')) + '</button> ';
   } else {
     html += '<button data-action="analyze-material" ' + base + '>' + esc(t('ai.analyze')) + '</button> ';
   }
@@ -352,6 +377,8 @@ function pollMaterialAnalysisTask(courseId, materialId, taskId, ticks) {
   }).then((status) => {
     if (status.status === 'COMPLETED') {
       finishTask(taskId, true, t('mat.completed'));
+    } else if (status.status === 'SKIPPED') {
+      finishTask(taskId, true, t('mat.aiSkipped'));
     } else if (status.status === 'FAILED') {
       const stage = materialStageLabel(status.current_stage);
       finishTask(taskId, false, t('mat.failedStage') + ': ' + stage + ' · ' + (status.error_message || ''));
@@ -393,6 +420,8 @@ async function actionAnalyzeMaterial(courseId, materialId, button) {
     });
     if (result.status === 'COMPLETED') {
       finishTask(taskId, true, t('mat.completed'));
+    } else if (result.status === 'SKIPPED') {
+      finishTask(taskId, true, t('mat.aiSkipped'));
     } else if (result.status === 'FAILED') {
       const stage = materialStageLabel(result.current_stage);
       finishTask(taskId, false, t('mat.failedStage') + ': ' + stage + ' · ' + (result.error_message || ''));

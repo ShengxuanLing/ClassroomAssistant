@@ -916,19 +916,38 @@ async function loadChrome() {
     const ocr = (health.processing && health.processing.ocr) || '?';
     modes.className = 'pill ' + (asr === 'mock' || ocr === 'mock' ? 'pill-warn' : 'pill-ok');
     modes.textContent = 'ASR ' + asr + ' · OCR ' + ocr;
+
+    const aiHealth = health.ai || {};
+    const aiMode = String(aiHealth.mode || health.ai_mode || 'unknown');
+    const aiEnabled = aiHealth.enabled !== undefined
+      ? Boolean(aiHealth.enabled)
+      : Boolean(health.ai_enabled);
+    const aiPill = document.getElementById('pill-ai');
+    if (aiPill) {
+      const aiClass = aiMode === 'real' && aiEnabled
+        ? 'pill-ok'
+        : (aiMode === 'fake' || aiMode === 'disabled' ? 'pill-warn' : 'pill-muted');
+      aiPill.className = 'pill ' + aiClass;
+      aiPill.textContent = 'AI ' + aiMode;
+    }
+
     document.getElementById('footer-app').textContent =
       health.application + ' v' + health.version;
     const count = health.processing && health.processing.evidence_count;
     const storage = health.storage && health.storage.courses;
-    document.getElementById('pill-modes').title =
-      t('证据总数 ') + count + t(' · 课程数 ') + storage;
+    modes.title = t('证据总数 ') + count + t(' · 课程数 ') + storage;
+    const notes = [];
     if (asr === 'mock' || ocr === 'mock') {
-      return {
-        text: t('提示: 当前 ASR / OCR 使用 Mock 实现 (asr=') + asr + ', ocr=' + ocr +
-          t(')。Mock 输出不是真实转录 / 识别结果, 仅用于流程验证。'),
-      };
+      notes.push(t('ai.healthMock'));
     }
-    return null;
+    if (aiMode === 'disabled' || !aiEnabled) {
+      notes.push(t('ai.healthDisabled'));
+    } else if (aiMode === 'fake') {
+      notes.push(t('ai.healthFake'));
+    } else if (aiMode !== 'real') {
+      notes.push(t('ai.healthUnknown'));
+    }
+    return notes.length ? { text: notes.join(' ') } : null;
   } catch (err) {
     const el = document.getElementById('pill-health');
     el.className = 'pill pill-bad';

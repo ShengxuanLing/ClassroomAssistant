@@ -41,6 +41,7 @@ from src.application.config import (
     default_values,
     discover_config_file,
     load_config,
+    load_local_environment,
     normalise_overrides,
     read_config_file,
     read_environment,
@@ -66,6 +67,70 @@ def _write_config(directory: str, payload: object, name: str = DEFAULT_CONFIG_FI
         else:
             json.dump(payload, handle, ensure_ascii=False)
     return path
+
+
+# ======================================================================
+# 本地 AI 环境加载
+# ======================================================================
+
+
+def test_local_environment_loader_precedence_is_process_dotenv_then_batch(tmp_path):
+    (tmp_path / ".env").write_text(
+        "CLASSROOM_AI_ENABLED=true\n"
+        'CLASSROOM_AI_MODEL="dotenv-model"\n'
+        "CLASSROOM_AI_TIMEOUT_SECONDS=30\n"
+        "CLASSROOM_DATA_DIR=must-not-move-the-data-root\n",
+        encoding="utf-8",
+    )
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "ai-env.bat").write_text(
+        "@echo off\n"
+        'set "CLASSROOM_AI_ENABLED=false"\n'
+        'set "CLASSROOM_AI_MODEL=batch-model"\n'
+        'set "CLASSROOM_AI_API_KEY=batch-secret-placeholder"\n',
+        encoding="utf-8",
+    )
+    env = {"CLASSROOM_AI_ENABLED": "false"}
+
+    loaded = load_local_environment(str(tmp_path), env=env)
+
+    assert env["CLASSROOM_AI_ENABLED"] == "false"  # process wins
+    assert env["CLASSROOM_AI_MODEL"] == "dotenv-model"  # .env wins over batch
+    assert env["CLASSROOM_AI_TIMEOUT_SECONDS"] == "30"
+    assert env["CLASSROOM_AI_API_KEY"] == "batch-secret-placeholder"
+    assert "CLASSROOM_DATA_DIR" not in env  # never relocate data from a helper file
+    assert loaded == (
+        str(tmp_path / ".env"),
+        str(scripts / "ai-env.bat"),
+    )
+    assert all("secret-placeholder" not in path for path in loaded)
+
+
+def test_local_environment_loader_accepts_export_and_quoted_batch_values(tmp_path):
+    (tmp_path / ".env").write_text(
+        "export CLASSROOM_AI_ENABLED='true'\n", encoding="utf-8"
+    )
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "ai-env.bat").write_text(
+        'set "CLASSROOM_AI_BASE_URL=https://example.invalid/v1"\n',
+        encoding="utf-8",
+    )
+    env = {}
+
+    load_local_environment(str(tmp_path), env=env)
+
+    assert env == {
+        "CLASSROOM_AI_ENABLED": "true",
+        "CLASSROOM_AI_BASE_URL": "https://example.invalid/v1",
+    }
+
+
+def test_local_environment_loader_ignores_missing_or_unreadable_files(tmp_path):
+    env = {}
+    assert load_local_environment(str(tmp_path), env=env) == ()
+    assert env == {}
 
 
 # ======================================================================

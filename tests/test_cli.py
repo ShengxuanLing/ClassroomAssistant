@@ -190,6 +190,19 @@ def test_build_config_reads_the_environment(cwd):
     assert config.log_level == "ERROR"
 
 
+def test_build_config_loads_local_ai_environment_for_process_start(cwd, monkeypatch):
+    calls = []
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(
+        "src.application.cli.load_local_environment",
+        lambda: calls.append("loaded") or (),
+    )
+
+    build_config(CliOptions(), cwd=cwd)
+
+    assert calls == ["loaded"]
+
+
 def test_build_config_reads_a_config_file(tmp_path, cwd):
     path = tmp_path / "cfg.json"
     path.write_text(json.dumps({"port": 4321}), encoding="utf-8")
@@ -289,7 +302,15 @@ def test_check_builds_the_runtime_and_creates_the_database(tmp_path, cwd, capsys
     assert "asr_mode" in out
 
 
-def test_check_json_is_parseable(tmp_path, cwd, capsys):
+def test_check_json_is_parseable(tmp_path, cwd, capsys, monkeypatch):
+    for name in (
+        "CLASSROOM_AI_ENABLED",
+        "CLASSROOM_AI_API_KEY",
+        "CLASSROOM_AI_BASE_URL",
+        "CLASSROOM_LLM_API_KEY",
+        "CLASSROOM_LLM_API_BASE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     code = run(
         CliOptions(
             check_only=True,
@@ -308,7 +329,37 @@ def test_check_json_is_parseable(tmp_path, cwd, capsys):
     assert payload["application"] == "Classroom Assistant"
     assert payload["asr_mode"] == "mock"
     assert payload["ocr_mode"] == "mock"
+    assert payload["ai_mode"] == "disabled"
+    assert payload["ai_enabled"] is False
     assert isinstance(payload["database_schema_version"], int)
+
+
+def test_check_never_prints_the_ai_key(tmp_path, cwd, capsys, monkeypatch):
+    secret = "sk-test-AI-KEY-MUST-NOT-APPEAR-0123456789"
+    monkeypatch.setenv("CLASSROOM_AI_ENABLED", "true")
+    monkeypatch.setenv("CLASSROOM_AI_API_KEY", secret)
+    monkeypatch.setenv("CLASSROOM_AI_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("CLASSROOM_AI_MODEL", "test-model")
+    monkeypatch.delenv("CLASSROOM_LLM_API_KEY", raising=False)
+
+    code = run(
+        CliOptions(
+            check_only=True,
+            json_output=True,
+            overrides={
+                "data_dir": str(tmp_path / "data"),
+                "asr_mode": "mock",
+                "ocr_config": {"kind": "mock"},
+            },
+        ),
+        env={},
+        cwd=cwd,
+    )
+
+    assert code == EXIT_OK
+    out = capsys.readouterr().out
+    assert '"ai_mode": "real"' in out
+    assert secret not in out
 
 
 def test_check_reports_the_requested_port(tmp_path, cwd, capsys):

@@ -169,8 +169,8 @@ python -m src.application.launcher start --host 0.0.0.0 --allow-remote
 
 ## 8. AI 语义分析配置（TASK-76，可选，默认关闭）
 
-AI 管线配置**独立于 `AppConfig`**（`src/application/ai/config.py::AIConfig`），
-只在显式调用 AI 分析时读取。关闭时旧确定性链路照常工作。
+AI 管线配置独立于 `AppConfig`（`src/application/ai/config.py::AIConfig`），由
+`build_runtime` 在启动时读取；关闭时旧确定性链路照常工作。
 
 | 环境变量 | 含义 | 默认 |
 | --- | --- | --- |
@@ -186,8 +186,22 @@ AI 管线配置**独立于 `AppConfig`**（`src/application/ai/config.py::AIConf
 | `CLASSROOM_AI_ALLOW_IMAGE_BYTES` | 是否把图片原始字节发给模型走 vision（默认 `false`，只发 OCR 文字；`true` 时图片材料 OCR + 原图一起发送，字节出境，上限 8MB/张，超限/未知格式自动回 OCR；vision 失败记 chunk 失败，绝不静默降级） | `false` |
 | `CLASSROOM_AI_LIVE_TEST` | `true` 且凭证齐全时才跑真实 API 冒烟（`tests/test_live_ai_smoke.py`），否则干净 SKIP | 未设置 |
 
-```bash
-# 示例（Key 绝不进 git：.env 已在 .gitignore）
+### 本地启动环境
+
+启动链统一按下面优先级注入，**三种入口完全相同**：
+
+1. 启动进程已经存在的环境变量；
+2. 仓库根目录 `.env`；
+3. 兼容旧配置的 `scripts/ai-env.bat`（仅作为缺省补齐）。
+
+因此 `scripts\start.bat`、IDE / PyCharm 直接运行
+`src.application.launcher start`、以及 `python -m src.application.cli --check`
+不会出现“同一份配置在不同入口生效不同”的情况。加载器只认
+`CLASSROOM_AI_*` / `CLASSROOM_LLM_*`，不会借本地辅助文件迁移数据目录；它不执行
+shell、变量展开或命令替换，也不打印解析值。
+
+```dotenv
+# .env（已被 .gitignore 排除）
 CLASSROOM_AI_ENABLED=true
 CLASSROOM_AI_BASE_URL=https://<redacted-host>/v1
 CLASSROOM_AI_API_KEY=<YOUR_API_KEY>
@@ -195,16 +209,32 @@ CLASSROOM_AI_MODEL=<YOUR_MODEL>
 ```
 
 密钥规则：Key 只经进程环境注入 provider；`repr` / `to_dict` / exception /
-操作日志里只有"有/无"两种形状。真实 API 冒烟只在
-`CLASSROOM_AI_LIVE_TEST=true` 且有 Key 时执行，否则干净 SKIP。
+启动日志 / 操作日志 / HTTP 响应里只有“有/无”两种形状。`--print-config` 同样
+不会打印 Key。真实 API 冒烟只在 `CLASSROOM_AI_LIVE_TEST=true` 且有 Key 时执行，
+否则干净 SKIP。
 
-TASK-77（自动触发）：`build_runtime` 启动时读本节环境装配 AI，
-`ai_mode`（`disabled` / `fake` / `real`）进 `/api/health` 可观测：
-`disabled` = 旧确定性链路（默认）；`fake` = 已开启但无凭证（确定性 fixture，
-记一条 runtime note，绝不静默）；`real` = 真实模型。`process_material`
-摄取成功后自动分析，AI 失败只记作业 `ai` 子对象（材料仍 READY，可重试）。
-成功报告另落盘 `materials/ai-reports/<course>/<material>.json`（衍生缓存，
-零 DB migration，重启后总结仍在）。
+### 运行模式与可观测性
+
+`build_runtime` 与 `GET /api/health` 使用同一口径，公开字段不带凭证：
+
+```json
+{
+  "ai_mode": "disabled",
+  "ai_enabled": false,
+  "ai": { "mode": "disabled", "enabled": false }
+}
+```
+
+- `disabled`：未启用；材料页完整分析返回 `SKIPPED`，不会冒充 AI 已完成；
+- `fake`：已开启但无可用凭证，使用确定性 fixture，界面明确标为非真实模型；
+- `real`：真实模型。
+
+`process_material` 摄取成功后自动分析，AI 失败只记作业 `ai` 子对象（材料仍
+READY，可重试）。成功报告另落盘
+`materials/ai-reports/<course>/<material>.json`（衍生缓存，零 DB migration，
+重启后总结仍在）。若 AI 正常结束但产出 0 个知识点，统一分析状态会明确返回
+`knowledge_point_count: 0` 和 `next_action: inspect_evidence_and_retry`，不会只给一个
+无解释的“成功”。
 
 ## 9. 退出码
 

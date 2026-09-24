@@ -418,14 +418,26 @@ class EvidenceStore:
             record.state = EvidenceState.RETIRED
             return True
 
-    def restore(self, evidence_id: str) -> bool:
-        """Move a RETIRED Evidence back to ACTIVE (idempotent)."""
+    def revive(self, evidence_id: str) -> bool:
+        """Move a RETIRED Evidence back to ACTIVE (idempotent).
+
+        ``revive`` is the lifecycle verb used by re-registration.  It is
+        deliberately separate from physical deletion: a content-addressed
+        evidence row can be retired when its material is deleted and then
+        legitimately become current again when the same content is uploaded
+        again.  The old :meth:`restore` name remains an alias for callers that
+        used the earlier spelling.
+        """
         with self._lock:
             record = self._records.get(evidence_id)
             if record is None:
                 return False
             record.state = EvidenceState.ACTIVE
             return True
+
+    def restore(self, evidence_id: str) -> bool:
+        """Backward-compatible alias for :meth:`revive`."""
+        return self.revive(evidence_id)
 
     def get_state(self, evidence_id: str) -> Optional[EvidenceState]:
         """Return the lifecycle state for an id, or None when unknown."""
