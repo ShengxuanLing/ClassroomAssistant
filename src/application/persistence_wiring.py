@@ -73,7 +73,7 @@ from src.exercises import Exercise
 from src.knowledge_organization import CourseKnowledgeStructure
 from src.knowledge_review import ReviewRecord
 from src.knowledge_structure import KnowledgeStructure
-from src.models import ClassSession, Course, Evidence
+from src.models import ClassSession, Course, Evidence, Flashcard
 from src.student_learning import Student, StudentLearningLog
 from src.study_plan import LearningPath, StudyPlan
 
@@ -667,6 +667,30 @@ class WorkspacePersistence:
 
     def load_evaluations(self, *, course_id: Optional[str] = None) -> list[EvaluationResult]:
         return self._repos.evaluations.load_all(course_id=course_id)
+
+    # ------------------------------------------------------------------
+    # 记忆卡片
+    # ------------------------------------------------------------------
+
+    def save_flashcards(self, cards: Iterable[Flashcard]) -> int:
+        count = 0
+        for card in cards:
+            self._repos.flashcards.save(card)
+            count += 1
+        return count
+
+    def load_flashcards(
+        self,
+        *,
+        course_id: str,
+        student_id: Optional[str] = None,
+        due_before: Optional[str] = None,
+    ) -> list[Flashcard]:
+        return self._repos.flashcards.load_all(
+            course_id=course_id,
+            student_id=student_id,
+            due_before=due_before,
+        )
 
     def evaluation_ids(self) -> list[str]:
         return self._repos.evaluations.keys()

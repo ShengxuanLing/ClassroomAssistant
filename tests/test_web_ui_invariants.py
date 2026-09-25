@@ -375,6 +375,24 @@ class TestHashRoutesAreReachable:
                 unreachable.append(href)
         assert not unreachable, f"index.html 里的死链: {unreachable}"
 
+    def test_topnav_learning_entries_are_enabled_and_routable(self):
+        """四个学习入口必须是链接，不能悄悄退回 disabled span。"""
+        html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        match = re.search(
+            r'<nav class="topnav">(?P<body>.*?)</nav>', html, re.DOTALL
+        )
+        assert match is not None, "index.html 缺少 .topnav"
+        nav = match.group("body")
+        assert "nav-disabled" not in nav
+        expected = {"#/review", "#/review-pack", "#/exercises", "#/mistakes"}
+        actual = set(re.findall(r'<a\s+href="(#/[^"]+)"', nav))
+        assert expected <= actual, f"缺少可用学习入口: {sorted(expected - actual)}"
+
+        branches = _route_branches()
+        for href in sorted(expected):
+            parts = [part for part in href.lstrip("#").split("/") if part]
+            assert _matches_any(branches, parts), f"顶栏死链: {href}"
+
     def test_branches_that_read_later_segments_pin_the_length(self):
         """读了 ``parts[1]`` 或更后面, 就必须把 ``parts.length`` 钉死。
 

@@ -1412,6 +1412,9 @@ class TestUi:
             "pageLearnKnowledge": "#/today",
             "pageReview": "#/review",
             "pageKnowledge": "#/knowledge",
+            # pageFlashcards: 卡片挂在知识点分区下 (从知识点页进入), 顶栏没有
+            # 独立的卡片项, 所以高亮 #/knowledge —— 与 flashcards.js:7 一致。
+            "pageFlashcards": "#/knowledge",
             "pageMaterials": "#/materials",
             "pageReviews": "#/reviews",
             "pageExercises": "#/exercises",

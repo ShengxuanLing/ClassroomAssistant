@@ -59,8 +59,9 @@ def _chain() -> tuple:
     from src.persistence.migrations.m001_initial_schema import MIGRATION_001
     from src.persistence.migrations.m002_knowledge_organization import MIGRATION_002
     from src.persistence.migrations.m003_course_scoped_identity import MIGRATION_003
+    from src.persistence.migrations.m004_flashcards import MIGRATION_004
 
-    return (MIGRATION_001, MIGRATION_002, MIGRATION_003)
+    return (MIGRATION_001, MIGRATION_002, MIGRATION_003, MIGRATION_004)
 
 
 #: 完整迁移链 (按版本升序)。延迟导入以避免循环依赖。

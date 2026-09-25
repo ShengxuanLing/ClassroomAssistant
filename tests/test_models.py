@@ -116,6 +116,24 @@ class TestKnowledgePoint(unittest.TestCase):
         self.assertEqual(kp.title, kp2.title)
         self.assertEqual(kp.original_terms, kp2.original_terms)
 
+    def test_knowledge_point_metadata_roundtrip(self):
+        metadata = {
+            "origin": "ai-pipeline",
+            "knowledge_score_source": {
+                "kind": "grounding_evidence_count",
+                "support_count": 2,
+                "value": 0.75,
+            },
+        }
+        kp = KnowledgePoint(
+            title="Test Concept",
+            content="Definition here",
+            metadata=metadata,
+        )
+        restored = KnowledgePoint.from_dict(kp.to_dict())
+        self.assertEqual(restored.metadata, metadata)
+        self.assertIn("metadata", kp.to_dict())
+
     def test_knowledge_point_evidence_refs(self):
         evid_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
         kp = KnowledgePoint(title="Test", content="Content", evidence_refs=evid_ids)

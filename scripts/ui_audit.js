@@ -79,6 +79,7 @@ const WEB_FILES = [
   'views/learn.js',
   'views/review.js',
   'views/knowledge.js',
+  'views/flashcards.js',
   'views/materials.js',
   'views/courses.js',
   'views/students.js',
@@ -96,6 +97,7 @@ const WEB_SOURCES = WEB_FILES.map((rel) => ({
 // 一律针对它 —— 与拆分前针对单个 app.js 断言等价。
 const APP_JS = WEB_SOURCES.map((source) => source.code).join('\n');
 const CSS = fs.readFileSync(path.join(ROOT, 'src', 'web', 'styles.css'), 'utf8');
+const INDEX_HTML = fs.readFileSync(path.join(ROOT, 'src', 'web', 'index.html'), 'utf8');
 
 const COURSE_ID = 'course-1';
 const SESSION_ID = 'session-1';
@@ -1514,6 +1516,7 @@ function makeElement(id) {
     closest() {
       return null;
     },
+    scrollIntoView() {},
   };
 }
 
@@ -1759,6 +1762,19 @@ async function preview(lang, outfile) {
 }
 
 async function audit() {
+  // ---- 0) 顶栏零禁用入口：四个学习入口必须保持可点击。 ----
+  {
+    const navMatch = INDEX_HTML.match(/<nav class="topnav">([\s\S]*?)<\/nav>/);
+    const nav = navMatch ? navMatch[1] : '';
+    const disabled = nav.match(/class="[^"]*\bnav-disabled\b[^"]*"/g) || [];
+    check('top nav has zero disabled entries', disabled.length === 0,
+      disabled.join(','));
+    for (const href of ['#/review', '#/review-pack', '#/exercises', '#/mistakes']) {
+      check('top nav exposes enabled ' + href,
+        nav.includes('<a href="' + href + '"'), nav);
+    }
+  }
+
   // ---- 1) 每个页面在三种语言下都能渲染, 且 es/ca 界面文案里没有 CJK ----
   for (const lang of ['zh', 'es', 'ca']) {
     for (const page of PAGES) {

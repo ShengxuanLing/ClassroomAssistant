@@ -31,6 +31,9 @@ IMPORT_TO_REQUIREMENT = {
     "docx": "python-docx",
     "faster_whisper": "faster-whisper",
     "rapidocr_onnxruntime": "rapidocr-onnxruntime",
+    # ``fsrs`` 是**函数内延迟导入** (src/scheduling/fsrs.py 的 PyFSRSBackend),
+    # wheel 缺失时回落到内置确定性调度器 —— 所以它"可选但真实被使用"。
+    "fsrs": "fsrs",
 }
 
 

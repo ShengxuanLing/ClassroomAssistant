@@ -46,8 +46,8 @@ def db(db_path):
 # ----------------------------------------------------------------------
 
 
-def test_latest_version_is_three():
-    assert latest_version() == 3
+def test_latest_version_is_four():
+    assert latest_version() == 4
 
 
 def test_chain_versions_are_strictly_increasing():

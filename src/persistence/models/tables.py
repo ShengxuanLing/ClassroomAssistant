@@ -110,6 +110,12 @@ TABLES: dict[str, TableSpec] = {
         pk_columns=("course_id", "student_id", "target_knowledge_point_id"),
         order_by="course_id, student_id, target_knowledge_point_id",
     ),
+    # --- 记忆卡片 / 到期队列 ---
+    "flashcards": _spec(
+        "flashcards",
+        "flashcard_id",
+        "course_id, student_id, due, flashcard_id",
+    ),
     # --- Task 68: 课程范围内的身份 (见 migration 003) ---
     #
     # 业务 ID 是内容寻址的, 两门课用同一份讲义会得到同一个 knowledge_id。
@@ -158,6 +164,11 @@ LINK_TABLES: dict[str, tuple[str, str, str]] = {
         "exercise_id, position, knowledge_id",
     ),
     "exercise_evidence": ("exercise_id", "evidence_id", "exercise_id, position, evidence_id"),
+    "flashcard_evidence": (
+        "flashcard_id",
+        "evidence_id",
+        "flashcard_id, position, evidence_id",
+    ),
     # Task 68: 溯源链同样按课程分开 —— 见 CourseLinkRepository。
     # 左列是 (course_id, knowledge_id) 两列, 由专门的仓储处理。
     "course_knowledge_evidence": (

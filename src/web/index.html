@@ -18,15 +18,13 @@
         <small>Classroom Assistant</small>
       </span>
     </a>
-    <!-- 2026-09-22: 4 个未实现入口暂时禁用 (只改顶栏公共组件, 不动路由/页面):
-         考前复习 (#/review) / 复习包 (#/review-pack) / 练习 (#/exercises) /
-         错题本 (#/mistakes) 仍显示文字, 但改为 <span class="nav-disabled">:
-         无 href、无点击、无路由、无数据加载; markActiveNav() 只扫 `.topnav a`,
-         它们永远进不了 active。重启用时把 span 换回 <a href="..."> 即可,
-         路由分支与页面函数均原样保留。
-         顺序: 6 个可用 <a> → 分隔符 → 4 个禁用 span (可用项保持原相对顺序)。
-         这份可用 href 顺序必须与 scripts/ui_render_check.js 的 TOPNAV 逐项一致
-         (TOPNAV 只收可用 <a>; 禁用 span 不进该数组, 见该文件注释)。学生页面已移除。 -->
+    <!-- 四个学习入口全部是真实 <a href>；route() 分支与页面函数均保留。
+         双重门禁钉住"顶栏零禁用"：
+         tests/test_web_ui_invariants.py::test_topnav_learning_entries_are_enabled_and_routable
+         证明每个 href 都有可达分支且 nav 内零 nav-disabled；
+         scripts/ui_audit.js 的 "top nav has zero disabled entries" 同义。
+         2026-09-25: 零禁用已成不变量，styles.css 里的 .topnav .nav-disabled
+         规则随之删除（顶栏内已无禁用元素，改回 <span> 时需重新加样式）。 -->
     <nav class="topnav">
       <a href="#/" data-i18n="nav.overview">概览</a>
       <a href="#/today" data-i18n="nav.today">今日</a>
@@ -35,10 +33,10 @@
       <a href="#/materials" data-i18n="nav.materials">材料</a>
       <a href="#/knowledge" data-i18n="nav.knowledge">知识点</a>
       <span class="topnav-sep" aria-hidden="true"></span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewMode">考前复习</span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewPack">复习包</span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.exercises">练习</span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.mistakes">错题本</span>
+      <a href="#/review" data-i18n="nav.reviewMode">考前复习</a>
+      <a href="#/review-pack" data-i18n="nav.reviewPack">复习包</a>
+      <a href="#/exercises" data-i18n="nav.exercises">练习</a>
+      <a href="#/mistakes" data-i18n="nav.mistakes">错题本</a>
     </nav>
     <div class="topbar-meta">
       <!-- 两个 <select> 都**不再**写 aria-label。
@@ -114,6 +112,7 @@
   <script src="/views/learn.js"></script>
   <script src="/views/review.js"></script>
   <script src="/views/knowledge.js"></script>
+  <script src="/views/flashcards.js"></script>
   <script src="/views/materials.js"></script>
   <script src="/views/courses.js"></script>
   <script src="/views/students.js"></script>

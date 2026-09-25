@@ -161,6 +161,9 @@ def knowledge_point_to_dict(
         "validation_status": kp.validation_status,
         "knowledge_score": kp.knowledge_score,
         "review_status": kp.review_status,
+        # Generation/score provenance is part of the knowledge payload.  The UI
+        # and API must be able to explain where a score came from after restart.
+        "metadata": dict(getattr(kp, "metadata", {}) or {}),
         # ``kp-*`` is the deterministic extractor's namespace and may contain a
         # source excerpt; ``aikp-*`` is reserved for validated AI abstractions.
         # Project the distinction in the API so the UI never calls fallback text

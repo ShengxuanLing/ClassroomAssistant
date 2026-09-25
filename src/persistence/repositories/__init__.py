@@ -31,6 +31,7 @@ from src.persistence.repositories.course import CourseRepository
 from src.persistence.repositories.evaluation import EvaluationRepository
 from src.persistence.repositories.evidence import EvidenceRepository
 from src.persistence.repositories.exercise import ExerciseRepository
+from src.persistence.repositories.flashcard import FlashcardRepository
 from src.persistence.repositories.knowledge import (
     ConflictRepository,
     KnowledgeRepository,
@@ -67,6 +68,7 @@ __all__ = [
     "LearningEventRepository",
     "StudentKnowledgeStateRepository",
     "ExerciseRepository",
+    "FlashcardRepository",
     "AnswerRepository",
     "EvaluationRepository",
     "StudyPlanRepository",
@@ -99,6 +101,8 @@ class Repositories:
         self.student_states = StudentKnowledgeStateRepository(database)
         # 练习 / 作答 / 评估
         self.exercises = ExerciseRepository(database)
+        # 记忆卡片 / 调度
+        self.flashcards = FlashcardRepository(database)
         self.answers = AnswerRepository(database)
         self.evaluations = EvaluationRepository(database)
         # 计划 / 路径
@@ -152,6 +156,7 @@ class Repositories:
             "evaluation_results": self.evaluations.count(),
             "study_plans": self.study_plans.count(),
             "learning_paths": self.learning_paths.count(),
+            "flashcards": self.flashcards.count(),
         }
 
     def total_rows(self) -> int:

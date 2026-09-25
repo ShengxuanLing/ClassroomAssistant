@@ -75,7 +75,8 @@ from src.knowledge_organization import (
     KnowledgeOrganizationService,
     KnowledgeRelationType,
 )
-from src.models import ClassSession, Course
+from src.models import ClassSession, Course, Flashcard
+from src.scheduling.fsrs import FSRSScheduler
 
 __all__ = ["CourseContext", "Workspace", "APPLICATION_NAME", "APPLICATION_VERSION"]
 
@@ -95,6 +96,8 @@ AI_AUTO_FAILED = "failed"
 #: 报告层可由 KP + Evidence 重新推导, 因此不新增数据库表 (与 TASK-76
 #: "零 DB migration" 一致); 文件落盘只解决"重启后总结消失"的体验问题。
 AI_REPORT_SUBDIR = "ai-reports"
+AI_REPORT_VERSION = "ai-report-v2"
+COURSE_AI_OVERVIEW_FILENAME = "_course_overview.json"
 
 
 def _sha256_file(path: str, *, chunk_size: int = 1024 * 1024) -> str:
@@ -192,6 +195,7 @@ class Workspace:
         llm_mode: Optional[str] = None,
         persistence: Optional[Any] = None,
         database_path: Optional[str] = None,
+        flashcard_scheduler: Optional[Any] = None,
     ) -> None:
         if not isinstance(data_dir, str) or not data_dir.strip():
             raise InvalidInputError("data_dir must be a non-empty string")
@@ -258,6 +262,13 @@ class Workspace:
         self._ai_mode = "disabled"
         self._ai_provider: Optional[Any] = None
         self._ai_reports: dict[tuple[str, str], dict[str, Any]] = {}
+        # Scheduling is an orthogonal projection: StudyPlanner still decides
+        # what to study, while FSRS owns only the next review time.
+        self._flashcard_scheduler = flashcard_scheduler or FSRSScheduler()
+        # Course synthesis is a derived, read-only cache.  It is never part
+        # of the student/learning state and is rebuilt only from this course's
+        # material reports.
+        self._course_ai_overviews: dict[str, dict[str, Any]] = {}
         # 材料页一键分析 (「AI分析」按钮): 每份材料最近一次的统一状态
         # (QUEUED/PROCESSING/COMPLETED/SKIPPED/FAILED + current_stage)。内存字典 +
         # 进程内锁即可: HTTP 服务器是多线程的, 幂等闸门必须跨线程; 状态
@@ -368,6 +379,10 @@ class Workspace:
     @property
     def database_path(self) -> Optional[str]:
         return None if self._persistence is None else self._persistence.path
+
+    @property
+    def flashcard_scheduler(self) -> Any:
+        return self._flashcard_scheduler
 
     # ------------------------------------------------------------------
     # 生命周期 (Task 48)
@@ -1110,11 +1125,17 @@ class Workspace:
     def _remove_ai_report(self, course_id: str, material_id: str) -> None:
         """删除落盘的 AI 报告副本 (衍生缓存; 不存在不算错误)。"""
         self._ai_reports.pop((course_id, material_id), None)
+        # 课程总览包含材料覆盖快照；材料删除后不能继续展示旧覆盖。
+        self._course_ai_overviews.pop(course_id, None)
         try:
             target = self._ai_report_path(course_id, material_id)
+            remove_quietly(target)
         except ValueError:
-            return
-        remove_quietly(target)
+            pass
+        try:
+            remove_quietly(self._course_overview_path(course_id))
+        except ValueError:
+            pass
 
     # ------------------------------------------------------------------
     # 一键 AI 分析 (材料页「AI分析」按钮 -> ``POST /api/materials/{id}/analyze``)
@@ -1558,6 +1579,37 @@ class Workspace:
             material_id + ".json",
         )
 
+    @staticmethod
+    def _normalise_ai_report(payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Fill additive v2 fields when reading a v1 report from disk."""
+        report = dict(payload or {})
+        report.setdefault("report_version", "ai-report-v1")
+        report.setdefault("summary_zh", "")
+        report.setdefault("topics_zh", [])
+        report.setdefault("summary_zh_status", "skipped")
+        report.setdefault("summary_zh_evidence_ids", [])
+        report.setdefault("summary_zh_grounded", False)
+        report.setdefault("glossary", [])
+        report.setdefault("glossary_rejected", [])
+        report.setdefault("glossary_total", len(report.get("glossary") or []))
+        report.setdefault("glossary_status", "skipped")
+        report.setdefault("derived_prompt_versions", {})
+        report.setdefault("summary_zh_prompt_version", "")
+        report.setdefault("glossary_prompt_version", "")
+        # A persisted v1 report can contain a non-list value from a manually
+        # edited file; keep the read projection JSON-safe and deterministic.
+        if not isinstance(report.get("topics_zh"), list):
+            report["topics_zh"] = []
+        if not isinstance(report.get("summary_zh_evidence_ids"), list):
+            report["summary_zh_evidence_ids"] = []
+        if not isinstance(report.get("glossary"), list):
+            report["glossary"] = []
+        if not isinstance(report.get("glossary_rejected"), list):
+            report["glossary_rejected"] = []
+        if not isinstance(report.get("derived_prompt_versions"), dict):
+            report["derived_prompt_versions"] = {}
+        return report
+
     def _persist_ai_report(
         self, course_id: str, material_id: str, payload: Mapping[str, Any]
     ) -> None:
@@ -1571,10 +1623,12 @@ class Workspace:
             return
         try:
             target = self._ai_report_path(course_id, material_id)
+            stored = self._normalise_ai_report(payload)
+            stored["report_version"] = AI_REPORT_VERSION
             atomic_write_bytes(
                 target,
                 json.dumps(
-                    dict(payload), ensure_ascii=False, sort_keys=True
+                    stored, ensure_ascii=False, sort_keys=True
                 ).encode("utf-8"),
             )
         except (OSError, ValueError):
@@ -1600,7 +1654,10 @@ class Workspace:
             return None
         if str(payload.get("material_id") or "") != material_id:
             return None
-        return payload
+        payload_course = str(payload.get("course_id") or course_id)
+        if payload_course != str(course_id):
+            return None
+        return self._normalise_ai_report(payload)
 
     def _ai_brief(self, course_id: str, material_id: str) -> Optional[dict[str, Any]]:
         """最近一次 AI 分析的轻量摘要 (读路径用; 没有分析过则 None)。"""
@@ -1693,6 +1750,126 @@ class Workspace:
 
     def knowledge_point(self, course_id: str, knowledge_id: str) -> dict[str, Any]:
         return self.context(course_id).knowledge_service.get_knowledge_point(knowledge_id)
+
+    # ------------------------------------------------------------------
+    # Flashcards (evidence-grounded; scheduling is a separate projection)
+    # ------------------------------------------------------------------
+
+    def list_flashcards(
+        self,
+        course_id: str,
+        *,
+        student_id: Optional[str] = None,
+        due_before: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        self.get_course(course_id)
+        if self._persistence is None:
+            return []
+        cards = self._persistence.load_flashcards(
+            course_id=course_id,
+            student_id=student_id,
+            due_before=due_before,
+        )
+        return [card.to_dict() for card in cards]
+
+    def create_flashcard(
+        self,
+        course_id: str,
+        student_id: str,
+        kp_id: str,
+        *,
+        front: Optional[str] = None,
+        back: Optional[str] = None,
+        example: str = "",
+        audio_path: str = "",
+        source_refs: Optional[Sequence[str]] = None,
+        due: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Create one grounded card from an existing course knowledge point.
+
+        Explicit source references may narrow, but never invent, the KP's
+        evidence chain.  With no evidence there is no card: an unsupported
+        flashcard would break the product's evidence-chain invariant.
+        """
+        self.get_course(course_id)
+        student_id = str(student_id or "").strip()
+        if not student_id:
+            raise InvalidInputError("student_id is required")
+        kp = self.knowledge_point(course_id, kp_id)
+        available_refs = [str(ref) for ref in (kp.get("evidence_refs") or []) if ref]
+        requested_refs = list(source_refs or available_refs)
+        if not requested_refs:
+            raise InvalidInputError(
+                "cannot create a flashcard from a knowledge point without evidence"
+            )
+        unknown = [ref for ref in requested_refs if ref not in set(available_refs)]
+        if unknown:
+            raise InvalidInputError(
+                "flashcard source_refs must come from the knowledge point evidence",
+                detail={"unknown_source_refs": unknown},
+            )
+        if self._persistence is None:
+            raise StorageError("flashcards require persistent storage")
+        card = Flashcard(
+            course_id=course_id,
+            student_id=student_id,
+            kp_id=kp_id,
+            front=str(front or kp.get("title") or kp_id).strip(),
+            back=str(back or kp.get("content") or "").strip(),
+            example=str(example or ""),
+            audio_path=str(audio_path or ""),
+            source_refs=requested_refs,
+            due=str(due or self._clock()),
+        )
+        with self._atomic():
+            self._persistence.save_flashcards([card])
+        result = card.to_dict()
+        result["evidence"] = self.knowledge_evidence(course_id, kp_id)
+        return result
+
+    def get_flashcard(
+        self, course_id: str, flashcard_id: str, *, student_id: Optional[str] = None
+    ) -> dict[str, Any]:
+        if self._persistence is None:
+            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
+        card = self._persistence.repositories.flashcards.load(flashcard_id)
+        if card is None or card.course_id != course_id:
+            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
+        if student_id is not None and card.student_id != student_id:
+            # Do not reveal another learner's card through a guessed id.
+            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
+        return card.to_dict()
+
+    def review_flashcard(
+        self,
+        course_id: str,
+        flashcard_id: str,
+        rating: Any,
+        *,
+        student_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Persist one explicit human review result and project its next due date."""
+        if self._persistence is None:
+            raise StorageError("flashcards require persistent storage")
+        card = self._persistence.repositories.flashcards.load(flashcard_id)
+        if card is None or card.course_id != course_id:
+            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
+        if student_id is not None and card.student_id != student_id:
+            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
+        try:
+            update = self._flashcard_scheduler.review(card, rating)
+        except (TypeError, ValueError) as exc:
+            raise InvalidInputError(str(exc)) from exc
+        card.due = update.due
+        card.stability = update.stability
+        card.difficulty = update.difficulty
+        card.state = update.state
+        card.reps = update.reps
+        card.lapses = update.lapses
+        card.last_review = update.last_review
+        with self._atomic():
+            self._persistence.save_flashcards([card])
+        return card.to_dict()
 
     def knowledge_evidence(
         self, course_id: str, knowledge_id: str
@@ -1828,6 +2005,7 @@ class Workspace:
         started = time.monotonic()
         ok = False
         failure_reason: Optional[str] = None
+        analysis_provider = provider or self._ai_provider
         try:
             require_enabled(self._ai_enabled)
             with self._atomic():
@@ -1840,7 +2018,7 @@ class Workspace:
                     course_id=course_id,
                     material_id=material_id,
                     content_language=content_language,
-                    provider=provider or self._ai_provider,
+                    provider=analysis_provider,
                 )
                 self._sync_learning_knowledge(ctx)
                 self._flush_knowledge(course_id)
@@ -1849,6 +2027,13 @@ class Workspace:
                 self._ai_reports[(course_id, material_id)] = payload
             # TASK-77: 落盘在事务之外 —— 衍生缓存写失败绝不回滚已提交的 KP。
             self._persist_ai_report(course_id, material_id, payload)
+            # Course synthesis is also derived-only.  Trigger it from the
+            # successful material analysis so the explicit GET remains a pure
+            # cache read and never spends an LLM call.
+            try:
+                self._refresh_course_ai_overview(course_id, provider=analysis_provider)
+            except Exception:  # noqa: BLE001 - course cache cannot affect material
+                self._course_ai_overviews.pop(course_id, None)
             ok = True
             return payload
         except Exception as exc:  # noqa: BLE001 - 记录失败原因, 然后照常向上抛
@@ -1864,7 +2049,195 @@ class Workspace:
                 duration_ms=(time.monotonic() - started) * 1000,
             )
 
-    def ai_summary(self, course_id: str, material_id: str) -> dict[str, Any]:
+    def _course_overview_path(self, course_id: str) -> str:
+        """课程级 AI 总览缓存路径 (经 safe_join, 不接受路径逃逸)。"""
+        return safe_join(
+            self._layout.materials,
+            AI_REPORT_SUBDIR,
+            course_id,
+            COURSE_AI_OVERVIEW_FILENAME,
+        )
+
+    def _persist_course_ai_overview(
+        self, course_id: str, payload: Mapping[str, Any]
+    ) -> None:
+        if self._persistence is None:
+            return
+        try:
+            target = self._course_overview_path(course_id)
+            atomic_write_bytes(
+                target,
+                json.dumps(dict(payload), ensure_ascii=False, sort_keys=True).encode(
+                    "utf-8"
+                ),
+            )
+        except (OSError, ValueError):
+            return
+
+    def _load_persisted_course_ai_overview(
+        self, course_id: str
+    ) -> Optional[dict[str, Any]]:
+        if self._persistence is None:
+            return None
+        try:
+            target = self._course_overview_path(course_id)
+        except ValueError:
+            return None
+        try:
+            with open(target, "rb") as handle:
+                payload = json.loads(handle.read().decode("utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if str(payload.get("course_id") or course_id) != str(course_id):
+            return None
+        return dict(payload)
+
+    def _course_report_snapshot(
+        self, course_id: str
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Read only reports belonging to ``course_id`` and list missing IDs."""
+        reports: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for record in self.list_materials(course_id):
+            material_id = str(record.get("material_id") or "")
+            if not material_id:
+                continue
+            payload = self._ai_reports.get((course_id, material_id))
+            if payload is None:
+                payload = self._load_persisted_ai_report(course_id, material_id)
+                if payload is not None:
+                    self._ai_reports[(course_id, material_id)] = payload
+            if not isinstance(payload, Mapping):
+                missing.append(material_id)
+                continue
+            # A report is valid only for the course that owns its material.
+            # This explicit check prevents a manually copied cache from
+            # becoming a cross-course overview.
+            if str(payload.get("course_id") or course_id) != str(course_id):
+                missing.append(material_id)
+                continue
+            row = dict(payload)
+            row["filename"] = str(record.get("filename") or material_id)
+            reports.append(row)
+        return reports, missing
+
+    @staticmethod
+    def _course_report_digest(
+        reports: Sequence[Mapping[str, Any]],
+    ) -> str:
+        """Only report-layer fields enter the course LLM; never raw Evidence."""
+        rows: list[dict[str, Any]] = []
+        for report in reports or ():
+            titles: list[str] = []
+            for key in ("auto_accepted", "needs_review", "conflicts"):
+                for item in report.get(key) or []:
+                    if isinstance(item, Mapping):
+                        title = str(item.get("title") or "").strip()
+                        if title and title not in titles:
+                            titles.append(title)
+            rows.append(
+                {
+                    "material_id": str(report.get("material_id") or ""),
+                    "filename": str(report.get("filename") or report.get("material_id") or ""),
+                    "summary": str(report.get("summary") or "")[:1200],
+                    "topics": [str(value) for value in (report.get("topics") or [])],
+                    "knowledge_titles": titles[:30],
+                }
+            )
+        return json.dumps(rows, ensure_ascii=False)
+
+    def _refresh_course_ai_overview(
+        self, course_id: str, *, provider: Optional[Any] = None
+    ) -> dict[str, Any]:
+        """Rebuild the course cache from current, course-scoped reports."""
+        self.get_course(course_id)
+        reports, missing = self._course_report_snapshot(course_id)
+        from src.application.ai.pipeline import AIUnderstandingPipeline
+        from src.application.ai.provider import FakeAIProvider
+
+        actual_provider = provider or self._ai_provider or FakeAIProvider()
+        pipeline = AIUnderstandingPipeline(actual_provider, clock=self._clock)
+        digest = self._course_report_digest(reports)
+        overview = pipeline.synthesize_course_overview(
+            digest,
+            course_id=course_id,
+            reports=reports,
+            missing_material_ids=missing,
+            provider=actual_provider,
+        )
+        overview["report_version"] = AI_REPORT_VERSION
+        overview["created_at"] = self._clock()
+        overview["source_report_count"] = len(reports)
+        overview.setdefault("coverage", {})
+        self._course_ai_overviews[course_id] = dict(overview)
+        self._persist_course_ai_overview(course_id, overview)
+        return dict(overview)
+
+    def _refresh_course_overview_projection(
+        self, course_id: str, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Update coverage/topic projection from reports without an LLM call."""
+        reports, missing = self._course_report_snapshot(course_id)
+        from src.application.ai.pipeline import AIUnderstandingPipeline
+
+        projection = AIUnderstandingPipeline.aggregate_course_reports(
+            reports,
+            course_id=course_id,
+            missing_material_ids=missing,
+        )
+        updated = dict(payload)
+        current_ids = sorted(
+            str(row.get("material_id") or "") for row in projection.get("materials", [])
+        )
+        cached_ids = sorted(
+            str(row.get("material_id") or "") for row in (payload.get("materials") or [])
+            if isinstance(row, Mapping)
+        )
+        changed = current_ids != cached_ids or list(missing) != list(payload.get("gaps") or [])
+        if changed:
+            updated["materials"] = projection.get("materials", [])
+            updated["topic_map"] = projection.get("topic_map", [])
+            updated["gaps"] = list(missing)
+            updated["coverage"] = projection.get("coverage", {})
+            updated["source_report_count"] = len(reports)
+            updated["projection_stale"] = True
+            self._course_ai_overviews[course_id] = dict(updated)
+            self._persist_course_ai_overview(course_id, updated)
+        return updated
+
+    def course_ai_overview(
+        self, course_id: str, *, provider: Optional[Any] = None
+    ) -> dict[str, Any]:
+        """Read the cached course AI overview without calling an LLM.
+
+        ``provider`` is intentionally only an explicit programmatic refresh
+        hook.  The HTTP GET does not pass it, so an absent cache is a truthful
+        404 rather than an unexpected network call.
+        """
+        self.get_course(course_id)
+        if provider is not None:
+            return self._refresh_course_ai_overview(course_id, provider=provider)
+        payload = self._course_ai_overviews.get(course_id)
+        if payload is None:
+            payload = self._load_persisted_course_ai_overview(course_id)
+            if payload is not None:
+                self._course_ai_overviews[course_id] = dict(payload)
+        if payload is None:
+            raise NotFoundError(
+                "no course AI overview for %r yet; run AI analysis on course materials first"
+                % (course_id,)
+            )
+        return self._refresh_course_overview_projection(course_id, payload)
+
+    def ai_summary(
+        self,
+        course_id: str,
+        material_id: str,
+        *,
+        glossary_limit: int = 20,
+    ) -> dict[str, Any]:
         """最近一次 AI 分析的总结视图 (只读, 不重新调用 AI)。
 
         从未分析过 -> NotFoundError (404), 而不是现场补算 (§36.5/36.6:
@@ -1884,12 +2257,37 @@ class Workspace:
                 "no AI analysis for material %r yet; run AI analysis first"
                 % (material_id,)
             )
+        payload = self._normalise_ai_report(payload)
+        glossary = list(payload.get("glossary") or [])
+        glossary_total = len(glossary)
+        try:
+            read_limit = int(glossary_limit)
+        except (TypeError, ValueError):
+            read_limit = 20
+        # The normal read stays bounded at 20 entries.  The UI can explicitly
+        # request the complete persisted list for its "show all" action; the
+        # cap still prevents an arbitrary query from turning into a data dump.
+        read_limit = max(1, min(read_limit, 500))
+        visible_glossary = glossary[:read_limit]
         return {
             "material_id": material_id,
             "course_id": course_id,
             "status": payload.get("status"),
+            "report_version": payload.get("report_version"),
             "summary": payload.get("summary"),
             "topics": payload.get("topics"),
+            "summary_zh": payload.get("summary_zh") or "",
+            "topics_zh": list(payload.get("topics_zh") or []),
+            "summary_zh_status": payload.get("summary_zh_status") or "skipped",
+            "summary_zh_evidence_ids": list(payload.get("summary_zh_evidence_ids") or []),
+            "summary_zh_grounded": bool(payload.get("summary_zh_grounded")),
+            "glossary": visible_glossary,
+            "glossary_total": glossary_total,
+            "glossary_complete": len(visible_glossary) >= glossary_total,
+            "glossary_rejected": list(payload.get("glossary_rejected") or []),
+            "glossary_status": payload.get("glossary_status") or "skipped",
+            "summary_zh_prompt_version": payload.get("summary_zh_prompt_version") or "",
+            "glossary_prompt_version": payload.get("glossary_prompt_version") or "",
             "definitions": payload.get("definitions"),
             "formulas": payload.get("formulas"),
             "examples": payload.get("examples"),
@@ -2236,6 +2634,18 @@ class Workspace:
     ) -> dict[str, Any]:
         """单条错题的下钻: 为什么错 -> 重新学习依据 -> 可复用的练习。"""
         return MistakesView(self, course_id).enrich(student_id, knowledge_id)
+
+    def retry_missed(
+        self,
+        course_id: str,
+        student_id: str,
+        *,
+        knowledge_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Read-only queue of existing exercises still marked Missed."""
+        return MistakesView(self, course_id).retry_queue(
+            student_id, knowledge_id=knowledge_id
+        )
 
     def study_plan(self, course_id: str, student_id: str) -> dict[str, Any]:
         with self._atomic():
@@ -3086,6 +3496,17 @@ class Workspace:
             "ai": {
                 "mode": self._ai_mode,
                 "enabled": bool(self._ai_enabled),
+            },
+            "scheduling": {
+                "backend": getattr(self._flashcard_scheduler, "backend", None) and getattr(
+                    self._flashcard_scheduler.backend, "name", "unknown"
+                ),
+                "desired_retention": getattr(
+                    self._flashcard_scheduler, "desired_retention", 0.9
+                ),
+                "max_interval_days": getattr(
+                    self._flashcard_scheduler, "max_interval_days", 365
+                ),
             },
             # §1: LLM 模式显式可见 (与 asr/ocr 同语义)。绝不静默把 Mock
             # 当作真实模型; key 永不出现在 health 里。

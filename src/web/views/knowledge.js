@@ -73,7 +73,8 @@ async function pageKnowledge() {
     '<div class="page-head"><h1>' + t('知识点') + '</h1>' +
     '<p class="subtitle">' + t('课程 ') + '<strong>' + esc(courseLabel(courseId)) + '</strong>' + t(' · 共 ') +
     esc(points.length) + t(' 个 · 主题 ') + esc(summary.topic_count || 0) +
-    t(' · 关系 ') + esc(summary.relation_count || 0) + '</p></div>' +
+    t(' · 关系 ') + esc(summary.relation_count || 0) + ' · <a href="#/flashcards">' +
+    esc(t('fc.title')) + '</a></p></div>' +
     '<div class="card">' +
     (points.length
       ? '<table class="data compact fixed">' + tableCaption(t('知识点')) + '<colgroup><col style="width:36%"><col style="width:200px">' +
@@ -84,6 +85,11 @@ async function pageKnowledge() {
             '<tr><td class="kp-title"><a href="#/courses/' + encodeURIComponent(courseId) +
             '/knowledge/' + encodeURIComponent(kp.knowledge_id) + '">' +
             esc(kp.title || kp.knowledge_id) + '</a>' + knowledgeModeBadge(kp) +
+            ((kp.evidence_refs || []).length
+              ? ' <button class="small" data-action="create-flashcard" data-course="' +
+                esc(courseId) + '" data-knowledge="' + esc(kp.knowledge_id) + '">' +
+                esc(t('fc.create')) + '</button>'
+              : ' <span class="tiny muted">' + esc(t('fc.noEvidence')) + '</span>') +
             '<br><span class="tiny muted mono break-all">' + esc(kp.knowledge_id) + '</span></td>' +
             '<td class="nowrap">' + pill(kp.validation_status) + ' ' + pill(kp.review_status) + '</td>' +
             '<td class="num">' + esc((kp.evidence_refs || []).length) + '</td>' +

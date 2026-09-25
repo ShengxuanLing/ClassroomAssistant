@@ -549,7 +549,9 @@ function confirmDestructive(message) {
  * 学生列表 / 注册页面已删除；依赖页只显示事实提示，不替后端自动创建学生。
  */
 function noStudentsCard() {
-  return '<p class="muted">' + esc(t('student.none')) + '</p>';
+  return '<p class="muted">' + esc(t('student.none')) + '</p>' +
+    '<p class="small">' + esc(t('student.prepare')) + ' ' +
+    '<a href="#/courses">' + esc(t('nav.myCourses')) + '</a></p>';
 }
 
 function sourceLocation(source) {
@@ -1259,7 +1261,7 @@ function renderCourseSwitcher(courses) {
  *   #/today             #/today, #/learn, #/learn/<kp>, #/courses/<c>/learn/<kp>
  *   #/review            #/review
  *   #/                  #/
- *   #/knowledge         #/knowledge
+ *   #/knowledge         #/knowledge, #/flashcards
  *   #/materials         #/materials
  *   #/reviews           #/reviews
  *   #/courses           #/courses
@@ -1370,14 +1372,18 @@ document.addEventListener('click', (event) => {
   const materialId = target.getAttribute('data-material');
   const sessionId = target.getAttribute('data-session');
   const knowledgeId = target.getAttribute('data-knowledge');
+  const flashcardId = target.getAttribute('data-flashcard');
+  const flashcardRating = target.getAttribute('data-rating');
   // 材料页 (重构后): 一键分析 + 删除。课程页时间线仍用 process/retry
   // (views/courses.js), 保留那两个分支; evidence/digest/ai-analyze 仅
   // 材料页在用, 材料页移除后分支一并移除。
   if (action === 'process-material') actionProcessMaterial(courseId, materialId, target);
   else if (action === 'retry-material') actionRetryMaterial(courseId, materialId, target);
   else if (action === 'analyze-material') actionAnalyzeMaterial(courseId, materialId, target);
+  else if (action === 'show-all-glossary') actionShowAllGlossary(target, courseId, materialId);
   else if (action === 'delete-material') actionDeleteMaterial(courseId, materialId, target);
   else if (action === 'process-session') actionProcessSession(courseId, sessionId, target);
+  else if (action === 'course-ai-overview') actionCourseAiOverview(target);
   // 课程页的月份切换 (2026-09-22): 只改"课表看哪一段", 不发任何写请求。
   // 它不是路由 —— 月份是课程页内部的浏览位置, 不该进 hash (深链进课程页永远
   // 落在当前/最近的月份, 见 views/courses.js 的 sessionMonthPlan)。
@@ -1386,6 +1392,13 @@ document.addEventListener('click', (event) => {
   else if (action === 'review-reject') actionReview(courseId, knowledgeId, 'reject', target);
   else if (action === 'review-keep') actionReview(courseId, knowledgeId, 'keep', target);
   else if (action === 'review-resolve') actionReview(courseId, knowledgeId, 'resolve', target);
+  else if (action === 'create-flashcard') {
+    actionCreateFlashcard(courseId, knowledgeId, target);
+  } else if (action === 'review-flashcard') {
+    actionReviewFlashcard(
+      courseId, target.getAttribute('data-student'), flashcardId, flashcardRating, target
+    );
+  }
 });
 
 function parseHash() {
@@ -1436,6 +1449,7 @@ async function route() {
     else if (parts[0] === 'review') await pageReview();
     else if (parts[0] === 'review-pack') await pageReviewPack();
     else if (parts[0] === 'knowledge') await pageKnowledge();
+    else if (parts[0] === 'flashcards') await pageFlashcards();
     else if (parts[0] === 'materials') await pageMaterials();
     else if (parts[0] === 'reviews') await pageReviews();
     else if (parts[0] === 'exercises') await pageExercises();

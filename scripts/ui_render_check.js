@@ -36,6 +36,7 @@ const WEB_FILES = [
   'views/learn.js',
   'views/review.js',
   'views/knowledge.js',
+  'views/flashcards.js',
   'views/materials.js',
   'views/courses.js',
   'views/students.js',
@@ -985,13 +986,13 @@ function mistakeDetail(overrides) {
  * 顺序必须与 index.html 的 `<nav class="topnav">` **逐项相同** —— 2026-09-21
  * 按用途分了两组 (P3-3), 概览从第三位提到第一位, 中间多了一个纯装饰的
  * `<span class="topnav-sep">` (它不匹配 `.topnav a`, 所以不进这个数组)。
- * 2026-09-22: 4 个未实现入口在顶栏里是无 href 的 `<span class="nav-disabled">`
- * (不可点击、不触发路由、永远进不了 active), 它们同样不进这个数组 ——
- * `markActiveNav()` 只扫 `.topnav a`, 与真实 DOM 的行为一致。
+ * 四个学习入口 (#/review, #/review-pack, #/exercises, #/mistakes) 已恢复，
+ * 因此也必须进入桩数组；否则 active 高亮测试会静默漏掉真实顶栏项。
  */
 const TOPNAV = [
   '#/', '#/today', '#/reviews',
   '#/courses', '#/materials', '#/knowledge',
+  '#/review', '#/review-pack', '#/exercises', '#/mistakes',
 ];
 
 function makeNavLink(href) {
@@ -1036,6 +1037,7 @@ function makeElement(id) {
     closest() {
       return null;
     },
+    scrollIntoView() {},
   };
 }
 

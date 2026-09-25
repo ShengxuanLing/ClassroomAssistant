@@ -397,7 +397,11 @@ def build_router(workspace: Workspace) -> Router:
     def ai_material_summary(request: Request) -> ApiResponse:
         course_id = request.require_q("course_id")
         return success(
-            workspace.ai_summary(course_id, request.params["material_id"])
+            workspace.ai_summary(
+                course_id,
+                request.params["material_id"],
+                glossary_limit=request.q_int("glossary_limit", 20) or 20,
+            )
         )
 
     def analyze_material(request: Request) -> ApiResponse:
@@ -627,6 +631,79 @@ def build_router(workspace: Workspace) -> Router:
     router.get("/api/course-knowledge", course_knowledge)
 
     # ------------------------------------------------------------------
+    # flashcards (evidence-grounded memory cards)
+    # ------------------------------------------------------------------
+
+    def list_flashcards(request: Request) -> ApiResponse:
+        course_id = request.require_q("course_id")
+        cards = workspace.list_flashcards(
+            course_id,
+            student_id=request.q("student_id"),
+            due_before=request.q("due_before"),
+        )
+        return success({"flashcards": cards})
+
+    def create_flashcard(request: Request) -> ApiResponse:
+        body = request.json_body()
+        course_id = str(body.get("course_id") or request.require_q("course_id"))
+        student_id = str(body.get("student_id") or "").strip()
+        kp_id = str(body.get("kp_id") or body.get("knowledge_id") or "").strip()
+        if not student_id:
+            raise InvalidInputError("student_id is required")
+        if not kp_id:
+            raise InvalidInputError("kp_id is required")
+        before = {
+            card["flashcard_id"]
+            for card in workspace.list_flashcards(course_id, student_id=student_id)
+        }
+        card = workspace.create_flashcard(
+            course_id,
+            student_id,
+            kp_id,
+            front=body.get("front"),
+            back=body.get("back"),
+            example=str(body.get("example") or ""),
+            audio_path=str(body.get("audio_path") or ""),
+            source_refs=body.get("source_refs"),
+            due=body.get("due"),
+        )
+        return success(card, status=201 if card["flashcard_id"] not in before else 200)
+
+    def get_flashcard(request: Request) -> ApiResponse:
+        return success(
+            workspace.get_flashcard(
+                request.require_q("course_id"),
+                request.params["flashcard_id"],
+                student_id=request.q("student_id"),
+            )
+        )
+
+    def review_flashcard(request: Request) -> ApiResponse:
+        body = request.json_body()
+        raw_rating = body.get("rating", body.get("result", "good"))
+        rating = {
+            "again": 1,
+            "hard": 2,
+            "good": 3,
+            "easy": 4,
+            "missed": 1,
+            "got_it": 3,
+        }.get(str(raw_rating).strip().lower(), raw_rating)
+        return success(
+            workspace.review_flashcard(
+                request.require_q("course_id"),
+                request.params["flashcard_id"],
+                rating,
+                student_id=body.get("student_id") or request.q("student_id"),
+            )
+        )
+
+    router.get("/api/flashcards", list_flashcards)
+    router.post("/api/flashcards", create_flashcard)
+    router.get("/api/flashcards/{flashcard_id}", get_flashcard)
+    router.post("/api/flashcards/{flashcard_id}/review", review_flashcard)
+
+    # ------------------------------------------------------------------
     # course review center (Task 62)
     # ------------------------------------------------------------------
 
@@ -644,10 +721,15 @@ def build_router(workspace: Workspace) -> Router:
             workspace.course_review_summary(request.params["course_id"])
         )
 
+    def course_ai_overview(request: Request) -> ApiResponse:
+        """Read the cached, course-scoped AI synthesis (never calls a model)."""
+        return success(workspace.course_ai_overview(request.params["course_id"]))
+
     router.get("/api/courses/{course_id}/review", course_review)
     router.get(
         "/api/courses/{course_id}/review-summary", course_review_summary
     )
+    router.get("/api/courses/{course_id}/ai-overview", course_ai_overview)
 
     # ------------------------------------------------------------------
     # review
@@ -967,7 +1049,20 @@ def build_router(workspace: Workspace) -> Router:
             )
         )
 
+    def retry_missed(request: Request) -> ApiResponse:
+        return success(
+            {
+                "retry_queue": workspace.retry_missed(
+                    request.require_q("course_id"),
+                    request.params["student_id"],
+                    knowledge_id=request.q("knowledge_id"),
+                )
+            }
+        )
+
     router.get("/api/students/{student_id}/mistakes", mistakes_center)
+    # Register the literal retry route before the generic knowledge-id route.
+    router.get("/api/students/{student_id}/mistakes/retry-queue", retry_missed)
     router.get(
         "/api/students/{student_id}/mistakes/{knowledge_id}", mistake_detail
     )

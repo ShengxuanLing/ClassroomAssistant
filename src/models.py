@@ -198,6 +198,9 @@ class KnowledgePoint:
     validation_status: str = "unverified"
     knowledge_score: float = 0.0
     review_status: str = "pending"
+    #: Provenance and generation diagnostics.  This is part of the domain
+    #: payload: dropping it makes persisted score/conflict origins unknowable.
+    metadata: dict[str, Any] = field(default_factory=dict)
     def __post_init__(self) -> None:
         if not self.knowledge_id: self.knowledge_id = str(uuid.uuid4())
         if isinstance(self.confidence, str): self.confidence = Confidence.from_string(self.confidence)
@@ -206,6 +209,10 @@ class KnowledgePoint:
             self.validation_status = ValidationStatus.from_string(self.validation_status).value
         if isinstance(self.review_status, str):
             self.review_status = ReviewStatus.from_string(self.review_status).value
+        if self.metadata is None:
+            self.metadata = {}
+        elif not isinstance(self.metadata, dict):
+            self.metadata = dict(self.metadata)
         try:
             self.knowledge_score = float(self.knowledge_score)
         except (TypeError, ValueError):
@@ -217,10 +224,134 @@ class KnowledgePoint:
         if self.knowledge_score > 1.0:
             self.knowledge_score = 1.0
     def to_dict(self) -> dict[str, Any]:
-        return {"knowledge_id": self.knowledge_id, "title": self.title, "content": self.content, "original_terms": self.original_terms, "importance": self.importance, "confidence": self.confidence.value, "evidence_refs": self.evidence_refs, "related_points": self.related_points, "needs_verification": self.needs_verification, "validation_status": self.validation_status, "knowledge_score": self.knowledge_score, "review_status": self.review_status}
+        return {"knowledge_id": self.knowledge_id, "title": self.title, "content": self.content, "original_terms": self.original_terms, "importance": self.importance, "confidence": self.confidence.value, "evidence_refs": self.evidence_refs, "related_points": self.related_points, "needs_verification": self.needs_verification, "validation_status": self.validation_status, "knowledge_score": self.knowledge_score, "review_status": self.review_status, "metadata": dict(self.metadata or {})}
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> KnowledgePoint:
-        return cls(knowledge_id=data["knowledge_id"], title=data["title"], content=data["content"], original_terms=data.get("original_terms", []), importance=data.get("importance", "medium"), confidence=data.get("confidence", Confidence.UNCERTAIN), evidence_refs=data.get("evidence_refs", []), related_points=data.get("related_points", []), needs_verification=data.get("needs_verification", False), validation_status=data.get("validation_status", "unverified"), knowledge_score=data.get("knowledge_score", 0.0), review_status=data.get("review_status", "pending"))
+        return cls(knowledge_id=data["knowledge_id"], title=data["title"], content=data["content"], original_terms=data.get("original_terms", []), importance=data.get("importance", "medium"), confidence=data.get("confidence", Confidence.UNCERTAIN), evidence_refs=data.get("evidence_refs", []), related_points=data.get("related_points", []), needs_verification=data.get("needs_verification", False), validation_status=data.get("validation_status", "unverified"), knowledge_score=data.get("knowledge_score", 0.0), review_status=data.get("review_status", "pending"), metadata=data.get("metadata", {}))
+
+
+@dataclass
+class Flashcard:
+    """Evidence-grounded, course- and learner-scoped memory card.
+
+    ``course_id`` and ``student_id`` are part of the identity because a review
+    schedule is learner state; sharing it across courses or students would leak
+    progress.  Scheduling fields are persisted separately from card content so
+    the deterministic StudyPlanner can remain unchanged.
+    """
+
+    flashcard_id: str = ""
+    course_id: str = ""
+    student_id: str = ""
+    kp_id: str = ""
+    front: str = ""
+    back: str = ""
+    example: str = ""
+    audio_path: str = ""
+    source_refs: list[str] = field(default_factory=list)
+    due: str = ""
+    stability: float = 0.0
+    difficulty: float = 5.0
+    desired_retention: float = 0.9
+    state: str = "new"
+    reps: int = 0
+    lapses: int = 0
+    last_review: Optional[str] = None
+    created_at: Optional[str] = None
+    card_type: str = "basic"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in ("course_id", "student_id", "kp_id", "front", "back"):
+            value = str(getattr(self, name) or "").strip()
+            if not value:
+                raise ValueError("Flashcard %s must be non-empty" % name)
+            setattr(self, name, value)
+        self.source_refs = list(dict.fromkeys(
+            str(ref).strip() for ref in (self.source_refs or []) if str(ref).strip()
+        ))
+        if not self.source_refs:
+            raise ValueError("Flashcard requires at least one source_ref")
+        try:
+            self.stability = float(self.stability)
+            self.difficulty = float(self.difficulty)
+            self.desired_retention = float(self.desired_retention)
+            self.reps = int(self.reps)
+            self.lapses = int(self.lapses)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Flashcard scheduling fields must be numeric") from exc
+        if self.stability < 0:
+            raise ValueError("Flashcard stability must be >= 0")
+        if not 1.0 <= self.difficulty <= 10.0:
+            raise ValueError("Flashcard difficulty must be in [1, 10]")
+        if not 0.0 < self.desired_retention < 1.0:
+            raise ValueError("Flashcard desired_retention must be in (0, 1)")
+        if self.reps < 0 or self.lapses < 0:
+            raise ValueError("Flashcard reps/lapses must be non-negative")
+        if self.metadata is None:
+            self.metadata = {}
+        elif not isinstance(self.metadata, dict):
+            self.metadata = dict(self.metadata)
+        if not self.flashcard_id:
+            self.flashcard_id = self._stable_id()
+
+    def _stable_id(self) -> str:
+        parts = [
+            self.course_id, self.student_id, self.kp_id, self.front, self.back,
+            *self.source_refs,
+        ]
+        raw = "\x1f".join(parts).encode("utf-8")
+        return "flashcard-" + hashlib.sha256(raw).hexdigest()[:20]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "flashcard_id": self.flashcard_id,
+            "course_id": self.course_id,
+            "student_id": self.student_id,
+            "kp_id": self.kp_id,
+            "front": self.front,
+            "back": self.back,
+            "example": self.example,
+            "audio_path": self.audio_path,
+            "source_refs": list(self.source_refs),
+            "due": self.due,
+            "stability": self.stability,
+            "difficulty": self.difficulty,
+            "desired_retention": self.desired_retention,
+            "state": self.state,
+            "reps": self.reps,
+            "lapses": self.lapses,
+            "last_review": self.last_review,
+            "created_at": self.created_at,
+            "card_type": self.card_type,
+            "metadata": dict(self.metadata or {}),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Flashcard":
+        return cls(
+            flashcard_id=data.get("flashcard_id", ""),
+            course_id=data["course_id"],
+            student_id=data["student_id"],
+            kp_id=data["kp_id"],
+            front=data["front"],
+            back=data["back"],
+            example=data.get("example", ""),
+            audio_path=data.get("audio_path", ""),
+            source_refs=data.get("source_refs", []),
+            due=data.get("due", ""),
+            stability=data.get("stability", 0.0),
+            difficulty=data.get("difficulty", 5.0),
+            desired_retention=data.get("desired_retention", 0.9),
+            state=data.get("state", "new"),
+            reps=data.get("reps", 0),
+            lapses=data.get("lapses", 0),
+            last_review=data.get("last_review"),
+            created_at=data.get("created_at"),
+            card_type=data.get("card_type", "basic"),
+            metadata=data.get("metadata", {}),
+        )
+
 
 @dataclass
 class Course:
