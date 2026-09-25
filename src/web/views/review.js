@@ -107,7 +107,9 @@ async function pageReview() {
   const students = (await api('/students', { query: { course_id: courseId } })).students || [];
   if (!students.length) {
     setView('<div class="page-head"><h1>' + esc(t('rs.title')) + '</h1></div>' +
-      '<div class="card">' + emptyState(t('rs.noStudent')) + '</div>');
+      '<div class="card">' + emptyState(t('rs.noStudent')) +
+      '<p class="small">' + esc(t('student.prepare')) + ' ' +
+      '<a href="#/courses">' + esc(t('nav.myCourses')) + '</a></p></div>');
     return;
   }
   const studentId = state.studentId &&
@@ -127,7 +129,10 @@ async function pageReview() {
     '<p class="small muted">' + esc(t('rs.subtitle')) + '</p></div>';
 
   const body = data.empty
-    ? '<div class="card">' + emptyState(t('rs.empty')) + '</div>'
+    ? '<div class="card">' + emptyState(t('rs.empty')) +
+      '<p class="small">' + esc(t('rs.emptyGuide')) + ' ' +
+      '<a href="#/materials">' + esc(t('nav.materials')) + '</a> · ' +
+      '<a href="#/exercises">' + esc(t('nav.exercises')) + '</a></p></div>'
     : ['blocked', 'attention', 'ready'].map((name) => rsBucketCard(name, data, courseId)).join('');
 
   setView(head +

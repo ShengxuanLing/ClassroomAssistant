@@ -29,7 +29,14 @@ __all__ = [
     "KnowledgeCandidate",
     "ChunkAIResult",
     "MaterialAIResult",
+    "SummaryZhResult",
+    "GlossaryEntry",
+    "CourseOverviewResult",
     "parse_structured_response",
+    "parse_material_response",
+    "parse_summary_zh_response",
+    "parse_glossary_response",
+    "parse_course_overview_response",
     "candidate_to_dict",
     "material_result_to_dict",
 ]
@@ -39,6 +46,13 @@ SCHEMA_VERSION = "ai-schema-v1"
 
 #: JSON 解析/校验失败时的统一错误码 (调用方映射为 processing failure)。
 MALFORMED_ERROR = "AI_MALFORMED_RESPONSE"
+
+#: Hard output budgets for derived report stages.  They protect the report
+#: contract and keep a model response from becoming an accidental data dump.
+MAX_SUMMARY_ZH_CHARS = 6000
+MAX_GLOSSARY_TERM_CHARS = 120
+MAX_GLOSSARY_ZH_CHARS = 20
+MAX_COURSE_OVERVIEW_CHARS = 6000
 
 
 def _as_str(value: Any, default: str = "") -> str:
@@ -119,6 +133,71 @@ class ChunkAIResult:
             "summary": self.summary,
             "topics": list(self.topics),
             "knowledge_points": [c.to_dict() for c in self.candidates],
+        }
+
+
+@dataclass
+class SummaryZhResult:
+    """Grounded Chinese-learning summary returned by a derived stage."""
+
+    summary_zh: str = ""
+    topics_zh: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "summary_zh": self.summary_zh,
+            "topics_zh": list(self.topics_zh),
+        }
+
+
+@dataclass
+class GlossaryEntry:
+    """One bilingual term card before/after evidence grounding.
+
+    ``evidence_refs`` are the model-facing chunk references.  Grounding may
+    also expose the resolved Evidence IDs through ``evidence_ids``; both keys
+    are retained in the serialized report so older and newer readers can use
+    the shape they know.
+    """
+
+    term: str = ""
+    lang: str = ""
+    zh: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
+    kp_id: Optional[str] = None
+    lang_raw: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.evidence_refs and self.evidence_ids:
+            self.evidence_refs = list(self.evidence_ids)
+        if not self.evidence_ids and self.evidence_refs:
+            self.evidence_ids = list(self.evidence_refs)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "term": self.term,
+            "lang": self.lang,
+            "zh": self.zh,
+            "evidence_refs": list(self.evidence_refs),
+            "evidence_ids": list(self.evidence_ids),
+            "kp_id": self.kp_id,
+        }
+
+
+@dataclass
+class CourseOverviewResult:
+    """Structured output of the one-shot course synthesis stage."""
+
+    overview: str = ""
+    topic_map: list[dict[str, Any]] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "overview": self.overview,
+            "topic_map": [dict(item) for item in self.topic_map],
+            "gaps": list(self.gaps),
         }
 
 
@@ -270,6 +349,150 @@ def parse_material_response(
         candidates=candidates,
         chunk_ids=[str(c) for c in (chunk_ids or ())],
     ), None
+
+
+def _decode_json_object(text: str) -> Optional[Mapping[str, Any]]:
+    """Decode one JSON object, tolerating only a markdown JSON fence."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        lines = [line for line in lines if not line.strip().startswith("```")]
+        cleaned = "\n".join(lines).strip()
+    try:
+        raw = json.loads(cleaned)
+    except (ValueError, TypeError):
+        return None
+    return raw if isinstance(raw, Mapping) else None
+
+
+def parse_summary_zh_response(
+    text: str,
+) -> tuple[Optional[SummaryZhResult], Optional[str]]:
+    """Parse ``{summary_zh, topics_zh}`` without accepting partial output."""
+    raw = _decode_json_object(text)
+    if raw is None or "summary_zh" not in raw or "topics_zh" not in raw:
+        return None, MALFORMED_ERROR
+    summary = raw.get("summary_zh")
+    topics = raw.get("topics_zh")
+    if not isinstance(summary, str) or not isinstance(topics, (list, tuple)):
+        return None, MALFORMED_ERROR
+    topic_values: list[str] = []
+    for item in topics:
+        if not isinstance(item, str):
+            return None, MALFORMED_ERROR
+        value = item.strip()
+        if value and value not in topic_values:
+            topic_values.append(value)
+    summary = summary.strip()
+    if not summary:
+        return None, MALFORMED_ERROR
+    return (
+        SummaryZhResult(
+            summary_zh=summary[:MAX_SUMMARY_ZH_CHARS],
+            topics_zh=topic_values,
+        ),
+        None,
+    )
+
+
+def parse_glossary_response(
+    text: str,
+) -> tuple[Optional[list[GlossaryEntry]], Optional[str]]:
+    """Parse and shape-check the strict bilingual glossary response."""
+    raw = _decode_json_object(text)
+    if raw is None or not isinstance(raw.get("glossary"), (list, tuple)):
+        return None, MALFORMED_ERROR
+    entries: list[GlossaryEntry] = []
+    for item in raw.get("glossary") or []:
+        if not isinstance(item, Mapping):
+            return None, MALFORMED_ERROR
+        term = item.get("term")
+        lang = item.get("lang")
+        zh = item.get("zh")
+        refs = item.get("evidence_refs", item.get("evidence_ids"))
+        if (
+            not isinstance(term, str)
+            or not isinstance(lang, str)
+            or not isinstance(zh, str)
+            or not isinstance(refs, (list, tuple))
+        ):
+            return None, MALFORMED_ERROR
+        term = term.strip()
+        lang = lang.strip()
+        zh = zh.strip()
+        if not term or not lang or not zh:
+            return None, MALFORMED_ERROR
+        clean_refs: list[str] = []
+        for ref in refs:
+            if not isinstance(ref, str) or not ref.strip():
+                return None, MALFORMED_ERROR
+            value = ref.strip()
+            if value not in clean_refs:
+                clean_refs.append(value)
+        entries.append(
+            GlossaryEntry(
+                term=term[:MAX_GLOSSARY_TERM_CHARS],
+                lang=lang[:8],
+                zh=zh[:MAX_GLOSSARY_ZH_CHARS],
+                evidence_refs=clean_refs,
+                evidence_ids=list(clean_refs),
+                kp_id=(str(item.get("kp_id")).strip() if item.get("kp_id") else None),
+            )
+        )
+    return entries, None
+
+
+def parse_course_overview_response(
+    text: str,
+) -> tuple[Optional[CourseOverviewResult], Optional[str]]:
+    """Parse the course synthesis response with a closed top-level shape."""
+    raw = _decode_json_object(text)
+    if raw is None or "overview" not in raw or "topic_map" not in raw:
+        return None, MALFORMED_ERROR
+    overview = raw.get("overview")
+    topic_map = raw.get("topic_map")
+    gaps = raw.get("gaps", [])
+    if (
+        not isinstance(overview, str)
+        or not isinstance(topic_map, (list, tuple))
+        or not isinstance(gaps, (list, tuple))
+    ):
+        return None, MALFORMED_ERROR
+    clean_topics: list[dict[str, Any]] = []
+    for item in topic_map:
+        if not isinstance(item, Mapping) or not isinstance(item.get("topic"), str):
+            return None, MALFORMED_ERROR
+        topic = str(item.get("topic") or "").strip()
+        if not topic:
+            return None, MALFORMED_ERROR
+        ids = item.get("material_ids") or []
+        summary = item.get("summary") or ""
+        if not isinstance(ids, (list, tuple)) or not isinstance(summary, str):
+            return None, MALFORMED_ERROR
+        clean_topics.append(
+            {
+                "topic": topic[:200],
+                "material_ids": [str(value) for value in ids if str(value).strip()],
+                "summary": summary.strip()[:1000],
+            }
+        )
+    clean_gaps: list[str] = []
+    for gap in gaps:
+        if not isinstance(gap, str):
+            return None, MALFORMED_ERROR
+        value = gap.strip()
+        if value and value not in clean_gaps:
+            clean_gaps.append(value[:300])
+    return (
+        CourseOverviewResult(
+            overview=overview.strip()[:MAX_COURSE_OVERVIEW_CHARS],
+            topic_map=clean_topics,
+            gaps=clean_gaps,
+        ),
+        None,
+    )
 
 
 def candidate_to_dict(candidate: KnowledgeCandidate) -> dict[str, Any]:

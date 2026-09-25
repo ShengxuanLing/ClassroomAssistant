@@ -140,6 +140,24 @@ class TestAiPathUsesTheDeterministicFormula:
         assert _payload(1.00, ["ev-0"])["knowledge_score"] == 0.5
         assert _payload(0.95, ["ev-0"])["knowledge_score"] == 0.5
 
+    def test_payload_records_explainable_score_provenance(self):
+        payload = _payload(0.95, ["ev-0", "ev-1", "ev-0"])
+        source = payload["metadata"]["knowledge_score_source"]
+        assert source == {
+            "kind": "grounding_evidence_count",
+            "formula": "knowledge_score_from_counts",
+            "formula_version": "evidence-support-v1",
+            "support_count": 2,
+            "conflict_count": 0,
+            "value": 0.75,
+        }
+
+    def test_knowledge_point_metadata_survives_domain_round_trip(self):
+        payload = _payload(0.95, ["ev-0", "ev-1"])
+        restored = KnowledgePoint.from_dict(payload)
+        assert restored.metadata == payload["metadata"]
+        assert restored.to_dict()["metadata"] == payload["metadata"]
+
 
 class TestTheSingleSourceOfTruth:
     """公开包装函数必须就是那个私有公式本身。"""
@@ -257,3 +275,11 @@ class TestEndToEndIngestionKeepsTheScoreHonest:
                 "%s: 有 %d 条证据, 分数应为 %s, 实际 %s"
                 % (kp["knowledge_id"], len(refs), expected, kp["knowledge_score"])
             )
+
+    def test_persisted_score_keeps_its_grounding_provenance(self, tmp_path):
+        for kp in self._auto_points(tmp_path):
+            source = (kp.get("metadata") or {}).get("knowledge_score_source")
+            assert source is not None, kp
+            assert source["kind"] == "grounding_evidence_count"
+            assert source["support_count"] == len(set(kp.get("evidence_refs") or []))
+            assert source["value"] == kp["knowledge_score"]

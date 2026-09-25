@@ -344,6 +344,105 @@ class FakeAIProvider(AIProvider):
         timeout_seconds: int = 60,
         max_output_chars: int = 8000,
     ) -> str:
+        # Derived report stages have their own closed schemas.  Keep the fake
+        # deterministic and useful in tests without making it pretend to be a
+        # real translation model.
+        if "SUMMARY INPUT:" in prompt:
+            digest = prompt.rsplit("SUMMARY INPUT:", 1)[1]
+            words = re.findall(r"[^\W\d_]{4,}", digest, re.UNICODE)
+            words = [
+                word for word in words
+                if any(ord(char) < 128 for char in word)
+                and word.casefold() not in {
+                    "summary", "topics", "definitions", "fixture", "topic",
+                    "title", "original", "terms", "knowledge", "points",
+                    "chunk", "evidence", "course", "material",
+                }
+            ]
+            term = words[0] if words else "capital"
+            term_zh = {
+                "capital": "资本",
+                "integración": "积分",
+                "derivada": "导数",
+                "función": "函数",
+            }.get(term.casefold(), "术语")
+            return json.dumps(
+                {
+                    "summary_zh": "【中文 fixture 学习总结 —— 未调用外部模型】 %s（%s）" % (term, term_zh),
+                    "topics_zh": ["fixture-topic（中文主题）"],
+                },
+                ensure_ascii=False,
+            )[:max_output_chars]
+        if "EVIDENCE DIGEST:" in prompt:
+            digest = prompt.rsplit("EVIDENCE DIGEST:", 1)[1]
+            refs = []
+            for ref in re.findall(r"CHUNK\s+([A-Za-z0-9_-]+)", digest):
+                if ref not in refs:
+                    refs.append(ref)
+            if not refs:
+                refs = ["chunk-0"]
+            stop = {
+                "return", "json", "schema", "evidence", "material", "course",
+                "string", "object", "array", "glossary", "false", "true",
+            }
+            words: list[str] = []
+            for word in re.findall(r"[^\W\d_]{4,}", digest, re.UNICODE):
+                if not any(ord(char) < 128 for char in word):
+                    continue
+                if word.casefold() in stop or word.casefold() in {x.casefold() for x in words}:
+                    continue
+                words.append(word)
+                if len(words) >= 5:
+                    break
+            translations = {
+                "integración": "积分",
+                "derivada": "导数",
+                "función": "函数",
+                "capital": "资本",
+                "cloroplastos": "叶绿体",
+                "fotosíntesis": "光合作用",
+                "teorema": "定理",
+            }
+            lowered = digest.casefold()
+            lang = "ca" if any(
+                word in lowered
+                for word in ("definició", "cloroplast", " és ", " per ", "mètode", "teories")
+            ) else "es"
+            entries = [
+                {
+                    "term": word,
+                    "lang": lang,
+                    "zh": translations.get(word.casefold(), "术语解释"),
+                    "evidence_refs": refs,
+                }
+                for word in words
+            ]
+            return json.dumps({"glossary": entries}, ensure_ascii=False)[:max_output_chars]
+        if "COURSE REPORTS DIGEST:" in prompt:
+            digest = prompt.rsplit("COURSE REPORTS DIGEST:", 1)[1]
+            ids = []
+            topics = []
+            for material_id in re.findall(r'"material_id"\s*:\s*"([^"]+)"', digest):
+                if material_id not in ids:
+                    ids.append(material_id)
+            for topic in re.findall(r'"topic"\s*:\s*"([^"]+)"', digest):
+                if topic not in topics:
+                    topics.append(topic)
+            return json.dumps(
+                {
+                    "overview": "【课程 fixture 综合总览 —— 未调用外部模型】",
+                    "topic_map": [
+                        {
+                            "topic": topic or "fixture-topic",
+                            "material_ids": ids,
+                            "summary": "课程主题 fixture 摘要。",
+                        }
+                        for topic in (topics or ["fixture-topic"])
+                    ],
+                    "gaps": [],
+                },
+                ensure_ascii=False,
+            )[:max_output_chars]
         # 从 prompt 里还原证据文本: 取最后一个 "EVIDENCE TEXT:/OCR TEXT:/
         # TRANSCRIPT:/CHUNK RESULTS:" 标记之后的内容做确定性抽取。
         marker_text = prompt or ""

@@ -68,7 +68,9 @@ async function pageExercises() {
                 : '')
             : pill(t('ex.unanswered'), 'AVAILABLE')) + '</td></tr>'
         )).join('') + '</tbody></table>'
-      : emptyState(t('ex.noExercises'))) +
+      : emptyState(t('ex.noExercises')) +
+        '<p class="small">' + esc(t('ex.emptyGuide')) + ' ' +
+        '<a href="#/knowledge">' + esc(t('nav.knowledge')) + '</a></p>') +
     '</div>' +
     generation
   );
@@ -298,6 +300,16 @@ function exerciseLink(courseId, exerciseId, label) {
 /** 评估面板: score / status / feedback / knowledge_point / evidence (Task 41)。 */
 function renderEvaluationPanel(view) {
   const evaluation = view.evaluation;
+  const isCorrect = !!evaluation && evaluation.status === 'correct';
+  const isMissed = !!evaluation && evaluation.status === 'incorrect';
+  const progressButtons = evaluation
+    ? '<div class="actions" role="group" aria-label="' + esc(t('mk.progressLabel')) + '">' +
+      '<button type="button" class="' + (isCorrect ? 'primary' : '') + '" disabled aria-pressed="' +
+        (isCorrect ? 'true' : 'false') + '">' + esc(t('mk.gotIt')) + '</button>' +
+      '<button type="button" class="' + (isMissed ? 'primary' : '') + '" disabled aria-pressed="' +
+        (isMissed ? 'true' : 'false') + '">' + esc(t('mk.missedIt')) + '</button>' +
+      '</div><p class="tiny muted">' + esc(t('mk.progressPersisted')) + '</p>'
+    : '';
   const body = evaluation
     ? '<dl class="kv">' +
       '<dt>' + esc(t('ex.score')) + '</dt><dd>' + esc(fmtNumber(evaluation.score)) + '</dd>' +
@@ -313,7 +325,7 @@ function renderEvaluationPanel(view) {
         ((evaluation.knowledge_points || []).map((kp) =>
           kpLink(view.course_id, kp.knowledge_id, kp.title)).join('<br>') ||
           esc(t('common.none'))) + '</dd>' +
-      '</dl>' +
+      '</dl>' + progressButtons +
       '<h3>' + esc(t('ex.expected')) + '</h3>' +
       (evaluation.expected
         ? '<dl class="kv">' +

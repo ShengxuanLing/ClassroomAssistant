@@ -66,7 +66,9 @@ async function pageReviewPack() {
           '<div class="card"><h3>' + esc(d.filename || d.material_id) + '</h3>' +
           packSummaryBlock(d) + '</div>'
         )).join('')
-      : emptyState(t('pack.empty'))) +
+      : emptyState(t('pack.empty')) +
+        '<p class="small">' + esc(t('pack.emptyGuide')) + ' ' +
+        '<a href="#/materials">' + esc(t('nav.materials')) + '</a></p>') +
     '</div>' +
     ((pack.conflicts || []).length
       ? '<div class="card"><h2>' + t('pack.courseConflicts') + '</h2><ul class="small">' +

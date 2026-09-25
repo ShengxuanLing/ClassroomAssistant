@@ -7742,8 +7742,9 @@ md5 一致 —— 即这 22 分钟里没有别的东西再动过文件，数字�
   `tests/test_concurrent_writes.py`（多线程并发写），均带 `integration` 标记、
   默认 deselected。`run_tests.cmd` 默认口径 `-m "not integration"` **未改动**。
   nightly 命令：`pytest -m integration -k nightly`（见 README）。
-- 发布门禁改为**读真实值**断言：迁移链 3 条且版本连续、仓储内省计数 18。
-  不再依赖文档关键字。
+- 发布门禁改为**读真实值**断言：迁移链 4 条且版本连续、仓储内省计数 19。
+  不再依赖文档关键字。（2026-09-25 更新：m004 `flashcards` 加入后，
+  迁移链 3→4、仓储 18→19；见下方「本轮 roadmap 交付与范围声明」。）
 - 两个实测结论：① 本机 cached whisper `base` 模型**损坏**
   （`File model.bin is incomplete`）而 `is_local_whisper_available()` 仍返回
   True，已加模型加载错误识别 → **clean skip 而非 fail**；② 并发**不能**共享
@@ -8441,3 +8442,71 @@ pytest -q -m "not integration" tests/test_student_today.py \
 溢出，但今日课程卡和每行自身溢出均为 0；该顶栏问题不属于本任务。
 
 完整记录见 `docs/task-78-today-classes-restack.md`。
+
+
+## 本轮 roadmap 交付与范围声明
+
+> 日期：2026-09-25。本节把 T1–T4 全部 roadmap 项逐条落到结论上。
+> **不许 silent drop**：每一项都必须有 ✅ / ⚠️ / ❌ 结论与去向；
+> "写了文案" 不等于 "做了功能"。
+
+### ✅ 已交付
+
+| 项 | 结论 | 实现位置 |
+|---|---|---|
+| T1.1 解禁入口 | ✅ | `src/web/index.html` 顶栏四个学习入口（`#/review`、`#/review-pack`、`#/exercises`、`#/mistakes`）全部恢复为真实 `<a href>`；门禁：`tests/test_web_ui_invariants.py::test_topnav_learning_entries_are_enabled_and_routable` + `scripts/ui_audit.js` 的 `top nav has zero disabled entries`。 |
+| T1.2 记忆卡片 | ✅ | `src/persistence/migrations/m004_flashcards.py`（`flashcards` + `flashcard_evidence` 真实关系表，外键指向权威 Evidence）、`src/persistence/repositories/flashcard.py`、`src/web/views/flashcards.js`、4 个 `/api/flashcards*` 端点（`src/api/endpoints.py`）。 |
+| T1.3 FSRS 调度 | ✅ | `src/scheduling/fsrs.py`（`clock` 可注入，默认工厂 `_utc_now`）、`workspace.flashcard_scheduler`；调度只决定"下次复习时间"，不取代 StudyPlanner 对"学什么"的决定。 |
+| T1.4 错题重做 | ✅ | i18n `mk.retryTitle` / `mk.retryAgain` / `mk.retryEmpty` / `mk.progressLabel`（zh/es/ca）+ `src/web/views/mistakes.js:225` + `src/application/mistakes_view.py:892`（重做结果持久化）。 |
+| T3.1 术语表 | ✅（**AI 报告层等价实现**，非独立术语表页面） | `src/application/ai/pipeline.py` 的 `build_glossary_prompt` / `parse_glossary_response` / `ground_glossary`，含 grounding 与拒收计数 `glossary_rejected` / `glossary_total`。 |
+| T4.1 metadata | ✅ | `src/application/dto.py:166` 知识点 metadata 透传（`getattr(kp, "metadata", {})`），缺失/非法值不炸。 |
+
+### ⚠️ 部分交付（写明"还剩什么"）
+
+- **T3.4 i18n** —— ⚠️ 部分交付。新增 key 三语（zh / es / ca）齐备，**但旧裸 key 没清干净**：
+  `src/web/views/knowledge.js:76` 的 `t(' · 关系 ')`、`src/web/views/courses.js:857` 的 `t('概览')` 仍是中文裸串。
+  下期：裸 key 扫描清零 + 加"es/ca 界面无 CJK 裸串"门禁。
+- **T3.5 向导** —— ⚠️ **只做了空态引导句**（`src/web/views/courses.js:83` / `:894`、dashboard 空态说明）。
+  **四步向导、建课完成后跳转、窄屏表格适配 —— 三项均未做。**
+
+### ❌ 未做（每项写明去向）
+
+- **T1.5 Anki 导出** —— ❌ **排下期**（Phase 2 入口）。本期未做，工时预估 ~1 天：CSV 导出 + 按钮 + 导入冒烟。
+- **T1.6 考前计划** —— ❌ **排下期**（Phase 2 入口）。本期未做，工时预估 ~2 天：`exam_plan.py` 新层 + 每日量上限。
+- **T2.1–T2.5**（云 ASR / 说话人分离 / 讲稿页 / 公式+D2 / 进度条）—— ❌ **Phase 2 整包延期**，整包未动，不拆分、不按"已做文案"充数。
+  **特别点名 T2.4**：`src/web/i18n.js:405` 的 `warn.empty.NO_TEXT_DETECTED`（"把页面导成图片后重新上传，走 OCR 提取"）
+  是**文案代偿** —— 教用户手工绕开公式/图片识别，**本声明不计为 T2.4 交付**。
+- **T3.2 TTS** —— ❌ 未做，排下期（Phase 2 入口）。
+- **T3.3 语言识别** —— ❌ 未做，排下期。
+- **T3.6 均分消费** —— ❌ 未做，排下期。
+- **T3.7 卡片规则** —— ❌ 未做，排下期。
+- **T3.8 每日护栏** —— ❌ 未做，排下期。
+- **T4.2 异盘备份** —— ❌ 未做，排下期。
+- **T4.3 DB 并发** —— ❌ 未做，排下期。
+- **T4.4 E2E** —— ❌ 未做，排下期。
+
+### 本轮全量回归（2026-09-25，not integration 口径）
+
+```text
+pytest -m "not integration":  5446 passed, 8 skipped, 50 deselected（1217.58s / 20m17s，0 failed）
+node scripts/ui_audit.js:        UI audit OK (522 checks)   ← 审查基线 517，顶栏零禁用组 +5
+node scripts/ui_render_check.js: UI RENDER CHECK: OK (314 checks)
+node scripts/e2e_session_picker.js: E2E OK (29 checks)
+```
+
+对照 2026-09-21 基线（5354 passed / 5 skipped / 50 deselected / 19m53s）：
+本轮新增测试使 passed 5354 → 5446，skipped 5 → 8，**0 failed**。
+
+**首轮全量并非 0 failed：13 failed。** 这 13 条不是本轮门禁改动引入的，而是
+"35 改 + 7 新"这批工作区**从未被跑绿过**。逐条定位与处置如下（全部已修）：
+
+| 失败用例 | 根因 | 处置 |
+|---|---|---|
+| `test_web_source_manifest`（4 条） | `views/flashcards.js` 加进了 `index.html`，但 4 个 Node 检查脚本的 `WEB_FILES` 没登记 | 四个脚本按 index.html 顺序补 `views/flashcards.js` |
+| `test_student_ui` / `test_exercise_ui` 走 `ui_audit.js`（3 条） | ① `mistakes.js` 发出 `class="button small"`，`.button` 在 styles.css 从未定义；② `flashcards.js` 发出 `class="row wrap"`，`.wrap` 未定义 | ① 改回仓库既有约定 `btn small`（`.btn` 已有 4 处在用）；② 删掉 `wrap` —— `.row`（styles.css:324）本就带 `flex-wrap: wrap`，渲染不变 |
+| `test_dependency_audit` / `test_production_gate::TestDependencyAudit`（2 条） | `fsrs` 已进 requirements，但两个"import→requirement"注册表没加它，审计判成"未使用的依赖" | `fsrs` 确为 `PyFSRSBackend` 函数内延迟导入的真实依赖（wheel 缺失才回落到内置调度器），故**保留依赖**并把 `fsrs` 补进两处注册表，而不是删依赖 |
+| `test_determinism_audit`（2 条） | `src/scheduling/fsrs.py` 直接调 `datetime.now`，而审计只允许 `src/common/clock.py` / `runtime.py` 读挂钟 | 在 `src/common/clock.py` 新增 `utc_now()` 作为读挂钟**唯一真源**，`fsrs._utc_now` 改为委托它。调度逻辑与"clock 可注入"设计一字未动（见 C3） |
+| `test_mistakes_center::test_center_builds_the_index_once_not_per_row` | `center()` 建一次 `answer_id -> evaluation` 索引，`retry_queue()` 又建一次 → 每条答案被 `get_evaluation` 查 2 遍 | 索引建一次并经 `_preloaded` 传下去；`_preloaded` 兼容 2 元/3 元，测试既有调用不受影响 |
+| `test_multi_course::test_the_top_nav_ownership_table_is_exactly_as_declared` | 新页面 `pageFlashcards()` 有一处 `markActiveNav`，但归属表（app.js 注释表 + 测试 `declared`）没登记 | 两侧同步登记为 `#/knowledge`（卡片挂在知识点分区下） |
+| `test_student_ui::test_the_empty_state_is_text_only` | `noStudentsCard()` 调用点由 2 增至 5（mistakes 重做空态 +2、flashcards 空态 +1），断言写死 3 | 断言更新为 6（1 定义 + 5 调用），并写明各调用点归属 |
+| `test_exercise_ui::test_index_html_nav_exposes_exercises` | 断言"练习入口必须是禁用的无 href span"，与本轮解禁后的真实状态**直接矛盾** | 改为断言解禁后的事实：`<a href="#/exercises">` 存在、`nav-disabled` 不存在 |

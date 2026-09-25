@@ -39,7 +39,11 @@ from src.application.ai.pipeline import (
     detect_material_kind,
     processing_identity,
 )
-from src.application.ai.prompts import CHUNK_EXTRACTION_PROMPT_VERSION
+from src.application.ai.prompts import (
+    CHUNK_EXTRACTION_PROMPT_VERSION,
+    GLOSSARY_PROMPT_VERSION,
+    SUMMARY_ZH_PROMPT_VERSION,
+)
 from src.application.ai.provider import AIProvider, FakeAIProvider
 from src.application.errors import InvalidInputError, NotFoundError
 from src.knowledge_validation import knowledge_score_from_counts
@@ -203,9 +207,68 @@ class AIAnalysisService:
         )
         stages.append(
             {
-                "stage": "knowledge_validation",
+                "stage": "candidate_grounding",
                 "state": "done",
                 "detail": "%d rejected" % len(classification["rejected"]),
+            }
+        )
+
+        # Derived report stages run after candidate grounding and before any
+        # registration.  Both are isolated: a translation/glossary outage is
+        # recorded as skipped and can never roll back grounded KPs.
+        summary_zh_result = pipeline.build_summary_zh(
+            merged,
+            material_label=material_label,
+            content_language=content_language,
+            timeout_seconds=timeout_seconds,
+        )
+        stages.append(
+            {
+                "stage": "summary_translation",
+                "state": "done"
+                if summary_zh_result.get("status") == "completed"
+                else "skipped",
+                "detail": str(summary_zh_result.get("status") or "skipped"),
+            }
+        )
+        # Grounded candidates do not yet have persisted IDs at this point; the
+        # deterministic title is still useful for optional glossary linking.
+        kp_titles = [
+            {"title": str(item.candidate.title or ""), "knowledge_id": ""}
+            for item in list(classification.get("grounded") or [])
+            if str(item.candidate.title or "").strip()
+        ]
+        kp_titles.extend(
+            {
+                "title": str((entry.get("candidate") or {}).get("title") or ""),
+                "knowledge_id": str(entry.get("existing_id") or ""),
+            }
+            for entry in list(classification.get("conflict") or [])
+            if str((entry.get("candidate") or {}).get("title") or "").strip()
+        )
+        glossary_result = pipeline.build_glossary(
+            evidences,
+            merged,
+            chunks=chunks,
+            chunk_to_evidence=chunk_to_evidence,
+            material_evidence_ids=material_evidence_ids,
+            evidence_texts=evidence_texts,
+            material_label=material_label,
+            kp_titles=[title for title in kp_titles if title],
+            course_id=course_id,
+            timeout_seconds=timeout_seconds,
+        )
+        stages.append(
+            {
+                "stage": "glossary",
+                "state": "done"
+                if glossary_result.get("status") == "completed"
+                else "skipped",
+                "detail": "%d accepted / %d rejected"
+                % (
+                    len(glossary_result.get("glossary") or []),
+                    len(glossary_result.get("glossary_rejected") or []),
+                ),
             }
         )
 
@@ -258,6 +321,15 @@ class AIAnalysisService:
             payload["metadata"]["conflict_reason"] = entry.get("reason")
             conflict_payloads.append(payload)
 
+        scored_payloads = auto_payloads + review_payloads + conflict_payloads
+        stages.append(
+            {
+                "stage": "knowledge_validation",
+                "state": "done",
+                "detail": "evidence-support-v1: %d candidate(s)" % len(scored_payloads),
+            }
+        )
+
         auto_accepted: list[dict[str, Any]] = []
         needs_review: list[dict[str, Any]] = []
         conflicts: list[dict[str, Any]] = []
@@ -293,7 +365,13 @@ class AIAnalysisService:
         identity = processing_identity(
             material_hash=_material_hash(record) or material_id,
             model=pipeline.model_id,
-            prompt_version=CHUNK_EXTRACTION_PROMPT_VERSION,
+            prompt_version="|".join(
+                [
+                    CHUNK_EXTRACTION_PROMPT_VERSION,
+                    SUMMARY_ZH_PROMPT_VERSION,
+                    GLOSSARY_PROMPT_VERSION,
+                ]
+            ),
             pipeline_version=PIPELINE_VERSION,
         )
         report = AIAnalysisReport(
@@ -304,6 +382,24 @@ class AIAnalysisService:
             stages=stages,
             summary=merged.summary,
             topics=list(merged.topics),
+            summary_zh=str(summary_zh_result.get("summary_zh") or ""),
+            topics_zh=list(summary_zh_result.get("topics_zh") or []),
+            summary_zh_status=str(summary_zh_result.get("status") or "skipped"),
+            summary_zh_evidence_ids=(
+                list(material_evidence_ids)
+                if summary_zh_result.get("status") == "completed"
+                else []
+            ),
+            summary_zh_grounded=summary_zh_result.get("status") == "completed",
+            glossary=list(glossary_result.get("glossary") or []),
+            glossary_rejected=list(glossary_result.get("glossary_rejected") or []),
+            glossary_status=str(glossary_result.get("status") or "skipped"),
+            derived_prompt_versions={
+                "summary_zh": SUMMARY_ZH_PROMPT_VERSION,
+                "glossary": GLOSSARY_PROMPT_VERSION,
+            },
+            summary_zh_prompt_version=SUMMARY_ZH_PROMPT_VERSION,
+            glossary_prompt_version=GLOSSARY_PROMPT_VERSION,
             definitions=list(merged.definitions),
             formulas=list(merged.formulas),
             examples=list(merged.examples),
@@ -419,7 +515,20 @@ class AIAnalysisService:
         payload["evidence_refs"] = merged_refs
         # 证据条数变了, 分数必须跟着重算 (与 validators.py 共用同一确定性
         # 公式), 否则 attach 会让 knowledge_score 与 evidence_refs 脱节。
-        payload["knowledge_score"] = knowledge_score_from_counts(len(merged_refs))
+        merged_refs = list(dict.fromkeys(str(ref) for ref in merged_refs if str(ref)))
+        support_count = len(merged_refs)
+        score = knowledge_score_from_counts(len(merged_refs))
+        payload["knowledge_score"] = score
+        metadata = dict(payload.get("metadata") or {})
+        metadata["knowledge_score_source"] = {
+            "kind": "grounding_evidence_count",
+            "formula": "knowledge_score_from_counts",
+            "formula_version": "evidence-support-v1",
+            "support_count": support_count,
+            "conflict_count": 0,
+            "value": score,
+        }
+        payload["metadata"] = metadata
         try:
             ctx.workflow.register_knowledge_point(payload)
         except Exception:  # noqa: BLE001 - 挂载失败不中断主流程 (报告里已有 KP)

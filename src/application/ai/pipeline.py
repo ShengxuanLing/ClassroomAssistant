@@ -42,9 +42,15 @@ from src.application.ai.prompts import (
     AUDIO_PROMPT_VERSION,
     MERGE_PROMPT_VERSION,
     SUMMARY_PROMPT_VERSION,
+    SUMMARY_ZH_PROMPT_VERSION,
+    GLOSSARY_PROMPT_VERSION,
+    COURSE_OVERVIEW_PROMPT_VERSION,
     build_chunk_extraction_prompt,
     build_merge_prompt,
     build_summary_prompt,
+    build_summary_zh_prompt,
+    build_glossary_prompt,
+    build_course_overview_prompt,
 )
 from src.application.ai.provider import (
     AIProvider,
@@ -56,12 +62,19 @@ from src.application.ai.schemas import (
     ChunkAIResult,
     KnowledgeCandidate,
     MaterialAIResult,
+    SummaryZhResult,
+    GlossaryEntry,
+    CourseOverviewResult,
     parse_material_response,
     parse_structured_response,
+    parse_summary_zh_response,
+    parse_glossary_response,
+    parse_course_overview_response,
 )
 from src.application.ai.validators import (
     GroundedCandidate,
     ground_candidates,
+    ground_glossary,
     map_candidate_to_kp_payload,
 )
 from src.application.errors import ProcessingError
@@ -104,8 +117,21 @@ class AIAnalysisReport:
     kind: str
     status: str  # "completed" | "failed" | "disabled"
     stages: list[dict[str, Any]] = field(default_factory=list)
+    report_version: str = "ai-report-v2"
     summary: str = ""
     topics: list[str] = field(default_factory=list)
+    summary_zh: str = ""
+    topics_zh: list[str] = field(default_factory=list)
+    summary_zh_status: str = "skipped"
+    summary_zh_evidence_ids: list[str] = field(default_factory=list)
+    summary_zh_grounded: bool = False
+    glossary: list[dict[str, Any]] = field(default_factory=list)
+    glossary_rejected: list[dict[str, Any]] = field(default_factory=list)
+    glossary_total: int = 0
+    glossary_status: str = "skipped"
+    derived_prompt_versions: dict[str, str] = field(default_factory=dict)
+    summary_zh_prompt_version: str = SUMMARY_ZH_PROMPT_VERSION
+    glossary_prompt_version: str = GLOSSARY_PROMPT_VERSION
     definitions: list[str] = field(default_factory=list)
     formulas: list[str] = field(default_factory=list)
     examples: list[str] = field(default_factory=list)
@@ -135,9 +161,22 @@ class AIAnalysisReport:
             "course_id": self.course_id,
             "kind": self.kind,
             "status": self.status,
+            "report_version": self.report_version,
             "stages": list(self.stages),
             "summary": self.summary,
             "topics": list(self.topics),
+            "summary_zh": self.summary_zh,
+            "topics_zh": list(self.topics_zh),
+            "summary_zh_status": self.summary_zh_status,
+            "summary_zh_evidence_ids": list(self.summary_zh_evidence_ids),
+            "summary_zh_grounded": self.summary_zh_grounded,
+            "glossary": list(self.glossary),
+            "glossary_rejected": list(self.glossary_rejected),
+            "glossary_total": len(self.glossary),
+            "glossary_status": self.glossary_status,
+            "derived_prompt_versions": dict(self.derived_prompt_versions),
+            "summary_zh_prompt_version": self.summary_zh_prompt_version,
+            "glossary_prompt_version": self.glossary_prompt_version,
             "definitions": list(self.definitions),
             "formulas": list(self.formulas),
             "examples": list(self.examples),
@@ -567,6 +606,477 @@ class AIUnderstandingPipeline:
         parsed.pipeline_version = PIPELINE_VERSION
         parsed.content_language = content_language
         return parsed
+
+    # ------------------------------------------------------------------
+    # Derived report stages (best effort; never block KP persistence)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _summary_digest_fields(merged: Any) -> tuple[str, list[str], list[str]]:
+        if isinstance(merged, Mapping):
+            summary = str(merged.get("summary") or "")
+            topics = [str(value) for value in (merged.get("topics") or []) if str(value).strip()]
+            definitions = [
+                str(value)
+                for value in (merged.get("definitions") or [])
+                if str(value).strip()
+            ]
+            candidates = list(merged.get("candidates") or merged.get("knowledge_points") or [])
+            for candidate in candidates:
+                if isinstance(candidate, Mapping):
+                    definitions.extend(
+                        str(value)
+                        for value in (
+                            list(candidate.get("original_terms") or [])
+                            + [candidate.get("title") or ""]
+                        )
+                        if str(value).strip()
+                    )
+            return summary, topics, list(dict.fromkeys(definitions))
+        candidates = list(getattr(merged, "candidates", []) or [])
+        definitions = [
+            str(value)
+            for value in (getattr(merged, "definitions", []) or [])
+            if str(value).strip()
+        ]
+        for candidate in candidates:
+            definitions.extend(
+                str(value)
+                for value in (
+                    list(getattr(candidate, "original_terms", []) or [])
+                    + [getattr(candidate, "title", "") or ""]
+                )
+                if str(value).strip()
+            )
+        return (
+            str(getattr(merged, "summary", "") or ""),
+            [str(value) for value in (getattr(merged, "topics", []) or []) if str(value).strip()],
+            list(dict.fromkeys(definitions)),
+        )
+
+    def build_summary_zh(
+        self,
+        merged: Any,
+        *,
+        material_label: str = "",
+        content_language: Optional[str] = None,
+        timeout_seconds: int = 60,
+    ) -> dict[str, Any]:
+        """Translate the merged report into a grounded Chinese learning layer.
+
+        The method intentionally returns a skipped result instead of raising:
+        a translation outage must never prevent grounded KnowledgePoints from
+        being registered.  The raw summary remains the source-language report.
+        """
+        summary, topics, definitions = self._summary_digest_fields(merged)
+        if not summary and not topics:
+            return {
+                "summary_zh": "",
+                "topics_zh": [],
+                "status": "skipped",
+                "prompt_version": SUMMARY_ZH_PROMPT_VERSION,
+            }
+        prompt = build_summary_zh_prompt(
+            summary,
+            topics,
+            definitions,
+            material_label,
+            content_language=content_language,
+        )
+        try:
+            raw_text = self._provider.generate_structured(
+                prompt, timeout_seconds=timeout_seconds
+            )
+            parsed, error = parse_summary_zh_response(raw_text)
+            if error is not None or parsed is None:
+                return {
+                    "summary_zh": "",
+                    "topics_zh": [],
+                    "status": "skipped",
+                    "error_code": MALFORMED_ERROR,
+                    "prompt_version": SUMMARY_ZH_PROMPT_VERSION,
+                }
+            return {
+                "summary_zh": parsed.summary_zh,
+                "topics_zh": list(parsed.topics_zh),
+                "status": "completed",
+                "prompt_version": SUMMARY_ZH_PROMPT_VERSION,
+                "provider": self.provider_name,
+                "model": self.model_id,
+            }
+        except Exception:  # noqa: BLE001 - derived report stage is best effort
+            return {
+                "summary_zh": "",
+                "topics_zh": [],
+                "status": "skipped",
+                "prompt_version": SUMMARY_ZH_PROMPT_VERSION,
+            }
+
+    @staticmethod
+    def _glossary_digest(
+        chunks: Sequence[Any],
+        evidences: Sequence[Any],
+        chunk_to_evidence: Mapping[str, str],
+    ) -> tuple[str, list[str], dict[str, str]]:
+        lines: list[str] = []
+        material_ids: list[str] = []
+        for chunk in chunks or ():
+            chunk_id = str(getattr(chunk, "chunk_id", "") or "")
+            text = str(getattr(chunk, "text", "") or "")
+            if not chunk_id or not text.strip():
+                continue
+            lines.append("CHUNK %s\n%s" % (chunk_id, text.strip()))
+            evidence_id = str(chunk_to_evidence.get(chunk_id, "") or "")
+            if evidence_id and evidence_id not in material_ids:
+                material_ids.append(evidence_id)
+        if not lines:
+            # Direct Evidence input is useful for unit callers that do not need
+            # chunking.  Treat the Evidence ID as the model-facing reference;
+            # the validator still checks that it belongs to this material.
+            for evidence in evidences or ():
+                evidence_id = str(getattr(evidence, "evidence_id", "") or "")
+                text = str(getattr(evidence, "content", "") or "")
+                if evidence_id and text.strip():
+                    lines.append("CHUNK %s\n%s" % (evidence_id, text.strip()))
+                    if evidence_id not in material_ids:
+                        material_ids.append(evidence_id)
+        return "\n\n".join(lines)[:12000], material_ids, dict(chunk_to_evidence)
+
+    def build_glossary(
+        self,
+        evidences: Sequence[Any] = (),
+        merged: Any = None,
+        *,
+        chunks: Sequence[Any] = (),
+        chunk_to_evidence: Optional[Mapping[str, str]] = None,
+        material_evidence_ids: Optional[Sequence[str]] = None,
+        evidence_texts: Optional[Mapping[str, Any]] = None,
+        material_label: str = "",
+        kp_titles: Sequence[Any] = (),
+        course_id: str = "",
+        timeout_seconds: int = 60,
+    ) -> dict[str, Any]:
+        """Extract and ground a bilingual glossary without touching KP state."""
+        mapping = dict(chunk_to_evidence or {})
+        if chunks and not mapping and evidences:
+            derived_chunks, derived_mapping, _ = chunks_for_evidence(
+                evidences,
+                material_id=str(getattr(chunks[0], "material_id", "") or "material"),
+            )
+            if derived_chunks and derived_mapping:
+                chunks = derived_chunks
+                mapping = derived_mapping
+        if chunks:
+            if not mapping:
+                mapping = {
+                    str(getattr(chunk, "chunk_id", "")): str(
+                        getattr(chunk, "evidence_id", "") or ""
+                    )
+                    for chunk in chunks
+                }
+            chunk_to_evidence = mapping
+            digest, discovered_ids, mapping = self._glossary_digest(
+                chunks, evidences, mapping
+            )
+        else:
+            for evidence in evidences or ():
+                evidence_id = str(getattr(evidence, "evidence_id", "") or "")
+                if evidence_id:
+                    mapping.setdefault(evidence_id, evidence_id)
+            digest, discovered_ids, mapping = self._glossary_digest(
+                (), evidences, mapping
+            )
+        ids = [str(value) for value in (material_evidence_ids or discovered_ids) if str(value)]
+        if not digest.strip() or not ids:
+            return {
+                "glossary": [],
+                "glossary_rejected": [],
+                "status": "skipped",
+                "prompt_version": GLOSSARY_PROMPT_VERSION,
+            }
+        if evidence_texts is None:
+            evidence_texts = {
+                str(getattr(evidence, "evidence_id", "")): str(
+                    getattr(evidence, "content", "") or ""
+                )
+                for evidence in evidences or ()
+                if str(getattr(evidence, "evidence_id", "") or "")
+            }
+        if not kp_titles and merged is not None:
+            candidates = (
+                merged.get("candidates")
+                if isinstance(merged, Mapping)
+                else getattr(merged, "candidates", [])
+            )
+            kp_titles = [
+                candidate.get("title")
+                if isinstance(candidate, Mapping)
+                else getattr(candidate, "title", "")
+                for candidate in (candidates or [])
+            ]
+        title_values = [
+            str(value.get("title") or "").strip()
+            if isinstance(value, Mapping)
+            else str(value or "").strip()
+            for value in (kp_titles or [])
+        ]
+        prompt = build_glossary_prompt(
+            digest,
+            kp_titles=[value for value in title_values if value],
+            material_label=material_label,
+        )
+        try:
+            raw_text = self._provider.generate_structured(
+                prompt, timeout_seconds=timeout_seconds
+            )
+            entries, error = parse_glossary_response(raw_text)
+            if error is not None or entries is None:
+                return {
+                    "glossary": [],
+                    "glossary_rejected": [],
+                    "status": "skipped",
+                    "error_code": MALFORMED_ERROR,
+                    "prompt_version": GLOSSARY_PROMPT_VERSION,
+                }
+            accepted, rejected = ground_glossary(
+                entries,
+                chunk_to_evidence=mapping,
+                material_evidence_ids=ids,
+                evidence_texts=evidence_texts,
+                course_id=course_id,
+                kp_titles=kp_titles,
+            )
+            return {
+                "glossary": accepted,
+                "glossary_rejected": rejected,
+                "status": "completed",
+                "prompt_version": GLOSSARY_PROMPT_VERSION,
+                "provider": self.provider_name,
+                "model": self.model_id,
+            }
+        except Exception:  # noqa: BLE001 - glossary is report-only
+            return {
+                "glossary": [],
+                "glossary_rejected": [],
+                "status": "skipped",
+                "prompt_version": GLOSSARY_PROMPT_VERSION,
+            }
+
+    @staticmethod
+    def aggregate_course_reports(
+        reports: Sequence[Mapping[str, Any]],
+        *,
+        course_id: str = "",
+        missing_material_ids: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        """Build a deterministic, course-scoped digest for synthesis/UI."""
+        rows: list[dict[str, Any]] = []
+        topic_materials: dict[str, list[str]] = {}
+        topic_summaries: dict[str, list[str]] = {}
+        for report in reports or ():
+            if not isinstance(report, Mapping):
+                continue
+            # Defence in depth: Workspace already selects by course, but the
+            # pure aggregator must not become a cross-course leak when reused.
+            report_course = str(report.get("course_id") or course_id)
+            if course_id and report_course != str(course_id):
+                continue
+            material_id = str(report.get("material_id") or "")
+            if not material_id:
+                continue
+            summary = str(report.get("summary") or "")
+            topics = [str(value).strip() for value in (report.get("topics") or []) if str(value).strip()]
+            row = {
+                "material_id": material_id,
+                "filename": str(report.get("filename") or material_id),
+                "summary": summary[:1200],
+                "topics": topics,
+                "knowledge_points_total": int(report.get("knowledge_points_total") or 0),
+                "auto_accepted": len(report.get("auto_accepted") or []),
+                "needs_review": len(report.get("needs_review") or []),
+                "conflicts": len(report.get("conflicts") or []),
+            }
+            rows.append(row)
+            for topic in topics:
+                key = " ".join(topic.casefold().split())
+                if not key:
+                    continue
+                label = next(
+                    (value for value in topic_materials if value.casefold() == key),
+                    topic,
+                )
+                topic_materials.setdefault(label, [])
+                if material_id not in topic_materials[label]:
+                    topic_materials[label].append(material_id)
+                if summary:
+                    topic_summaries.setdefault(label, [])
+                    if summary not in topic_summaries[label]:
+                        topic_summaries[label].append(summary[:300])
+        rows.sort(key=lambda item: item["material_id"])
+        missing = [str(value) for value in (missing_material_ids or []) if str(value)]
+        topic_map = [
+            {
+                "topic": topic,
+                "material_ids": list(material_ids),
+                "count": len(material_ids),
+                "summary": " · ".join(topic_summaries.get(topic, []))[:800],
+            }
+            for topic, material_ids in sorted(
+                topic_materials.items(), key=lambda pair: pair[0].casefold()
+            )
+        ]
+        overview_parts = [
+            "%s: %s" % (row["filename"], row["summary"])
+            for row in rows
+            if row["summary"]
+        ]
+        overview = "；".join(overview_parts)[:6000]
+        total = len(rows) + len(missing)
+        return {
+            "course_id": str(course_id or ""),
+            "overview": overview,
+            "topic_map": topic_map,
+            "gaps": list(missing),
+            "materials": rows,
+            "coverage": {
+                "materials_total": total,
+                "materials_with_reports": len(rows),
+                "materials_missing_reports": len(missing),
+                "gaps": list(missing),
+            },
+            "truncated": False,
+        }
+
+    def synthesize_course_overview(
+        self,
+        course_reports_digest: Any,
+        *,
+        course_id: str = "",
+        reports: Optional[Sequence[Mapping[str, Any]]] = None,
+        missing_material_ids: Sequence[str] = (),
+        provider: Optional[AIProvider] = None,
+        timeout_seconds: int = 60,
+    ) -> dict[str, Any]:
+        """Run at most one LLM call over a report-only course digest."""
+        if reports is None:
+            if isinstance(course_reports_digest, Mapping):
+                reports = list(
+                    course_reports_digest.get("reports")
+                    or course_reports_digest.get("materials")
+                    or []
+                )
+            elif isinstance(course_reports_digest, (list, tuple)):
+                reports = list(course_reports_digest)
+            elif isinstance(course_reports_digest, str):
+                try:
+                    decoded = json.loads(course_reports_digest)
+                except (TypeError, ValueError):
+                    decoded = None
+                if isinstance(decoded, list):
+                    reports = decoded
+                elif isinstance(decoded, Mapping):
+                    reports = list(decoded.get("reports") or decoded.get("materials") or [])
+                else:
+                    reports = []
+            else:
+                reports = []
+        base = self.aggregate_course_reports(
+            reports,
+            course_id=course_id,
+            missing_material_ids=missing_material_ids,
+        )
+        # Workspace passes the already-reduced report digest (summaries,
+        # topics and KP titles only).  Keep that boundary instead of silently
+        # re-expanding the full reports; direct callers may still supply a
+        # JSON/list shape, which is reduced to a compact course-scoped payload.
+        if isinstance(course_reports_digest, str) and course_reports_digest.strip():
+            digest = course_reports_digest
+        else:
+            digest_rows = []
+            for report in reports or ():
+                if not isinstance(report, Mapping):
+                    continue
+                report_course = str(report.get("course_id") or course_id)
+                if course_id and report_course != str(course_id):
+                    continue
+                digest_rows.append(
+                    {
+                        "material_id": str(report.get("material_id") or ""),
+                        "filename": str(
+                            report.get("filename") or report.get("material_id") or ""
+                        ),
+                        "summary": str(report.get("summary") or "")[:1200],
+                        "topics": [
+                            str(value) for value in (report.get("topics") or [])
+                        ],
+                    }
+                )
+            digest = json.dumps(
+                {"course_id": course_id, "reports": digest_rows},
+                ensure_ascii=False,
+            )
+        base["truncated"] = len(digest) > 16000
+        if not reports:
+            base.update({"status": "partial", "provider": "", "model": ""})
+            return base
+        actual_provider = provider or self._provider
+        actual_pipeline = self
+        if provider is not None and provider is not self._provider:
+            actual_pipeline = AIUnderstandingPipeline(provider, clock=self._clock)
+        try:
+            prompt = build_course_overview_prompt(digest, course_id or "course")
+            raw_text = actual_provider.generate_structured(
+                prompt, timeout_seconds=timeout_seconds
+            )
+            parsed, error = parse_course_overview_response(raw_text)
+            if error is not None or parsed is None:
+                raise ValueError("malformed course overview")
+            allowed_ids = {
+                str(row.get("material_id"))
+                for row in base.get("materials", [])
+                if row.get("material_id")
+            }
+            clean_map: list[dict[str, Any]] = []
+            for item in parsed.topic_map:
+                ids = [
+                    value
+                    for value in item.get("material_ids", [])
+                    if str(value) in allowed_ids
+                ]
+                if not ids:
+                    continue
+                clean_map.append(
+                    {
+                        "topic": str(item.get("topic") or ""),
+                        "material_ids": ids,
+                        "count": len(ids),
+                        "summary": str(item.get("summary") or ""),
+                    }
+                )
+            if parsed.overview.strip():
+                base["overview"] = parsed.overview.strip()
+            if clean_map:
+                base["topic_map"] = clean_map
+            # Deterministic missing-report gaps always win over model prose.
+            base["llm_gaps"] = list(parsed.gaps)
+            base.update(
+                {
+                    "status": "completed",
+                    "provider": str(getattr(actual_pipeline, "provider_name", "?")),
+                    "model": str(getattr(actual_pipeline, "model_id", "?")),
+                    "prompt_version": COURSE_OVERVIEW_PROMPT_VERSION,
+                }
+            )
+        except Exception:  # noqa: BLE001 - always retain deterministic fallback
+            base.update(
+                {
+                    "status": "partial",
+                    "provider": str(getattr(actual_pipeline, "provider_name", "?")),
+                    "model": str(getattr(actual_pipeline, "model_id", "?")),
+                    "prompt_version": COURSE_OVERVIEW_PROMPT_VERSION,
+                }
+            )
+        return base
 
     # ------------------------------------------------------------------
     # Level 3: grounding + dedup + classification (落库前最后一步)

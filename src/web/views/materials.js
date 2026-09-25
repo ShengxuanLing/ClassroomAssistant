@@ -289,7 +289,79 @@ function aiAutoLine(ai) {
   return '<span class="tiny muted">' + esc(t('ai.notAnalyzed')) + '</span>';
 }
 
+function renderAiSummaryZh(report) {
+  const summary = String(report.summary_zh || '');
+  const topics = Array.isArray(report.topics_zh) ? report.topics_zh : [];
+  let body = '';
+  if (summary) {
+    body += '<p class="small">' + esc(summary) + '</p>';
+  } else {
+    body += '<p class="small muted">' + esc(t('ai.noZhSummary')) + ' ' +
+      esc(t('ai.retryHint')) + '</p>';
+  }
+  if (topics.length) {
+    body += '<p class="small"><strong>' + esc(t('ai.topics')) + '</strong>: ' +
+      topics.map((topic) => esc(topic)).join(' · ') + '</p>';
+  }
+  return '<div class="card"><div class="card-head"><h2>' +
+    esc(t('ai.summaryZhTitle')) + '</h2></div>' + body + '</div>';
+}
+
+function renderAiGlossary(report) {
+  const entries = Array.isArray(report.glossary) ? report.glossary : [];
+  const total = Number(report.glossary_total === undefined ? entries.length : report.glossary_total);
+  const complete = report.glossary_complete === true || entries.length >= total;
+  const visible = complete ? entries : entries.slice(0, 20);
+  let body = '';
+  if (!visible.length) {
+    body = '<p class="small muted">' + esc(t('ai.noGlossary')) + '</p>';
+  } else {
+    const rows = visible.map((entry) => {
+      const ids = Array.isArray(entry.evidence_ids) ? entry.evidence_ids :
+        (Array.isArray(entry.evidence_refs) ? entry.evidence_refs : []);
+      return '<tr><td class="break-all">' + esc(entry.term || '') + '</td>' +
+        '<td>' + esc(entry.lang || '—') + '</td>' +
+        '<td>' + esc(entry.zh || '') + '</td>' +
+        '<td class="num">' + esc(ids.length) + '</td></tr>';
+    }).join('');
+    body = '<table class="data">' + tableCaption(t('ai.glossaryTitle')) +
+      '<thead><tr><th scope="col">' +
+      esc(t('ai.glossaryTerm')) + '</th><th scope="col">' +
+      esc(t('ai.glossaryLanguage')) + '</th><th scope="col">' +
+      esc(t('ai.glossaryTranslation')) + '</th><th scope="col" class="num">' +
+      esc(t('ai.glossaryEvidence')) + '</th></tr></thead><tbody>' +
+      rows + '</tbody></table>';
+    if (!complete && total > entries.length) {
+      body += '<p class="tiny muted">' + esc(t('ai.glossaryTruncated')) + '</p>' +
+        '<button type="button" class="small" data-action="show-all-glossary"' +
+        ' data-total="' + esc(String(total)) + '">' + esc(t('ai.showAll')) + '</button>';
+    }
+  }
+  return '<div class="card"><div class="card-head"><h2>' +
+    esc(t('ai.glossaryTitle')) + '</h2><span class="small muted">' +
+    esc(String(total)) + '</span></div>' + body + '</div>';
+}
+
+async function actionShowAllGlossary(button, courseId, materialId) {
+  if (!courseId || !materialId || !button) return;
+  const requested = Number(button.getAttribute('data-total') || 0);
+  const limit = Math.max(1, Math.min(Number.isFinite(requested) ? requested : 20, 500));
+  button.disabled = true;
+  try {
+    const summary = await api('/materials/' + encodeURIComponent(materialId) + '/ai-summary', {
+      query: { course_id: courseId, glossary_limit: limit },
+    });
+    const panel = document.getElementById('ai-panel');
+    if (!panel) return;
+    panel.innerHTML = renderAiReport(summary);
+  } catch (err) {
+    button.disabled = false;
+    toast(t('ai.glossaryLoadFailed') + ': ' + err.message, 'bad');
+  }
+}
+
 function renderAiReport(report) {
+  report = report || {};
   const kpRow = function (kp) {
     return '<li><strong>' + esc(kp.title || kp.knowledge_id) + '</strong> ' +
       '<span class="tiny muted mono">' + esc(kp.knowledge_id || '') + '</span> ' +
@@ -299,16 +371,16 @@ function renderAiReport(report) {
   const listOf = function (items) {
     return items.length ? '<ul class="small">' + items.map(kpRow).join('') + '</ul>' : '';
   };
-  let html = '<div class="card"><div class="card-head"><h2>' + t('ai.summaryTitle') + '</h2>' +
+  let html = '<div class="card"><div class="card-head"><h2>' + esc(t('ai.summaryTitle')) + '</h2>' +
     '<span class="small muted">' + esc(report.provider || '') + ' / ' + esc(report.model || '') + '</span></div>';
   if (report.summary) html += '<p class="small">' + esc(report.summary) + '</p>';
   html += renderAiStages(report);
   if ((report.topics || []).length) {
-    html += '<p class="small"><strong>' + t('ai.topics') + '</strong>: ' +
+    html += '<p class="small"><strong>' + esc(t('ai.topics')) + '</strong>: ' +
       report.topics.map((x) => esc(x)).join(' · ') + '</p>';
   }
   if (report.knowledge_points_total !== undefined && report.knowledge_points_total !== null) {
-    html += '<p class="small"><strong>' + t('ai.kpSummary') + '</strong>: ' +
+    html += '<p class="small"><strong>' + esc(t('ai.kpSummary')) + '</strong>: ' +
       esc(report.knowledge_points_total) + '</p>';
   }
   const groups = [
@@ -321,31 +393,33 @@ function renderAiReport(report) {
     const raw = group[1];
     const items = Array.isArray(raw) ? raw : [];
     const count = Array.isArray(raw) ? raw.length : (raw || 0);
-    html += '<p><span class="pill ' + group[2] + '">' + t(group[0]) + ' ' + esc(count) + '</span></p>' + listOf(items);
+    html += '<p><span class="pill ' + group[2] + '">' + esc(t(group[0])) + ' ' + esc(count) + '</span></p>' + listOf(items);
   });
   if ((report.definitions || []).length) {
-    html += '<p class="small"><strong>' + t('ai.definitions') + '</strong></p><ul class="small">' +
+    html += '<p class="small"><strong>' + esc(t('ai.definitions')) + '</strong></p><ul class="small">' +
       report.definitions.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>';
   }
   if ((report.formulas || []).length) {
-    html += '<p class="small"><strong>' + t('ai.formulas') + '</strong></p><ul class="small">' +
+    html += '<p class="small"><strong>' + esc(t('ai.formulas')) + '</strong></p><ul class="small">' +
       report.formulas.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>';
   }
   if ((report.examples || []).length) {
-    html += '<p class="small"><strong>' + t('ai.examples') + '</strong></p><ul class="small">' +
+    html += '<p class="small"><strong>' + esc(t('ai.examples')) + '</strong></p><ul class="small">' +
       report.examples.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>';
   }
   if ((report.prerequisites || []).length) {
-    html += '<p class="small"><strong>' + t('ai.prereqs') + '</strong></p><ul class="small">' +
+    html += '<p class="small"><strong>' + esc(t('ai.prereqs')) + '</strong></p><ul class="small">' +
       report.prerequisites.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>';
   }
   if ((report.difficulties || []).length) {
-    html += '<p class="small"><strong>' + t('ai.difficulties') + '</strong></p><ul class="small">' +
+    html += '<p class="small"><strong>' + esc(t('ai.difficulties')) + '</strong></p><ul class="small">' +
       report.difficulties.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>';
   }
   html += '<p class="tiny muted">chunks ' + esc(report.chunk_succeeded) + '/' + esc(report.chunk_total) +
     ' · prompt ' + esc(report.prompt_version || '') + '</p></div>';
-  return html;
+  // Derived layers are separate cards so a missing translation/glossary never
+  // hides the original-language report above.
+  return html + renderAiSummaryZh(report) + renderAiGlossary(report);
 }
 
 async function loadAiSummaryIntoPanel(courseId, materialId) {

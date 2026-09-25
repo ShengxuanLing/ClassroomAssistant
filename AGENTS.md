@@ -318,8 +318,9 @@ classroom-data/
   `tests/test_concurrent_writes.py`，均带 `integration` 标记、默认 deselected，
   `run_tests.cmd` 默认口径 `-m "not integration"` **未改动**。nightly 命令为
   `pytest -m integration -k nightly`（见 README「Nightly：真实引擎冒烟」）。
-  发布门禁改为**读真实值**断言（迁移链 3 条且连续、仓储内省计数 18），
-  不再依赖文档关键字。
+  发布门禁改为**读真实值**断言（迁移链 4 条且连续、仓储内省计数 19），
+  不再依赖文档关键字。（2026-09-25：m004 `flashcards` 加入后，迁移链
+  3→4、仓储 18→19，`tests/test_production_gate.py` 与本文档同批同步。）
 
 - **2026-09-20（P1-6 前端零构建拆分）**：`src/web/app.js`（5288 行单文件）按主题拆为 `api.js` / `i18n.js` / `app.js`（核心工具 + 共享 state + 路由 + 启动）+ `views/*.js` 共 12 个脚本，`index.html` 用多个 `<script>` **按固定顺序**引入。仍然零依赖、零构建、无打包器、无新 npm 依赖。加载顺序不可调换：`i18n.js` 必须在`app.js` 之前（`state` 初始化依赖 `pickInitialLang()` / `UI_LANGUAGES`）。已用等价性验证证明路由分支（11 项）、API 路径（21 项）、页面函数（19 项）、顶层定义（119 项）集合完全不变，且无重复定义。`esc()` 转义与原文原样渲染语义未改动。
 

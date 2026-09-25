@@ -23,6 +23,12 @@ python-docx>=1.0,<2.0
 av>=10.0
 numpy>=1.24
 
+# Memory scheduling: MIT FSRS implementation from open-spaced-repetition.
+# FSRS production backend, imported lazily by src/scheduling/fsrs.py
+# (PyFSRSBackend). The in-tree scheduler is the deterministic fallback used
+# when this optional wheel is absent, so the app still runs without it.
+fsrs>=6.0,<7.0
+
 # Task 36: real local OCR (no cloud API, no GPU stack, CPU by default).
 # rapidocr-onnxruntime ships its PP-OCR ONNX models inside the wheel, so
 # the first OCR call needs no download and works fully offline.

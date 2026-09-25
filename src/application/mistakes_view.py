@@ -58,6 +58,12 @@ SCHEMA_VERSION = 1
 #: 三语各自翻译，但英文原文是契约的一部分（测试锁它）。
 MISTAKES_EMPTY_NOTE = "No mistakes yet."
 
+#: A retry is allowed only for an exercise whose latest persisted evaluation is
+#: explicitly incorrect.  Historical mistakes remain visible in the centre, but
+#: a later correct answer closes the retry item instead of creating duplicates.
+RETRY_MISSED = "missed_it"
+RETRY_GOT_IT = "got_it"
+
 #: Task 30 里**真正表示"需要再看一眼"**的两个状态。
 #: 只有这两个会被投影成 attention；其余状态（含 not_started）不是薄弱信号。
 #: 注意 ``reviewing`` 在 Task 30 里由 reviewed 事件产生，
@@ -202,7 +208,14 @@ class MistakesView:
 
         kp_index = self._knowledge_index()
         exercise_index = self._exercise_index()
-        mistakes = self._mistakes(sid, exercise_index, kp_index)
+        # 建**一次** ``answer_id -> evaluation`` 索引, 下面 mistakes /
+        # retry_queue 两个投影共用它 (否则每条答案会被 get_evaluation 查两遍)。
+        evaluations = self._evaluation_index(
+            self._learning().answer_log_for(sid) or []
+        )
+        mistakes = self._mistakes(
+            sid, exercise_index, kp_index, _evaluations=evaluations
+        )
         states = self._state_index(sid)
 
         knowledge_rows = self._by_knowledge(mistakes, kp_index, states)
@@ -213,6 +226,11 @@ class MistakesView:
         )
 
         weak = self._weak_knowledge(knowledge_rows, states)
+        retry_queue = self.retry_queue(
+            student_id,
+            knowledge_id=None,
+            _preloaded=(mistakes, exercise_index, evaluations),
+        )
 
         return {
             "schema_version": SCHEMA_VERSION,
@@ -227,6 +245,7 @@ class MistakesView:
             "knowledge": knowledge_rows,
             "groups": groups,
             "weak_knowledge": weak,
+            "retry_queue": retry_queue,
             "counts": {
                 "mistakes": len(mistakes),
                 "knowledge_with_mistakes": len(knowledge_rows),
@@ -338,6 +357,8 @@ class MistakesView:
         student_id: str,
         exercise_index: Mapping[str, Mapping[str, Any]],
         kp_index: Mapping[str, Mapping[str, Any]],
+        *,
+        _evaluations: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> list[dict[str, Any]]:
         """错题列表 —— 每一条都来自一份既有 Evaluation。
 
@@ -347,9 +368,12 @@ class MistakesView:
         查询模式: ``answer_log_for`` 一次取回该学生的**全部**答案,
         再一次性建 ``answer_id -> evaluation`` 索引。全程没有逐条
         往返数据库的循环 (spec: 禁止 N+1 / N×M)。
+
+        ``_evaluations`` 只给 ``center()`` 用: 它已经把索引建好了, 传进来
+        就**不许**再建一遍 —— 同一批答案被查两遍是 N+1 的另一种写法。
         """
         log = self._learning().answer_log_for(student_id) or []
-        index = self._evaluation_index(log)
+        index = self._evaluation_index(log) if _evaluations is None else _evaluations
         rows: list[dict[str, Any]] = []
         for answer in log:
             if not isinstance(answer, Mapping):
@@ -623,6 +647,112 @@ class MistakesView:
     # 建议动作与依据（spec 65.8 / 65.9 / 65.10）
     # ------------------------------------------------------------------
 
+    def retry_queue(
+        self,
+        student_id: str,
+        *,
+        knowledge_id: Optional[str] = None,
+        _preloaded: Optional[
+            tuple[
+                Sequence[Mapping[str, Any]],
+                Mapping[str, Mapping[str, Any]],
+                Mapping[str, Mapping[str, Any]],
+                ...,
+            ]
+        ] = None,
+    ) -> list[dict[str, Any]]:
+        """Return existing exercises whose latest answer is still ``incorrect``.
+
+        This is deliberately a read projection over persisted answers and
+        evaluations.  It never generates a new exercise and never treats an
+        unattempted exercise as a retry candidate.
+        """
+        sid = _clean(student_id)
+        if not sid:
+            raise InvalidInputError("student_id must be non-empty")
+        kp_filter = _clean(knowledge_id) if knowledge_id is not None else None
+        if _preloaded is None:
+            kp_index = self._knowledge_index()
+            exercise_index = self._exercise_index()
+            mistakes = self._mistakes(sid, exercise_index, kp_index)
+            evaluations = self._evaluation_index(
+                self._learning().answer_log_for(sid) or []
+            )
+        else:
+            # ``_preloaded`` 允许 2 元或 3 元: 第三个元素 (已建好的
+            # ``answer_id -> evaluation`` 索引) 是**可选**的 —— 省略时退回
+            # 自建, 行为不变; 给出时 ``center()`` 与本方法共用同一份索引,
+            # 同一批答案就不会被 get_evaluation 查两遍。
+            mistakes, exercise_index, *rest = _preloaded
+            evaluations = (
+                rest[0]
+                if rest
+                else self._evaluation_index(
+                    self._learning().answer_log_for(sid) or []
+                )
+            )
+        log = self._learning().answer_log_for(sid) or []
+        latest: dict[str, Mapping[str, Any]] = {}
+        for answer in log:
+            if not isinstance(answer, Mapping):
+                continue
+            eid = _clean(answer.get("exercise_id"))
+            aid = _clean(answer.get("answer_id"))
+            if not eid or not aid:
+                continue
+            row = {"answer": answer, "evaluation": evaluations.get(aid)}
+            previous = latest.get(eid)
+            if previous is None or (
+                int(answer.get("sequence") or 0),
+                aid,
+            ) >= (
+                int(previous["answer"].get("sequence") or 0),
+                _clean(previous["answer"].get("answer_id")),
+            ):
+                latest[eid] = row
+
+        historical_missed = {
+            _clean(row.get("exercise_id"))
+            for row in mistakes
+            if row.get("exercise_id")
+        }
+        out: list[dict[str, Any]] = []
+        for eid in sorted(historical_missed):
+            current = latest.get(eid)
+            evaluation = current.get("evaluation") if current else None
+            if not isinstance(evaluation, Mapping):
+                continue
+            if _clean(evaluation.get("status")).lower() != "incorrect":
+                continue
+            exercise = exercise_index.get(eid) or {}
+            kp_ids = [str(k) for k in (exercise.get("knowledge_point_ids") or [])]
+            if kp_filter and kp_filter not in kp_ids:
+                continue
+            answers = [
+                a for a in log
+                if isinstance(a, Mapping) and _clean(a.get("exercise_id")) == eid
+            ]
+            next_sequence = max(
+                (int(a.get("sequence") or 0) for a in answers), default=-1
+            ) + 1
+            out.append(
+                {
+                    "exercise_id": eid,
+                    "prompt": exercise.get("prompt"),
+                    "exercise_type": exercise.get("exercise_type"),
+                    "knowledge_point_ids": kp_ids,
+                    "status": RETRY_MISSED,
+                    "got_it": False,
+                    "missed_it": True,
+                    "retry_count": len(answers),
+                    "next_sequence": next_sequence,
+                    "last_answer_id": _clean((current or {}).get("answer", {}).get("answer_id"))
+                    if current
+                    else None,
+                }
+            )
+        return out
+
     def enrich(
         self,
         student_id: str,
@@ -713,6 +843,9 @@ class MistakesView:
             "evidence": evidence,
             "prerequisites": prerequisites,
             "practice_targets": practice,
+            "retry_queue": self.retry_queue(
+                sid, knowledge_id=kp, _preloaded=(mistakes, exercise_index)
+            ),
             "suggested_actions": self._suggested_actions(
                 row, evidence, prerequisites, practice
             ),

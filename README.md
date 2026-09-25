@@ -42,6 +42,10 @@ pip install -r requirements.txt
 
 `requirements.txt` 里有两条与 Python 版本有关的硬约束，改依赖前请先读文件里的注释：
 
+记忆卡复习调度使用 `fsrs`（MIT，open-spaced-repetition）适配器；它被隔离在
+`src/scheduling/`，StudyPlanner 的确定性规则排序不变。未安装该可选 wheel 时，
+应用会明确使用 deterministic-fsrs-fallback，而不会把降级结果冒充完整 FSRS。
+
 - `rapidocr-onnxruntime==1.2.3` —— 1.3.x 声明 `Requires-Python <3.13`，
   3.13/3.14 上唯一可安装的版本就是 1.2.3，所以是精确固定。
 - `ctranslate2` 是 `faster-whisper` 的传递依赖，但**显式声明**了，避免

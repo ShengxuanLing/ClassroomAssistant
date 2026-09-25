@@ -16,7 +16,8 @@ Prompt 不散落在业务代码里: 本模块是唯一允许组装发往 provide
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+from typing import Any, Optional, Sequence
 
 from src.application.ai import PROMPT_VERSION
 
@@ -24,12 +25,18 @@ __all__ = [
     "CHUNK_EXTRACTION_PROMPT_VERSION",
     "MERGE_PROMPT_VERSION",
     "SUMMARY_PROMPT_VERSION",
+    "SUMMARY_ZH_PROMPT_VERSION",
+    "GLOSSARY_PROMPT_VERSION",
+    "COURSE_OVERVIEW_PROMPT_VERSION",
     "IMAGE_PROMPT_VERSION",
     "AUDIO_PROMPT_VERSION",
     "ALLOWED_KNOWLEDGE_TYPES",
     "build_chunk_extraction_prompt",
     "build_merge_prompt",
     "build_summary_prompt",
+    "build_summary_zh_prompt",
+    "build_glossary_prompt",
+    "build_course_overview_prompt",
     "build_image_analysis_prompt",
     "build_audio_analysis_prompt",
 ]
@@ -41,6 +48,12 @@ __all__ = [
 CHUNK_EXTRACTION_PROMPT_VERSION = PROMPT_VERSION + ":extract-v3"
 MERGE_PROMPT_VERSION = PROMPT_VERSION + ":merge-v3"
 SUMMARY_PROMPT_VERSION = PROMPT_VERSION + ":summary-v3"
+#: Derived report stages are versioned independently.  They never change the
+#: Evidence/KP extraction contract, but a changed translation/glossary prompt
+#: must still be visible in the report processing identity.
+SUMMARY_ZH_PROMPT_VERSION = PROMPT_VERSION + ":summary-zh-v1"
+GLOSSARY_PROMPT_VERSION = PROMPT_VERSION + ":glossary-v1"
+COURSE_OVERVIEW_PROMPT_VERSION = PROMPT_VERSION + ":course-overview-v1"
 IMAGE_PROMPT_VERSION = PROMPT_VERSION + ":image-v3"
 AUDIO_PROMPT_VERSION = PROMPT_VERSION + ":audio-v3"
 
@@ -193,6 +206,110 @@ def build_summary_prompt(
         + '\nReturn JSON: {"summary": str, "topics": [str], '
         + '"definitions": [str], "formulas": [str], "examples": [str], '
         + '"prerequisites": [str], "difficulties": [str]}'
+    )
+
+
+def build_summary_zh_prompt(
+    summary: str = "",
+    topics: Optional[Sequence[Any]] = None,
+    definitions: Optional[Sequence[Any]] = None,
+    material_label: str = "",
+    *,
+    content_language: Optional[str] = None,
+) -> str:
+    """Build the grounded Chinese-learning summary stage.
+
+    This stage receives the already merged report digest, never the raw
+    Evidence.  The original term stays visible in the Chinese explanation;
+    only the explanatory language changes.  Keeping this input small is both
+    a cost guard and a useful boundary against accidental full-text
+    translation.
+    """
+    digest = json.dumps(
+        {
+            "summary": str(summary or ""),
+            "topics": list(topics or []),
+            "definitions": list(definitions or []),
+        },
+        ensure_ascii=False,
+    )
+    language_note = (
+        "The source report language is %s; the requested explanation language is zh."
+        % content_language
+        if content_language
+        else "The requested explanation language is zh (Chinese)."
+    )
+    return (
+        "You are a classroom-assistant translator. Produce a concise Chinese "
+        "learning summary from the merged report digest below.\n"
+        "Use ONLY facts present in SUMMARY INPUT. Do not add outside knowledge, "
+        "examples, numbers, or conclusions.\n"
+        "Keep every Spanish/Catalan technical term verbatim and add a short "
+        "Chinese explanation in parentheses, for example capital（资本）. "
+        "Do not translate person names or course names. Mark a culture-specific "
+        "concept with [文化概念] when needed.\n"
+        "The output is an explanation layer, not a verbatim translation of a "
+        "source passage. Keep it exam-oriented and do not claim evidence that "
+        "is absent from the digest.\n"
+        + language_note
+        + "\nMATERIAL: %s\n\nSUMMARY INPUT:\n%s\n" % (material_label or "course material", digest)
+        + '\nReturn strict JSON: {"summary_zh": str, "topics_zh": [str]}. '
+        'Do not wrap it in markdown or prose outside the JSON object.'
+    )
+
+
+def build_glossary_prompt(
+    evidence_digest: str = "",
+    kp_titles: Optional[Sequence[Any]] = None,
+    material_label: str = "",
+) -> str:
+    """Build the evidence-grounded bilingual glossary stage prompt."""
+    titles = json.dumps(list(kp_titles or []), ensure_ascii=False)
+    return (
+        "You are a classroom-assistant terminology extractor. Build a compact "
+        "Spanish/Catalan -> Chinese glossary from EVIDENCE DIGEST only.\n"
+        "GROUNDING RULES:\n"
+        "1. Every term MUST be copied character-for-character from the evidence "
+        "digest (validator performs a case/accent-insensitive substring check).\n"
+        "2. Use one term per card; do not translate a whole sentence. Keep the "
+        "term's original spelling and accents.\n"
+        "3. lang must be exactly es or ca. If the language is uncertain, return "
+        "lang=[语言待确认].\n"
+        "4. zh is a concise Chinese explanation (at most 20 Chinese characters), "
+        "not a sentence and not a claim beyond the evidence.\n"
+        "5. evidence_refs may contain only chunk IDs listed in the digest. Never "
+        "invent an evidence ID, page, or timestamp.\n"
+        "6. Do not include personal names, course names, or administrative noise.\n"
+        "Return strict JSON: {\"glossary\": [{\"term\": str, \"lang\": str, "
+        "\"zh\": str, \"evidence_refs\": [str]}]}. No markdown or prose outside "
+        "the JSON object.\nMATERIAL: %s\nAVAILABLE KP TITLES: %s\n\n"
+        "EVIDENCE DIGEST:\n%s\n"
+        % (
+            material_label or "course material",
+            titles,
+            str(evidence_digest or "")[:12000],
+        )
+    )
+
+
+def build_course_overview_prompt(
+    course_reports_digest: str = "",
+    material_label: str = "course",
+) -> str:
+    """Build the one-shot, read-only course synthesis prompt."""
+    return (
+        "You are a classroom-assistant course synthesizer. Synthesize only the "
+        "material reports in COURSE REPORTS DIGEST; do not use outside knowledge "
+        "and never include another course.\n"
+        "Keep source claims attributable to the supplied material reports. "
+        "Return a concise course overview, a topic-to-material map, and explicit "
+        "coverage gaps. Do not invent a gap that is not represented by missing "
+        "reports.\n"
+        "Return strict JSON: {\"overview\": str, \"topic_map\": [{\"topic\": str, "
+        "\"material_ids\": [str], \"summary\": str}], \"gaps\": [str]}. "
+        "No markdown or prose outside the JSON object.\n"
+        "COURSE: %s\n\nCOURSE REPORTS DIGEST:\n%s\n"
+        % (material_label or "course", str(course_reports_digest or "")[:16000])
     )
 
 

@@ -793,15 +793,57 @@ async function actionSessionMonth(courseId, month) {
 
 // ---- 课程页 (Task 56.1) --------------------------------------------------
 
+function actionCourseAiOverview() {
+  const card = document.getElementById('course-ai-overview');
+  if (card && typeof card.scrollIntoView === 'function') {
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+function courseAiOverviewCard(payload, error) {
+  const head = '<div class="card-head"><h2>' + esc(t('ai.courseOverview')) +
+    '</h2><span class="small muted">' + esc(t('ai.courseOverviewReadOnly')) +
+    '</span></div>';
+  if (error || !payload) {
+    return '<div class="card" id="course-ai-overview">' + head +
+      '<p class="small muted">' + esc(t('ai.courseOverviewEmpty')) + '</p></div>';
+  }
+  const coverage = payload.coverage || {};
+  const topics = Array.isArray(payload.topic_map) ? payload.topic_map : [];
+  const gaps = Array.isArray(payload.gaps) ? payload.gaps : [];
+  let body = '<p class="small">' + esc(payload.overview || t('ai.courseOverviewEmpty')) + '</p>';
+  body += '<p class="tiny muted">' +
+    esc(t('ai.courseCoverage')) + ' ' + esc(coverage.materials_with_reports || 0) + '/' +
+    esc(coverage.materials_total || 0) + '</p>';
+  if (topics.length) {
+    body += '<p class="small"><strong>' + esc(t('ai.courseTopics')) + '</strong></p>' +
+      '<ul class="small">' + topics.map((topic) =>
+        '<li>' + esc(topic.topic || '') + ' · ' +
+        esc((topic.material_ids || []).length) + '</li>').join('') + '</ul>';
+  }
+  body += '<p class="small"><strong>' + esc(t('ai.courseGaps')) + '</strong></p>' +
+    (gaps.length ? '<ul class="small">' + gaps.map((gap) =>
+      '<li>' + esc(gap) + '</li>').join('') + '</ul>' :
+      '<p class="tiny muted">' + esc(t('ai.courseNoGaps')) + '</p>');
+  return '<div class="card" id="course-ai-overview">' + head + body + '</div>';
+}
+
 async function pageCourse(courseId) {
   setRouteCourse(courseId);
   markActiveNav('');
-  const data = await api('/courses/' + encodeURIComponent(courseId) + '/workspace');
+  const [data, overviewResult] = await Promise.all([
+    api('/courses/' + encodeURIComponent(courseId) + '/workspace'),
+    api('/courses/' + encodeURIComponent(courseId) + '/ai-overview')
+      .then((payload) => ({ payload: payload }))
+      .catch((error) => ({ error: error })),
+  ]);
   const course = data.course || {};
   const counts = data.counts || {};
   const coverage = data.coverage || {};
   const sessions = data.sessions || [];
   const points = (data.knowledge || {});
+  const overview = overviewResult && overviewResult.payload;
+  const overviewError = overviewResult && overviewResult.error;
 
   const stat = (label, value, hint) =>
     '<div class="stat"><div class="stat-label">' + esc(label) + '</div>' +
@@ -815,6 +857,8 @@ async function pageCourse(courseId) {
     '<div class="page-head"><div class="crumbs"><a href="#/">' + t('概览') + '</a>' + t(' / 课程') + '</div>' +
     '<h1>' + esc(course.name || course.code || '') + '</h1>' +
     '<p class="subtitle mono small">' + esc(courseIdentity(course)) + '</p>' +
+    '<p class="small"><button type="button" class="small" data-action="course-ai-overview"' +
+    ' aria-controls="course-ai-overview">' + esc(t('ai.courseOverview')) + '</button></p>' +
     // 有 guia docent 时, 页头三行 (教师/学期/课程语言) 换成 guia 精简摘要 ——
     // 教师/联系人本来就该来自 guia docent, 而且摘要有「查看详情」入口。
     // 没有 guia 数据的课程保持原三行不变。
@@ -837,7 +881,9 @@ async function pageCourse(courseId) {
       ? coverage.coverage_ratio : '—') +
     '</div>' +
 
-    '<div class="card"><div class="card-head"><h2>' + t('course.sessions') + '</h2>' +
+    courseAiOverviewCard(overview, overviewError) +
+
+    '<div class="card"><div class="card-head"><h2>' + esc(t('course.sessions')) + '</h2>' +
     '<span class="small muted">' + t('点击进入课堂页，可整堂处理') + '</span></div>' +
     // 月份切换 + 日期分组 + 紧凑行 —— 结构与月份解析见本文件上方「课堂列表」
     // 一节。渲染收在 sessionMonthView() 里, 页面只决定"有课就画列表, 没课就给

@@ -361,13 +361,20 @@ def _correct_value(exercise: Mapping[str, Any]) -> Optional[str]:
     return exercise.get("_draft_expected_answer") or draft.get("expected_answer")
 
 
-def _answer_right(workspace, course_id: str, student_id: str, exercise: dict) -> dict:
+def _answer_right(
+    workspace,
+    course_id: str,
+    student_id: str,
+    exercise: dict,
+    *,
+    sequence: int = 1,
+) -> dict:
     """提交一个**必然判对**的答案。"""
     value = _correct_value(exercise)
     if not value:
         pytest.skip("cannot derive the correct value for this exercise")
     answer = workspace.submit_answer(
-        course_id, student_id, exercise["exercise_id"], str(value), sequence=1
+        course_id, student_id, exercise["exercise_id"], str(value), sequence=sequence
     )
     assert answer["evaluation_status"] == "correct", answer
     return answer
@@ -1502,9 +1509,66 @@ class TestApiContract:
         assert len(workspace.list_exercises(processed_course)) == before
 
 
+class TestRetryMissed:
+    def test_queue_contains_only_latest_incorrect_and_closes_after_got_it(
+        self, workspace, processed_course, student, supported_kp
+    ):
+        ex = _make_exercise(workspace, processed_course, supported_kp["knowledge_id"])
+        _answer_wrong(workspace, processed_course, student, ex)
+
+        queue = workspace.retry_missed(processed_course, student)
+        assert [item["exercise_id"] for item in queue] == [ex["exercise_id"]]
+        assert queue[0]["status"] == "missed_it"
+        assert queue[0]["got_it"] is False
+        assert queue[0]["missed_it"] is True
+        assert queue[0]["retry_count"] == 1
+        assert queue[0]["next_sequence"] == 2
+
+        _answer_right(
+            workspace, processed_course, student, ex, sequence=2
+        )
+        assert workspace.retry_missed(processed_course, student) == []
+
+    def test_retry_progress_survives_reopen(
+        self, workspace, processed_course, student, supported_kp
+    ):
+        ex = _make_exercise(workspace, processed_course, supported_kp["knowledge_id"])
+        _answer_wrong(workspace, processed_course, student, ex)
+        data_dir = str(workspace.data_dir)
+        workspace.close()
+
+        reopened = Workspace(
+            data_dir,
+            clock=fixed_clock(FIXED_TIME),
+            asr_mode="mock",
+            ocr_mode="mock",
+        )
+        try:
+            queue = reopened.retry_missed(processed_course, student)
+            assert [item["exercise_id"] for item in queue] == [ex["exercise_id"]]
+            _answer_right(reopened, processed_course, student, ex, sequence=2)
+            assert reopened.retry_missed(processed_course, student) == []
+        finally:
+            reopened.close()
+
+
 # ---------------------------------------------------------------------------
 # 12) 重启一致性
 # ---------------------------------------------------------------------------
+
+
+    def test_retry_queue_literal_route_is_not_shadowed(
+        self, client, workspace, processed_course, student, supported_kp
+    ):
+        ex = _make_exercise(workspace, processed_course, supported_kp["knowledge_id"])
+        _answer_wrong(workspace, processed_course, student, ex)
+        status, payload = client.get(
+            f"/api/students/{student}/mistakes/retry-queue?course_id={processed_course}"
+        )
+        assert status == 200, payload
+        assert [item["exercise_id"] for item in payload["data"]["retry_queue"]] == [
+            ex["exercise_id"]
+        ]
 
 
 class TestRestartConsistency:

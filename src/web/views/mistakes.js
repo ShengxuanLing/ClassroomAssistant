@@ -148,7 +148,7 @@ function renderMistakeDetail(courseId, studentId, detail) {
   const why = detail.why_incorrect || [];
   const evidence = detail.evidence || [];
   const practice = detail.practice_targets || [];
-  const prereq = detail.prerequisites || [];
+  const retry = detail.retry_queue || [];  const prereq = detail.prerequisites || [];
 
   return '<div class="page-head"><div class="crumbs">' +
     '<a href="#/mistakes">' + esc(t('nav.mistakes')) + '</a> / ' +
@@ -199,6 +199,11 @@ function renderMistakeDetail(courseId, studentId, detail) {
       : emptyState(t('mk.noPractice'))) +
     '</div>' +
 
+    '<div class="card"><h2>' + esc(t('mk.retryTitle')) + '</h2>' +
+    '<p class="small muted">' + esc(t('mk.retryNote')) + '</p>' +
+    renderRetryQueue(courseId, studentId, retry) +
+    '</div>' +
+
     '<div class="card"><h2>' + esc(t('mk.prerequisiteTitle')) + '</h2>' +
     (prereq.length
       ? '<ul class="small">' + prereq.map((id) => '<li>' + kpLink(courseId, id) + '</li>').join('') + '</ul>'
@@ -215,6 +220,21 @@ function renderMistakeDetail(courseId, studentId, detail) {
     '</dl></div>' +
 
     '</div>';
+}
+
+/** 只显示最近一次评估仍为 incorrect 的既有练习；重做结果会持久化。 */
+function renderRetryQueue(courseId, studentId, rows) {
+  if (!rows || !rows.length) return emptyState(t('mk.retryEmpty'));
+  return '<ul class="small">' + rows.map((item) =>
+    '<li>' + exerciseLink(courseId, item.exercise_id, item.prompt) +
+    ' ' + pill(t('mk.missedIt'), 'FAILED') +
+    ' <span class="tiny muted">· ' + esc(t('mk.progressLabel')) + ': ' +
+    esc(item.retry_count) + '</span>' +
+    ' <a class="btn small" href="#/courses/' + encodeURIComponent(courseId) +
+    '/exercises/' + encodeURIComponent(item.exercise_id) + '/' +
+    encodeURIComponent(studentId) + '">' + esc(t('mk.retryAgain')) + '</a></li>'
+  ).join('') + '</ul>' +
+  '<p class="tiny muted">' + esc(t('mk.progressPersisted')) + '</p>';
 }
 
 function whoList(rows) {
@@ -246,7 +266,7 @@ async function pageMistakes() {
   if (!students.length) {
     setView('<div class="page-head"><h1>' + esc(t('mk.title')) + '</h1>' +
       '<p class="subtitle">' + esc(t('mk.subtitle')) + '</p></div>' +
-      '<div class="card">' + emptyState(t('mk.empty')) + '</div>');
+      '<div class="card">' + emptyState(t('mk.empty')) + noStudentsCard() + '</div>');
     return;
   }
   const studentId = state.studentId &&
@@ -296,7 +316,8 @@ async function pageMistakes() {
     (empty
       ? '<div class="card"><h2>' + esc(t('mk.listTitle')) + '</h2>' +
         emptyState(t('mk.empty')) +
-        '<p class="small muted">' + esc(t('mk.emptyHint')) + '</p></div>'
+        '<p class="small muted">' + esc(t('mk.emptyHint')) + '</p>' +
+        '<p class="small"><a href="#/exercises">' + esc(t('nav.exercises')) + '</a></p></div>'
       : toggle +
         '<div class="card"><h2>' + esc(t('mk.listTitle')) + '</h2>' +
         mistakeTable(courseId, view.mistakes || [], kpIndex) + '</div>' +
@@ -304,6 +325,11 @@ async function pageMistakes() {
         '<div class="card"><h2>' + esc(t('mk.groupTitle')) + ' · ' +
         esc(groupTitle(groupBy)) + '</h2>' +
         renderMistakeGroups(courseId, groupBy, view.groups || []) + '</div>') +
+
+    '<div class="card"><h2>' + esc(t('mk.retryTitle')) + '</h2>' +
+    '<p class="small muted">' + esc(t('mk.retryNote')) + '</p>' +
+    renderRetryQueue(courseId, studentId, view.retry_queue || []) +
+    '</div>' +
 
     '<div class="card"><h2>' + esc(t('mk.weakTitle')) + '</h2>' +
     '<p class="small muted">' + esc(t('mk.weakNote')) + '</p>' +
@@ -337,7 +363,7 @@ async function pageMistakeDetail(courseId, knowledgeId) {
   const students = (await api('/students', { query: { course_id: courseId } })).students || [];
   if (!students.length) {
     setView('<div class="card"><h1>' + esc(t('mk.detailTitle')) + '</h1>' +
-      '<p class="muted">' + esc(t('mk.empty')) + '</p></div>');
+      noStudentsCard() + '</div>');
     return;
   }
   const studentId = state.studentId &&

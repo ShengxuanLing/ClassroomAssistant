@@ -19,7 +19,7 @@ from difflib import SequenceMatcher
 from typing import Any, Mapping, Optional, Sequence
 
 from src.application.ai.prompts import ALLOWED_KNOWLEDGE_TYPES
-from src.application.ai.schemas import KnowledgeCandidate
+from src.application.ai.schemas import GlossaryEntry, KnowledgeCandidate
 from src.knowledge_validation import knowledge_score_from_counts
 
 __all__ = [
@@ -28,6 +28,9 @@ __all__ = [
     "GroundedCandidate",
     "classify_confidence",
     "ground_candidates",
+    "ground_glossary",
+    "GroundedGlossary",
+    "glossary_id",
     "EVIDENCE_COPY_SIMILARITY_THRESHOLD",
     "evidence_copy_similarity",
     "candidate_copy_reason",
@@ -314,6 +317,165 @@ def ground_candidates(
 _WS_RE = re.compile(r"\s+")
 
 
+def glossary_id(*, course_id: str, term: str) -> str:
+    """Deterministic ID for a bilingual term card (idempotent report output)."""
+    raw = "|".join(
+        [str(course_id or ""), str(term or "").strip().lower()]
+    ).encode("utf-8")
+    return "gls-" + hashlib.sha256(raw).hexdigest()[:16]
+
+
+def _glossary_term_is_present(term: str, texts: Sequence[Any]) -> bool:
+    """Check a term against Evidence with the same accent/case normalisation."""
+    needle = _normalise_copy_text(term)
+    if not needle:
+        return False
+    for value in texts or ():
+        raw = getattr(value, "content", value)
+        haystack = _normalise_copy_text(raw)
+        start = 0
+        while True:
+            index = haystack.find(needle, start)
+            if index < 0:
+                break
+            end = index + len(needle)
+            before_ok = index == 0 or not haystack[index - 1].isalnum()
+            after_ok = end == len(haystack) or not haystack[end].isalnum()
+            if before_ok and after_ok:
+                return True
+            start = index + 1
+    return False
+
+
+def _glossary_kp_id(
+    term: str,
+    kp_titles: Sequence[Any],
+) -> Optional[str]:
+    needle = _normalise_copy_text(term)
+    for item in kp_titles or ():
+        if isinstance(item, Mapping):
+            title = str(item.get("title") or "")
+            candidate_id = item.get("knowledge_id") or item.get("kp_id")
+        else:
+            title = str(item or "")
+            candidate_id = None
+        title_normal = _normalise_copy_text(title)
+        if title_normal == needle or (needle and needle in title_normal):
+            if candidate_id:
+                return str(candidate_id)
+    return None
+
+
+class GroundedGlossary(dict):
+    """JSON-friendly glossary card with attribute access for unit callers."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:  # pragma: no cover - normal attribute protocol
+            raise AttributeError(name) from exc
+
+
+def ground_glossary(
+    entries: Sequence[GlossaryEntry],
+    *,
+    chunk_to_evidence: Mapping[str, str],
+    material_evidence_ids: Sequence[str],
+    evidence_texts: Optional[Mapping[str, Any]] = None,
+    course_id: str = "",
+    kp_titles: Sequence[Any] = (),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Ground bilingual terms against the current material's Evidence.
+
+    The model may only propose a term that can be found in the Evidence it
+    cites.  Invalid references and rewritten terms are retained as rejected
+    diagnostics, never sent to the KP/Review queue.  Language uncertainty is a
+    visible value (``[语言待确认]``), not a fabricated ``es``/``ca`` guess.
+    """
+    valid_ids = {str(value) for value in (material_evidence_ids or ())}
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    seen_terms: set[str] = set()
+    for entry in entries or ():
+        if isinstance(entry, Mapping):
+            term = str(entry.get("term") or "").strip()
+            raw_lang = str(entry.get("lang") or "").strip()
+            zh = str(entry.get("zh") or "").strip()
+            refs = list(entry.get("evidence_refs") or entry.get("evidence_ids") or [])
+        else:
+            term = str(getattr(entry, "term", "") or "").strip()
+            raw_lang = str(getattr(entry, "lang", "") or "").strip()
+            zh = str(getattr(entry, "zh", "") or "").strip()
+            refs = list(getattr(entry, "evidence_refs", None) or getattr(entry, "evidence_ids", None) or [])
+        resolved: list[str] = []
+        illegal: list[str] = []
+        for ref in refs:
+            evidence_id = chunk_to_evidence.get(str(ref))
+            if evidence_id is None and str(ref) in valid_ids:
+                evidence_id = str(ref)
+            if evidence_id is None or str(evidence_id) not in valid_ids:
+                illegal.append(str(ref))
+            elif str(evidence_id) not in resolved:
+                resolved.append(str(evidence_id))
+        base = GroundedGlossary({
+            "term": term[:120],
+            "lang": raw_lang[:8],
+            "zh": zh[:20],
+            "evidence_refs": [str(ref) for ref in refs],
+            "evidence_ids": list(resolved),
+        })
+        if not term or not zh:
+            base["reject_reason"] = "missing term or Chinese explanation"
+            rejected.append(base)
+            continue
+        if illegal or not resolved:
+            base["reject_reason"] = (
+                "illegal evidence refs: %s" % ", ".join(illegal[:5])
+                if illegal
+                else "no evidence grounding"
+            )
+            rejected.append(base)
+            continue
+        referenced_texts: list[Any] = []
+        if evidence_texts is not None:
+            for evidence_id in resolved:
+                if evidence_id in evidence_texts:
+                    referenced_texts.append(evidence_texts[evidence_id])
+        # A missing text map fails closed.  This is the same evidence-first
+        # rule used for KP candidates: no text, no grounded glossary card.
+        if evidence_texts is None or not referenced_texts or not all(
+            str(getattr(value, "content", value) or "").strip()
+            for value in referenced_texts
+        ):
+            base["reject_reason"] = "evidence text unavailable for glossary grounding"
+            rejected.append(base)
+            continue
+        if not _glossary_term_is_present(term, referenced_texts):
+            base["reject_reason"] = "term is not a verbatim evidence substring"
+            rejected.append(base)
+            continue
+        normalized_term = _normalise_copy_text(term)
+        if normalized_term in seen_terms:
+            base["reject_reason"] = "duplicate glossary term"
+            rejected.append(base)
+            continue
+        seen_terms.add(normalized_term)
+        language = raw_lang.casefold()
+        if language not in {"es", "ca"}:
+            language = "[语言待确认]"
+        item = GroundedGlossary({
+            "glossary_id": glossary_id(course_id=course_id, term=term),
+            "term": term[:120],
+            "lang": language,
+            "zh": zh[:20],
+            "evidence_refs": list(resolved),
+            "evidence_ids": list(resolved),
+            "kp_id": _glossary_kp_id(term, kp_titles),
+        })
+        accepted.append(item)
+    return accepted, rejected
+
+
 def _normalise_title(title: str) -> str:
     return _WS_RE.sub(" ", (title or "").strip().lower())
 
@@ -394,6 +556,9 @@ def map_candidate_to_kp_payload(
     if candidate.title and candidate.title not in original_terms:
         original_terms = [candidate.title] + original_terms
     content = _candidate_knowledge_content(candidate)
+    evidence_refs = list(dict.fromkeys(str(ref) for ref in grounded.evidence_ids if str(ref)))
+    support_count = len(evidence_refs)
+    knowledge_score = knowledge_score_from_counts(support_count)
     return {
         "knowledge_id": candidate_knowledge_id(
             course_id=course_id, title=candidate.title, kp_type=kp_type
@@ -403,11 +568,11 @@ def map_candidate_to_kp_payload(
         "original_terms": original_terms[:20],
         "importance": importance,
         "confidence": confidence,
-        "evidence_refs": list(grounded.evidence_ids),
+        "evidence_refs": evidence_refs,
         "related_points": [],
         "needs_verification": grounded.decision != "auto",
         "validation_status": "unverified",
-        "knowledge_score": knowledge_score_from_counts(len(set(grounded.evidence_ids))),
+        "knowledge_score": knowledge_score,
         "review_status": "pending",
         "metadata": {
             "origin": "ai-pipeline",
@@ -416,5 +581,13 @@ def map_candidate_to_kp_payload(
             "ai_decision": grounded.decision,
             "material_id": material_id,
             "content_language": content_language,
+            "knowledge_score_source": {
+                "kind": "grounding_evidence_count",
+                "formula": "knowledge_score_from_counts",
+                "formula_version": "evidence-support-v1",
+                "support_count": support_count,
+                "conflict_count": 0,
+                "value": knowledge_score,
+            },
         },
     }
