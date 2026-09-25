@@ -22,7 +22,20 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Callable, Optional
 
-__all__ = ["utc_now_iso", "Clock", "fixed_clock"]
+__all__ = ["utc_now", "utc_now_iso", "Clock", "fixed_clock"]
+
+
+def utc_now() -> _dt.datetime:
+    """当前 UTC 时间 (tz-aware ``datetime``，含微秒)。
+
+    与 :func:`utc_now_iso` 同源、同一职责分工：**读挂钟的唯一真源在这里**。
+    Determinism Audit 只允许本模块 (和 ``src/application/runtime.py``) 直接调
+    ``datetime.now``，所以任何需要"当前时刻"的模块都应从这里取，或更好 ——
+    把它作为可注入的 ``clock`` 默认值传下去 (见 ``src/scheduling/fsrs.py``)。
+
+    需要确定性输出的调用方**必须**注入自己的 ``clock``，不要直接调用本函数。
+    """
+    return _dt.datetime.now(_dt.timezone.utc)
 
 
 def utc_now_iso() -> str:
