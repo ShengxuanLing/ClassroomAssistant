@@ -20,9 +20,20 @@ jobs:
         shell: pwsh
         run: |
           $tracked = git ls-files scripts/ai-env.bat
+          if ($LASTEXITCODE -ne 0) { Write-Error "secret guard failed to run (git ls-files exit $LASTEXITCODE)"; exit 1 }
           if ($tracked) { Write-Error "scripts/ai-env.bat is tracked; it must stay gitignored"; exit 1 }
-          $hits = git grep -I -n "sk-p0i" -- . 2>$null
+
+          # Exclude this workflow itself: the search pattern below is the only
+          # place the literal appears, so a self-match would red every run.
+          # git grep exit codes: 0 = match, 1 = no match, >=2 = the search failed.
+          $hits = git grep -I -n "sk-p0i" -- . ':!.github/workflows/pytest.yml' 2>$null
+          $grepExit = $LASTEXITCODE
+          if ($grepExit -gt 1) { Write-Error "secret guard failed to run (git grep exit $grepExit)"; exit 1 }
           if ($hits) { Write-Error "suspected real key literal in tree"; exit 1 }
+
           Write-Output "secret guard OK"
+          # The runner appends `exit $LASTEXITCODE`, and a clean grep exits 1,
+          # so the step must end on an explicit success code.
+          exit 0
       - name: Run tests (default suite, no integration)
         run: python -m pytest -q -m "not integration" -p no:cacheprovider
