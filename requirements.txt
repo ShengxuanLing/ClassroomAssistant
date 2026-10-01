@@ -16,6 +16,13 @@ ctranslate2>=4.0,<5.0
 pypdf>=3.0,<7.0
 python-docx>=1.0,<2.0
 
+# Task 21 (follow-up): PPTX (PowerPoint) input & parsing layer.
+# Same OXML/zipfile family as python-docx (shared lxml / Pillow wheels, no
+# extra download), imported lazily by src/document_input.py::PPTXDocumentParser
+# so a clean install without this wheel degrades to PARSER_UNAVAILABLE instead
+# of breaking the whole app.
+python-pptx>=1.0,<2.0
+
 # Task 21 note: audio segmentation imports ``av`` (PyAV) and ``numpy``
 # directly.  Both arrive transitively with faster-whisper / ctranslate2,
 # but they are declared here explicitly so a clean install cannot end up

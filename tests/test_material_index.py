@@ -143,5 +143,23 @@ class TestMaterialIndex(unittest.TestCase):
             materials = scan_materials(tmpdir)
             self.assertEqual(materials[0].language, Language.UNKNOWN)
 
+    def test_pptx_recognition(self):
+        """旧 scan_materials 链路的扩展名表: 少一个后缀就直接丢弃材料。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            syllabi_dir = os.path.join(tmpdir, 'syllabi')
+            os.makedirs(syllabi_dir)
+            Path(os.path.join(syllabi_dir, 'clase.pptx')).write_bytes(b'PK')
+            materials = scan_materials(tmpdir)
+            self.assertEqual(len(materials), 1)
+            self.assertEqual(materials[0].material_type, MaterialType.SYLLABUS)
+
+    def test_legacy_ppt_is_not_indexed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            syllabi_dir = os.path.join(tmpdir, 'syllabi')
+            os.makedirs(syllabi_dir)
+            Path(os.path.join(syllabi_dir, 'old.ppt')).write_bytes(b'\xd0\xcf\x11\xe0')
+            self.assertEqual(scan_materials(tmpdir), [])
+
+
 if __name__ == '__main__':
     unittest.main()

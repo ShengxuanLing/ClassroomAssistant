@@ -29,6 +29,10 @@ IMPORT_TO_REQUIREMENT = {
     "numpy": "numpy",
     "pypdf": "pypdf",
     "docx": "python-docx",
+    # ``pptx`` 是 python-pptx 的 import 名, 与 pypdf / python-docx 同类:
+    # 函数内延迟导入 (src/document_input.py::PPTXDocumentParser), 缺 wheel 时
+    # 回落到 PARSER_UNAVAILABLE。
+    "pptx": "python-pptx",
     "faster_whisper": "faster-whisper",
     "rapidocr_onnxruntime": "rapidocr-onnxruntime",
     # ``fsrs`` 是**函数内延迟导入** (src/scheduling/fsrs.py 的 PyFSRSBackend),

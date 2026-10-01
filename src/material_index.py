@@ -19,6 +19,7 @@ _EXT_TO_TYPE = {
     '.md': MaterialType.NOTE,
     '.pdf': MaterialType.SYLLABUS,
     '.docx': MaterialType.SYLLABUS,
+    '.pptx': MaterialType.SYLLABUS,
 }
 _RECOGNIZED_SUBDIRS = {'audio', 'images', 'notes', 'syllabi'}
 

@@ -1163,3 +1163,70 @@ class TestUiApiContract:
                 path += "?course_id=" + cid
             _, headers, _ = client.raw_get(path)
             assert headers.get("Content-Type") == "application/json; charset=utf-8", path
+
+
+# ===========================================================================
+# 4.5 上传格式提示: 中 / es / ca 三语必须同时写明 pptx
+# ===========================================================================
+
+
+class TestSupportedFormatHintIsTriilingual:
+    """材料页的"支持哪些格式"提示, 与后端推荐操作文案必须同步。
+
+    为什么单独测: 这句话是**中文原文当 key** 的整句译文, 三张表一旦只
+    改了两张, 页面就会在某种语言下漏字, 而这跟功能测试完全无关 ——
+    只能静态断言。
+    """
+
+    @staticmethod
+    def _hint_key() -> str:
+        import re
+
+        materials = read_web_source("views/materials.js")
+        matches = re.findall(r"t\('(支持[^']*只登记一次。)'\s*\)", materials)
+        assert matches, "materials.js 里找不到上传格式提示"
+        assert len(set(matches)) == 1, f"提示文案出现多个版本: {set(matches)}"
+        return matches[0]
+
+    @staticmethod
+    def _translations() -> dict:
+        import re
+
+        source = read_web_source("i18n.js")
+        block = source[source.index("const TRANSLATIONS = {"):]
+        tables = {}
+        for lang in ("es", "ca"):
+            start = block.index(f"  {lang}: {{")
+            end = block.index("\n  },", start)
+            body = block[start:end]
+            tables[lang] = {
+                m.group(1).replace("\\'", "'").replace("\\\\", "\\"): m.group(2).replace("\\'", "'").replace("\\\\", "\\")
+                for m in re.finditer(
+                    r"^\s*'((?:[^'\\]|\\.)*)':\s*'((?:[^'\\]|\\.)*)'", body, re.M
+                )
+            }
+        return tables
+
+    def test_chinese_hint_lists_pptx(self):
+        assert "pptx" in self._hint_key()
+        assert "pdf" in self._hint_key()
+        assert "docx" in self._hint_key()
+
+    def test_spanish_and_catalan_hints_exist_and_list_pptx(self):
+        key = self._hint_key()
+        tables = self._translations()
+        for lang in ("es", "ca"):
+            assert key in tables[lang], f"{lang} 译文表缺少上传格式提示"
+            assert "pptx" in tables[lang][key], f"{lang} 提示里没有 pptx"
+
+    def test_no_stale_hint_without_pptx_is_left_behind(self):
+        stale = "支持 pdf / docx / txt / md / 音频 / 图片。同名同内容只登记一次。"
+        assert stale not in read_web_source("i18n.js")
+        assert stale not in read_web_source("views/materials.js")
+
+    def test_backend_recommended_action_lists_pptx_and_ppt(self):
+        from src.application.processing_service import _RECOMMENDED_ACTIONS
+
+        message = _RECOMMENDED_ACTIONS["UNSUPPORTED_EXTENSION"]
+        assert "pptx" in message
+        assert ".ppt" in message

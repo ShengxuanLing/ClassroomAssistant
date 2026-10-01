@@ -952,14 +952,15 @@ score = round(score, 6)
 
 ### Purpose
 
-Deterministic, evidence-first reading of PDF and DOCX course materials
-(syllabi, lecture notes, handouts). Answers: "What is in this file,
-page by page / paragraph by paragraph?"
+Deterministic, evidence-first reading of PDF, DOCX and PPTX course
+materials (syllabi, lecture notes, handouts, slide decks). Answers:
+"What is in this file, page by page / paragraph by paragraph / slide
+by slide?"
 
 ### Pipeline position
 
 ```
-PDF / DOCX file
+PDF / DOCX / PPTX file
   |
 DocumentMaterialValidator    (file-level checks only, no content reads)
   |
@@ -967,7 +968,7 @@ DocumentValidationResult     (stable error codes; valid / invalid)
   |
 DocumentInput                (file identity: path, type, material link)
   |
-create_document_parser(type) (dispatch: PDF | DOCX)
+create_document_parser(type) (dispatch: PDF | DOCX | PPTX)
   |
 ParsedDocument               (blocks + metadata + status + errors)
   |
@@ -993,11 +994,25 @@ re-indexes.
   block per table; cells joined " || " within a row, rows joined " | ".
   Image parts (media/*.png/.jpg/...) are counted into metadata
   (image_count) without OCR or content extraction.
+- PPTX: one block per non-empty shape text frame (text boxes **and**
+  placeholders) in slide order, one TABLE block per table (same
+  " || " / " | " wire format as DOCX), one block per slide's speaker
+  notes.  Locators are explicit: "pptx-slide-<n>-shape-<k>" /
+  "pptx-slide-<n>-notes", carried on DocumentBlock.location, which
+  wins over the derived PDF / DOCX forms and feeds both block_id and
+  the Evidence source reference.  Embedded pictures are counted
+  (metadata.image_count) and their bytes are exposed **in memory** as
+  ParsedDocument.images (DocumentImage) for the existing image OCR
+  path; the bytes are never serialized into to_dict().  Layout
+  fidelity is out of scope: SmartArt / charts / WordArt may surface
+  only part of their text, and that partial text is accepted rather
+  than guessed at.
 
 ### Status values
 
 - PARSED: at least one non-empty block extracted.
-- PARSED_EMPTY: parse succeeded, zero content (scanned PDF, empty DOCX).
+- PARSED_EMPTY: parse succeeded, zero content (scanned PDF, empty DOCX,
+  picture-only PPTX).
   A scanned-or-no-text-layer PDF is PARSED_EMPTY with
   metadata["scanned_or_no_text_layer"] = True - not an error.
 - FAILED: parser-level problem; errors[] carries a stable
@@ -1029,7 +1044,7 @@ Knowledge / Review / Evidence / ASR / Whisper modules.
 - Parser failures are carried in ParsedDocument.status + errors, never
   raised; only missing / non-file / unsupported-extension inputs to
   parse_document() raise ValueError.
-- material_type is MaterialType.SYLLABUS for both .pdf and .docx,
+- material_type is MaterialType.SYLLABUS for .pdf, .docx and .pptx,
   matching material_index._EXT_TO_TYPE.
 
 ### Capability Status
@@ -1038,6 +1053,8 @@ Knowledge / Review / Evidence / ASR / Whisper modules.
 |---|---|
 | PDF text extraction (per page) | Implemented |
 | DOCX paragraph / heading / table extraction | Implemented |
+| PPTX slide text / table / speaker-note extraction | Implemented |
+| PPTX embedded-image OCR (per slide, existing image path) | Implemented |
 | Deterministic document / block ids | Implemented |
 | Password-protected PDF detection | Implemented |
 | Corrupt-file structured failure | Implemented |
@@ -1079,7 +1096,7 @@ existing Evidence integration      (EvidenceExtractor routing,
   (re-hydrated via ParsedDocument.from_dict), or None.  None and
   non-document inputs yield [] + INVALID_INPUT status, never a raw
   AttributeError.
-- PDF / DOCX blocks: one non-empty DocumentBlock -> one Evidence, in
+- PDF / DOCX / PPTX blocks: one non-empty DocumentBlock -> one Evidence, in
   original document order (never re-sorted by text / hash / length).
 - Empty or whitespace-only blocks are skipped and counted in
   statistics; they never produce Evidence.
@@ -1095,7 +1112,7 @@ evidence_id = "doc-evidence-" + sha256(
 ```
 
 - Built from the same components as the deterministic DocumentBlock
-  id, extended with document_type so identical PDF/DOCX blocks cannot
+  id, extended with document_type so identical PDF/DOCX/PPTX blocks cannot
   collide.  No uuid4, no datetime.now(), no randomness.
 - Deduplication is exact-deterministic only: repeated blocks with the
   same (document_id + location + text) map to one Evidence.  Same text
@@ -1120,7 +1137,7 @@ Each Evidence carries:
   DocumentBlock.text == Evidence.content (no translation, no summary,
   no auto-correction, no auto-added context sentences).
 - Document evidence is source-traceable to ParsedDocument blocks and,
-  through block location, to the original PDF/DOCX position.
+  through block location, to the original PDF/DOCX/PPTX position.
 - No semantic interpretation, translation, LLM, OCR, ASR, embedding,
   or network access.  No KnowledgePoint generation.
 - The input ParsedDocument (and its blocks) is never mutated by
@@ -1386,6 +1403,7 @@ MATERIALS
    +-- AUDIO ----+  ASRProvider -> Transcript -> Transcript.to_transcript_evidence()
    +-- IMAGE ----+  OCREngine -> OcrResult -> ocr_to_evidence
    +-- PDF/DOCX --+  DocumentParser -> ParsedDocument -> DocumentEvidenceExtractor
+   +-- PPTX -----+  PPTXDocumentParser -> (same two) + OCREngine for embedded pictures
    |
    v
 EvidenceIngestionService  (routing + orchestration, no content mutation)

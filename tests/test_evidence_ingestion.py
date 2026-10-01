@@ -126,6 +126,18 @@ class TestRouting:
         m = Material(material_id="r6", path="docs/d.docx")
         assert resolve_source_type(m) == "docx"
 
+    def test_pptx_extension(self):
+        m = Material(material_id="r6p", path="docs/e.pptx")
+        assert resolve_source_type(m) == "pptx"
+
+    def test_pptx_extension_uppercase(self):
+        m = Material(material_id="r6pu", path="docs/E.PPTX")
+        assert resolve_source_type(m) == "pptx"
+
+    def test_legacy_ppt_extension_stays_unsupported(self):
+        m = Material(material_id="r6old", path="docs/old.ppt")
+        assert resolve_source_type(m) == "unsupported"
+
     def test_unsupported_extension(self):
         m = Material(material_id="r7", path="data.bin")
         assert resolve_source_type(m) == "unsupported"
@@ -1249,6 +1261,180 @@ class TestEndToEnd:
         assert batch.report_for("sup-good").status == IngestionStatus.SUCCESS
         assert batch.failed == 0
         assert store.count() == 1
+
+
+# -------------------------------------------------------------------
+# PPTX (PowerPoint) — 门岗: 路由 + 适配器注册 + 真实文件端到端
+# -------------------------------------------------------------------
+
+class TestPptxGate:
+    """每一道门岗单独可测: 退掉任何一道, 对应的 test 立刻变红。"""
+
+    def test_pptx_source_constant_exists(self):
+        from src.evidence_ingestion import SOURCE_PPTX
+        assert SOURCE_PPTX == "pptx"
+
+    def test_pptx_adapter_is_registered_by_default(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        adapter = svc._extractors.get("pptx")
+        assert adapter is not None, "pptx adapter missing from the default registry"
+        assert adapter.source_type == "pptx"
+
+    def test_pptx_adapter_extracts_documents(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        m = Material(
+            material_id="gate-pptx",
+            filename="lecture.pptx",
+            path=str(FIX_DOCS / "lecture.pptx"),
+            material_type=MaterialType.SYLLABUS,
+        )
+        report = svc.ingest(m)
+        assert report.source_type == "pptx"
+        assert report.status == IngestionStatus.SUCCESS
+        document_evidence = [
+            ev for ev in store.all() if ev.evidence_type is EvidenceType.DOCUMENT
+        ]
+        assert len(document_evidence) == 7   # 4 slide texts + table + 2 notes
+
+    def test_legacy_ppt_never_routes_to_a_document_source(self):
+        """``.ppt`` 不进任何文档链路 (它在登记阶段就被 415 拒了);
+        即便有人硬造出 Material, 也绝不能被当成 pdf / docx / pptx。"""
+        for material_type in (MaterialType.SYLLABUS, MaterialType.TEXT, MaterialType.NOTE):
+            m = Material(
+                material_id="gate-ppt",
+                filename="old.ppt",
+                path="old.ppt",
+                material_type=material_type,
+            )
+            assert resolve_source_type(m) not in ("pdf", "docx", "pptx")
+
+
+class TestPptxEndToEnd:
+    @staticmethod
+    def _deck(name="lecture.pptx", material_id="e2e-pptx"):
+        return Material(
+            material_id=material_id,
+            filename=name,
+            path=str(FIX_DOCS / name),
+            material_type=MaterialType.SYLLABUS,
+        )
+
+    def test_pptx_real_file_end_to_end(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        m = self._deck()
+        first = svc.ingest(m)
+        assert first.status == IngestionStatus.SUCCESS
+        assert first.added_count >= 7
+        second = svc.ingest(m)
+        assert second.added_count == 0
+        assert second.duplicate_count == first.added_count
+        assert store.count() == first.added_count
+
+    def test_pptx_evidence_is_traceable_to_the_slide(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        svc.ingest(self._deck())
+        for ev in store.all():
+            assert ev.source_reference.material_id == "e2e-pptx"
+            assert ev.source_reference.location.startswith("pptx-slide-")
+            assert ev.metadata["document_type"] == "PPTX"
+            assert ev.evidence_type in (EvidenceType.DOCUMENT, EvidenceType.OCR)
+
+    def test_pptx_table_and_notes_reach_the_store(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        svc.ingest(self._deck())
+        contents = [ev.content for ev in store.all()]
+        assert "x || f(x) | 0 || 0.25" in contents
+        assert "Recordator: normalitzar abans de dibuixar." in contents
+
+    def test_pptx_embedded_image_goes_through_the_ocr_branch(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        svc.ingest(self._deck())
+        ocr = [
+            ev
+            for ev in store.all()
+            if ev.evidence_type is EvidenceType.OCR
+        ]
+        assert ocr, "embedded picture did not reach the OCR branch"
+        for ev in ocr:
+            assert ev.metadata["source"] == "pptx-image-ocr"
+            assert ev.metadata["image_id"].startswith("docimage-")
+            # Provenance points at the SLIDE, never at a temp file.
+            assert ev.source_reference.location == "pptx-slide-3-shape-1"
+            assert ev.source_reference.page == 3
+            assert ev.source_reference.material_id == "e2e-pptx"
+            # A readable engine name: a mock run must never look real.
+            assert ev.metadata["ocr_engine"]
+            assert "class" not in ev.metadata["ocr_engine"]
+
+    def test_picture_only_deck_uses_ocr_instead_of_failing(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        m = self._deck("picture_only.pptx", material_id="e2e-pptx-pic")
+        report = svc.ingest(m)
+        assert report.status == IngestionStatus.SUCCESS
+        assert report.added_count >= 1
+        assert all(
+            ev.evidence_type is EvidenceType.OCR for ev in store.all()
+        )
+        assert not report.errors
+
+    def test_encrypted_deck_succeeds_with_zero_evidence(self):
+        """解析失败 -> 0 条证据的 SUCCESS; 上层据此显示 NO_TEXT_EXTRACTED /
+        DOCUMENT_PARSE_FAILED, 这里只保证适配器自己不抛。"""
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        m = self._deck("encrypted.pptx", material_id="e2e-pptx-bad")
+        report = svc.ingest(m)
+        assert report.status == IngestionStatus.SUCCESS
+        assert report.added_count == 0
+        assert store.count() == 0
+
+    def test_ocr_engine_failure_is_isolated_per_picture(self):
+        """一张图 OCR 炸了不能带走整份课件的文字证据。"""
+
+        class ExplodingOCREngine:
+            def ocr(self, material):
+                raise RuntimeError("no ocr here")
+
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store, ocr_engine=ExplodingOCREngine())
+        report = svc.ingest(self._deck(material_id="e2e-pptx-noocr"))
+        assert report.status == IngestionStatus.SUCCESS
+        assert report.added_count == 7          # slides + table + notes survive
+        assert store.count() == 7
+        assert all(
+            ev.evidence_type is EvidenceType.DOCUMENT for ev in store.all()
+        )
+
+    def test_pptx_does_not_duplicate_picture_evidence(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        report = svc.ingest(self._deck(material_id="e2e-pptx-once"))
+        assert store.count() == report.added_count
+        again = svc.ingest(self._deck(material_id="e2e-pptx-once"))
+        assert again.added_count == 0
+        assert store.count() == report.added_count
+
+    def test_pptx_pdf_docx_share_one_store(self):
+        store = EvidenceStore()
+        svc = EvidenceIngestionService(store)
+        materials = [
+            Material(material_id="combo-note", filename="example.txt", path=str(FIX_NOTES / "example.txt"), material_type=MaterialType.NOTE),
+            Material(material_id="combo-pdf", filename="simple.pdf", path=str(FIX_DOCS / "simple.pdf"), material_type=MaterialType.SYLLABUS),
+            Material(material_id="combo-docx", filename="simple.docx", path=str(FIX_DOCS / "simple.docx"), material_type=MaterialType.SYLLABUS),
+            Material(material_id="combo-pptx", filename="lecture.pptx", path=str(FIX_DOCS / "lecture.pptx"), material_type=MaterialType.SYLLABUS),
+        ]
+        batch = svc.ingest_many(materials)
+        assert batch.failed == 0
+        assert batch.total_added == store.count()
+        by_material = {ev.source_reference.material_id for ev in store.all()}
+        assert by_material == {"combo-note", "combo-pdf", "combo-docx", "combo-pptx"}
 
     def test_markdown_note_real_file_end_to_end(self):
         store = EvidenceStore()

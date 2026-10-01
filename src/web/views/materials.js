@@ -77,7 +77,7 @@ async function pageMaterials() {
     '<option value="ca">' + t('ca · 加泰罗尼亚语') + '</option><option value="zh">' + t('zh · 中文') + '</option>' +
     '</select></label>' +
     '<div class="actions"><button class="primary" type="submit">' + t('上传并登记') + '</button>' +
-    '<span class="small muted">' + t('支持 pdf / docx / txt / md / 音频 / 图片。同名同内容只登记一次。') + '</span></div>' +
+    '<span class="small muted">' + t('支持 pdf / docx / pptx / txt / md / 音频 / 图片。同名同内容只登记一次。') + '</span></div>' +
     '</form></div>' +
 
     '<div class="card"><div class="card-head"><h2>' + t('材料列表') + '</h2>' +

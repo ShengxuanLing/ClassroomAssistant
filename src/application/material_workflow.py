@@ -108,7 +108,14 @@ _AUDIO_EXTS = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".wma", ".aac", ".opus"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
 _PDF_EXTS = {".pdf"}
 _DOCX_EXTS = {".docx"}
-_SUPPORTED = _NOTE_EXTS | _AUDIO_EXTS | _IMAGE_EXTS | _PDF_EXTS | _DOCX_EXTS
+#: PowerPoint (OOXML).  ``.ppt`` (the 97-2003 binary format) is deliberately
+#: NOT here: it is not an OOXML/zip package, so no parser can read it, and a
+#: silent partial read would be worse than a clear 415 telling the user to
+#: re-save as .pptx or PDF.
+_PPTX_EXTS = {".pptx"}
+_SUPPORTED = (
+    _NOTE_EXTS | _AUDIO_EXTS | _IMAGE_EXTS | _PDF_EXTS | _DOCX_EXTS | _PPTX_EXTS
+)
 
 _EXTENSION_CATEGORIES: dict[str, str] = {}
 for _e in _NOTE_EXTS:
@@ -120,6 +127,8 @@ for _e in _IMAGE_EXTS:
 for _e in _PDF_EXTS:
     _EXTENSION_CATEGORIES[_e] = "document"
 for _e in _DOCX_EXTS:
+    _EXTENSION_CATEGORIES[_e] = "document"
+for _e in _PPTX_EXTS:
     _EXTENSION_CATEGORIES[_e] = "document"
 
 _MATERIAL_TYPE_BY_CATEGORY = {

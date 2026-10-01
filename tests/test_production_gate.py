@@ -1012,6 +1012,7 @@ class TestDependencyAudit:
             "ctranslate2",
             "pypdf",
             "python-docx",
+            "python-pptx",
             "av",
             "numpy",
             "rapidocr-onnxruntime",

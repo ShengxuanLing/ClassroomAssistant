@@ -1,7 +1,7 @@
 """Unified Evidence Ingestion service for the Classroom Assistant project (Task 24).
 
 Orchestrates extraction from all supported material sources (Note, Audio,
-OCR/Image, PDF, DOCX) through the existing extractors and writes the
+OCR/Image, PDF, DOCX, PPTX) through the existing extractors and writes the
 produced Evidence into the single authoritative EvidenceStore (Task 23).
 
 Design rules (Task 24 spec):
@@ -25,7 +25,9 @@ Design rules (Task 24 spec):
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -57,6 +59,7 @@ __all__ = [
     "AudioExtractorAdapter",
     "OCRExtractorAdapter",
     "DocumentExtractorAdapter",
+    "PPTXExtractorAdapter",
     "EvidenceIngestionService",
     "resolve_source_type",
 ]
@@ -70,6 +73,7 @@ SOURCE_AUDIO = "audio"
 SOURCE_OCR = "ocr"
 SOURCE_PDF = "pdf"
 SOURCE_DOCX = "docx"
+SOURCE_PPTX = "pptx"
 SOURCE_UNSUPPORTED = "unsupported"
 
 _NOTE_EXTENSIONS = {".txt", ".md", ".markdown"}
@@ -95,6 +99,8 @@ def resolve_source_type(material: Material) -> str:
         return SOURCE_PDF
     if ext == ".docx":
         return SOURCE_DOCX
+    if ext == ".pptx":
+        return SOURCE_PPTX
     mtype = material.material_type
     if isinstance(mtype, str):
         mtype = MaterialType.from_string(mtype)
@@ -531,6 +537,130 @@ class DocumentExtractorAdapter(ExtractorAdapter):
         return DocumentEvidenceExtractor().extract(parsed)
 
 
+class PPTXExtractorAdapter(ExtractorAdapter):
+    """PPTX routing: slide text / tables / speaker notes, **plus** the
+    existing image OCR path for pictures embedded in the deck.
+
+    The OCR branch deliberately reuses the very same two calls
+    ``OCRExtractorAdapter`` makes (``OCREngine.ocr`` + ``ocr_to_evidence``)
+    and the same injected engine, so no OCR library, threshold or
+    dependency is duplicated here.  Each embedded raster is materialised
+    into a throwaway temp file first, because the engine reads from disk -
+    the deck itself is never re-read and never modified.
+
+    Provenance is rewritten to the slide locator
+    (``pptx-slide-N-shape-K``) and the engine identity is stamped into
+    ``metadata``, so OCR text read off a slide stays traceable and a mock
+    engine can never pass for a real one.
+
+    Failure isolation: one undecodable picture is skipped, it does not
+    fail the whole deck (the slides around it still carry evidence).  A
+    picture-only deck that yields nothing still ends as SUCCESS with 0
+    evidence, which the material workflow surfaces as the
+    NO_TEXT_EXTRACTED warning rather than a FAILED job.
+    """
+
+    source_type = SOURCE_PPTX
+
+    def __init__(self, ocr_engine: Optional[Any] = None) -> None:
+        if ocr_engine is None:
+            from src.ocr_processor import MockOCREngine
+
+            ocr_engine = MockOCREngine()
+        self._ocr = ocr_engine
+
+    def extract(self, material: Material) -> Optional[List[Evidence]]:
+        from src.document_input import parse_document
+        from src.document_evidence import DocumentEvidenceExtractor
+
+        parsed = parse_document(material.path, material_id=material.material_id)
+        evidences: List[Evidence] = list(DocumentEvidenceExtractor().extract(parsed))
+        evidences.extend(self._extract_image_ocr(material, parsed))
+        return evidences
+
+    # ------------------------------------------------------------------
+
+    def _extract_image_ocr(self, material: Material, parsed: Any) -> List[Evidence]:
+        from src.ocr_processor import ocr_to_evidence
+
+        images = tuple(getattr(parsed, "images", ()) or ())
+        if not images:
+            return []
+
+        evidences: List[Evidence] = []
+        seen: set = set()
+        stem = Path(material.filename or material.path or "deck").stem
+
+        for image in images:
+            if not image.is_ocr_capable:
+                continue
+            tmp_path: Optional[str] = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    suffix=image.extension or ".png", delete=False
+                ) as fh:
+                    fh.write(image.content)
+                    tmp_path = fh.name
+                image_material = Material(
+                    material_id=f"{material.material_id}#{image.image_id}",
+                    filename=f"{stem}-{image.image_id}{image.extension}",
+                    path=tmp_path,
+                    material_type=MaterialType.IMAGE,
+                    language=getattr(material, "language", Language.UNKNOWN),
+                    metadata={
+                        "course_id": (material.metadata or {}).get("course_id"),
+                        "source_type": SOURCE_PPTX,
+                        "parent_material_id": material.material_id,
+                        "image_id": image.image_id,
+                        "location": image.location,
+                        "slide_number": image.slide_number,
+                    },
+                )
+                ocr_result = self._ocr.ocr(image_material)
+            except Exception:
+                # A single bad picture must not sink the whole deck; the
+                # slide's own text is still valid evidence.
+                continue
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+            # The engine stamp makes a mock run impossible to mistake for a
+            # real one.  MockOCREngine reports its *class*; the local
+            # provider reports its name string - normalise both to a name.
+            raw_engine = (ocr_result.metadata or {}).get("engine", "")
+            engine = getattr(raw_engine, "__name__", None) or str(raw_engine or "")
+            for evidence in ocr_to_evidence(ocr_result):
+                ref = evidence.source_reference
+                if ref is None:
+                    ref = SourceReference(material_id=material.material_id)
+                    evidence.source_reference = ref
+                # Provenance points at the SLIDE, not at the temp file.
+                ref.material_id = material.material_id
+                ref.location = image.location
+                ref.page = image.slide_number
+                metadata = dict(evidence.metadata or {})
+                metadata.update(
+                    {
+                        "source": "pptx-image-ocr",
+                        "document_type": "PPTX",
+                        "image_id": image.image_id,
+                        "image_sha256": image.content_sha256,
+                        "ocr_engine": engine,
+                    }
+                )
+                evidence.metadata = metadata
+                key = (ref.location, evidence.content)
+                if key in seen:
+                    continue
+                seen.add(key)
+                evidences.append(evidence)
+        return evidences
+
+
 class _ASRFailureError(Exception):
     """Structured ASR provider failure surfaced by the audio adapter."""
 
@@ -660,6 +790,7 @@ class EvidenceIngestionService:
             SOURCE_OCR: OCRExtractorAdapter(ocr_engine),
             SOURCE_PDF: DocumentExtractorAdapter(),
             SOURCE_DOCX: DocumentExtractorAdapter(),
+            SOURCE_PPTX: PPTXExtractorAdapter(ocr_engine),
         }
         if extractors:
             for key, adapter in extractors.items():

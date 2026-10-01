@@ -17,8 +17,8 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 材料登记 | 上传 PDF / DOCX / TXT / MD / 音频 / 图片；同名同内容只登记一次 |
-| 转录与识别 | 音频走本地 Whisper（faster-whisper），文档走 pypdf / python-docx，图片走本地 OCR（rapidocr-onnxruntime）；无 GPU、无云 API |
+| 材料登记 | 上传 PDF / DOCX / PPTX / TXT / MD / 音频 / 图片；同名同内容只登记一次 |
+| 转录与识别 | 音频走本地 Whisper（faster-whisper），文档走 pypdf / python-docx / python-pptx，图片走本地 OCR（rapidocr-onnxruntime）；无 GPU、无云 API |
 | 证据提取 | 每条证据保留来源定位（音频时间戳 / 页码 / 行号 / 段落），内容逐字不改 |
 | 知识点组装 | 从证据组装知识点，标注验证状态与置信度；无证据支撑就不生成 |
 | 冲突检测 | 不同来源矛盾时并列所有版本，**绝不自动挑一个** |

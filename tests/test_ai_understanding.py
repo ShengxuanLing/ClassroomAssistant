@@ -678,6 +678,15 @@ class TestProviders:
         assert detect_material_kind(source_type="ocr") == "image"
         assert detect_material_kind(filename="weird.xyz") == "unknown"
 
+    def test_detect_material_kind_knows_pptx(self):
+        """AI 管线必须把课件认成 text, 而不是 unknown (否则不抽知识点)。"""
+        assert detect_material_kind(filename="a.pptx") == "text"
+        assert detect_material_kind(filename="A.PPTX") == "text"
+        assert detect_material_kind(source_type="pptx") == "text"
+        assert detect_material_kind(source_type="pptx", material_type="text") == "text"
+        # 旧版二进制格式仍然没有支持, 不得被悄悄当成 text。
+        assert detect_material_kind(filename="old.ppt") == "unknown"
+
     def test_processing_identity_is_deterministic(self):
         first = processing_identity(material_hash="h", model="m", prompt_version="p")
         second = processing_identity(material_hash="h", model="m", prompt_version="p")

@@ -242,9 +242,9 @@ def detect_material_kind(
         return "audio"
     if source in ("ocr", "image") or mtype == "image" or name.endswith(image_exts):
         return "image"
-    if source in ("note", "pdf", "docx", "document") or mtype in ("text", "note", "syllabus"):
+    if source in ("note", "pdf", "docx", "pptx", "document") or mtype in ("text", "note", "syllabus"):
         return "text"
-    if name.endswith((".pdf", ".docx", ".txt", ".md", ".markdown")):
+    if name.endswith((".pdf", ".docx", ".pptx", ".txt", ".md", ".markdown")):
         return "text"
     return "unknown"
 

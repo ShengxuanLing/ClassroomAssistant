@@ -2,7 +2,7 @@
 
 Orchestrates different parsers based on Material type to produce
 structured Evidence objects. Supports TXT/Markdown notes via
-NoteParser and PDF/DOCX documents via the Task 22
+NoteParser and PDF/DOCX/PPTX documents via the Task 22
 DocumentEvidenceExtractor; unsupported types return an empty list
 safely.
 """
@@ -21,7 +21,7 @@ class EvidenceExtractor:
     """Unified Evidence extraction pipeline."""
 
     _SUPPORTED_EXTENSIONS = {'.txt', '.md', '.markdown'}
-    _DOCUMENT_EXTENSIONS = {'.pdf', '.docx'}
+    _DOCUMENT_EXTENSIONS = {'.pdf', '.docx', '.pptx'}
 
     def __init__(self, material: Material) -> None:
         self.material = material

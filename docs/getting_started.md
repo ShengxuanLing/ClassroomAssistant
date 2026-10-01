@@ -26,6 +26,7 @@ pip install -r requirements.txt
 | 图片 OCR | `rapidocr-onnxruntime` | 是，PP-OCR ONNX 模型打进 wheel，完全离线 |
 | PDF | `pypdf` | — |
 | DOCX | `python-docx` | — |
+| PPTX | `python-pptx` | — |
 
 如果这些依赖缺失或加载失败，运行时**不会**静默降级成假数据：它会回落到 Mock，
 并把 `asr_mode` / `ocr_mode` 标成 `"mock"`、在界面上挂显式横幅。**Mock 的输出不是
@@ -92,7 +93,12 @@ curl -X POST "http://127.0.0.1:8765/api/materials?course_id=<course_id>&session_
   -F "file=@clase-01.mp3"
 ```
 
-支持 `pdf / docx / txt / md / 音频 / 图片`。要点：
+支持 `pdf / docx / pptx / txt / md / 音频 / 图片`。
+
+> `.ppt`（97-2003 二进制格式）**不支持**，会被 415 拒收；请先在 PowerPoint 里
+> **另存为 `.pptx`**，或导出 PDF 再上传。
+
+要点：
 
 - 上传后文件被**复制**进 `classroom-data/{audio|images|documents}/`，
   文件名**保持原样**（含中文、重音字符、空格）。

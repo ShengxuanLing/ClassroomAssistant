@@ -82,6 +82,7 @@ def _block(
     block_index=None,
     para=None,
     table_index=None,
+    location="",
     bid="",
 ):
     md = {}
@@ -94,6 +95,7 @@ def _block(
         page_number=page,
         block_index=block_index,
         paragraph_index=para,
+        location=location,
         metadata=md,
     )
     return b
@@ -590,3 +592,131 @@ class TestNoForbiddenSideEffects:
         a = block_evidence_id("d", "PDF", "TEXT", "page:1", "x")
         b = block_evidence_id("d", "PDF", "TEXT", "page:1", "x")
         assert a == b
+
+
+# ===========================================================================
+# PPTX (PowerPoint) blocks -> Evidence
+# ===========================================================================
+
+
+class TestPptxEvidence:
+    @pytest.fixture()
+    def lecture(self) -> ParsedDocument:
+        return parse_document(FIX / "lecture.pptx", material_id="mat-pptx")
+
+    def test_slide_blocks_become_document_evidence(self, lecture):
+        evs = DocumentEvidenceExtractor().extract(lecture)
+        assert len(evs) == len(lecture.blocks)
+        assert all(e.evidence_type is EvidenceType.DOCUMENT for e in evs)
+        assert all(e.metadata["document_type"] == "PPTX" for e in evs)
+
+    def test_location_is_the_pptx_locator_not_a_docx_paragraph(self, lecture):
+        evs = DocumentEvidenceExtractor().extract(lecture)
+        for e in evs:
+            assert e.metadata["location"].startswith("pptx-slide-")
+            assert e.source_reference.location == e.metadata["location"]
+            assert not e.metadata["location"].startswith("docx-")
+
+    def test_slide_number_is_carried_as_page(self, lecture):
+        evs = DocumentEvidenceExtractor().extract(lecture)
+        pages = {e.metadata["location"]: e.source_reference.page for e in evs}
+        assert pages["pptx-slide-1-shape-0"] == 1
+        assert pages["pptx-slide-2-shape-1"] == 2
+        assert pages["pptx-slide-3-notes"] == 3
+
+    def test_material_id_is_preserved(self, lecture):
+        evs = DocumentEvidenceExtractor().extract(lecture)
+        assert all(e.source_reference.material_id == "mat-pptx" for e in evs)
+
+    def test_table_and_notes_keep_their_text_verbatim(self, lecture):
+        evs = DocumentEvidenceExtractor().extract(lecture)
+        contents = [e.content for e in evs]
+        assert "x || f(x) | 0 || 0.25" in contents
+        assert "Recordator: normalitzar abans de dibuixar." in contents
+
+    def test_same_shape_same_text_is_deduplicated(self):
+        doc = _parsed(
+            "document-pptxdup01",
+            "PPTX",
+            material_id="mat-pptx",
+            blocks=[
+                _block("Repetit", page=1, block_index=0, location="pptx-slide-1-shape-0"),
+                _block("Repetit", page=1, block_index=0, location="pptx-slide-1-shape-0"),
+            ],
+        )
+        evs = DocumentEvidenceExtractor().extract(doc)
+        assert len(evs) == 1
+
+    def test_same_text_on_two_shapes_stays_distinct(self):
+        doc = _parsed(
+            "document-pptxdup02",
+            "PPTX",
+            material_id="mat-pptx",
+            blocks=[
+                _block("Repetit", page=1, block_index=0, location="pptx-slide-1-shape-0"),
+                _block("Repetit", page=1, block_index=1, location="pptx-slide-1-shape-1"),
+            ],
+        )
+        evs = DocumentEvidenceExtractor().extract(doc)
+        assert len(evs) == 2
+        assert len({e.evidence_id for e in evs}) == 2
+
+    def test_pptx_pdf_and_docx_blocks_never_collide(self):
+        """同一段文字在三种文档里必须得到不同的 evidence_id。"""
+        same_text = "Valor de la densitat"
+        ids = set()
+        for doc_type, location in (
+            ("PDF", ""),
+            ("DOCX", ""),
+            ("PPTX", "pptx-slide-1-shape-0"),
+        ):
+            block = (
+                _block(same_text, page=1, block_index=0, location=location)
+                if doc_type != "DOCX"
+                else _block(same_text, para=0)
+            )
+            doc = _parsed(
+                "document-shared0001", doc_type, material_id="mat", blocks=[block]
+            )
+            evs = DocumentEvidenceExtractor().extract(doc)
+            assert len(evs) == 1
+            ids.add(evs[0].evidence_id)
+        assert len(ids) == 3
+
+    def test_picture_only_deck_yields_no_document_evidence(self):
+        parsed = parse_document(FIX / "picture_only.pptx", material_id="mat-pptx")
+        assert parsed.status is DocumentStatus.PARSED_EMPTY
+        assert DocumentEvidenceExtractor().extract(parsed) == []
+
+    def test_failed_deck_yields_no_evidence(self):
+        parsed = parse_document(FIX / "encrypted.pptx", material_id="mat-pptx")
+        assert parsed.status is DocumentStatus.FAILED
+        assert DocumentEvidenceExtractor().extract(parsed) == []
+
+    def test_extraction_does_not_mutate_the_parsed_document(self, lecture):
+        before = copy.deepcopy(lecture.to_dict())
+        DocumentEvidenceExtractor().extract(lecture)
+        assert lecture.to_dict() == before
+
+    def test_evidence_ids_are_deterministic_across_runs(self):
+        first = DocumentEvidenceExtractor().extract(
+            parse_document(FIX / "lecture.pptx", material_id="mat-pptx")
+        )
+        second = DocumentEvidenceExtractor().extract(
+            parse_document(FIX / "lecture.pptx", material_id="mat-pptx")
+        )
+        assert [e.evidence_id for e in first] == [e.evidence_id for e in second]
+
+    def test_legacy_evidence_extractor_also_handles_pptx(self):
+        """遗留链路 (src.evidence_extractor) 必须与新链路同等待遇。"""
+        mat = Material(
+            material_id="mat-pptx",
+            filename="lecture.pptx",
+            path=str(FIX / "lecture.pptx"),
+            material_type=MaterialType.SYLLABUS,
+            language=Language.UNKNOWN,
+        )
+        evs = EvidenceExtractor(mat).extract()
+        assert len(evs) == 7
+        assert all(e.evidence_type is EvidenceType.DOCUMENT for e in evs)
+        assert all(e.metadata["location"].startswith("pptx-slide-") for e in evs)

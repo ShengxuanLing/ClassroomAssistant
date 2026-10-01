@@ -49,6 +49,7 @@ POST /api/sessions  {"course_id": "...", "session_number": 3, "date": "2026-03-0
 | 音频 | `.mp3` `.wav` `.ogg` `.m4a` … | Whisper 转录 → 带时间戳的证据 |
 | 文档 | `.pdf` | pypdf 提取 → 带页码/段落定位的证据 |
 | 文档 | `.docx` | python-docx 提取 → 带段落定位的证据 |
+| 文档 | `.pptx` | python-pptx 提取幻灯片文字/表格/备注 → 带“幻灯片 N / 形状 K”定位的证据；内嵌图片走本地 OCR |
 | 笔记 | `.txt` `.md` | 直接解析 |
 | 图片 | `.png` `.jpg` `.jpeg` `.webp` … | 本地 OCR → 带位置的证据 |
 

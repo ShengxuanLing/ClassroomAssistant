@@ -1024,3 +1024,154 @@ class TestKnowledgeRegistration:
         service.register_knowledge_point(payload)
         service.register_knowledge_point(payload)
         assert service._org.registered_knowledge_point_ids == frozenset({"kp-1"})  # noqa: SLF001
+
+
+# ===========================================================================
+# PPTX (PowerPoint) — 登记 -> 处理 -> 证据, 以及 .ppt 的 415
+# ===========================================================================
+
+
+class TestPptxWhitelistGate:
+    """上传门岗 (白名单) 单独可测: 退掉 .pptx, 下面的 test 立刻变红。"""
+
+    def test_pptx_is_in_the_supported_whitelist(self):
+        from src.application.material_workflow import _SUPPORTED
+
+        assert ".pptx" in _SUPPORTED
+        assert ".pdf" in _SUPPORTED
+        assert ".docx" in _SUPPORTED
+
+    def test_pptx_is_categorised_as_a_document(self):
+        from src.application.material_workflow import _EXTENSION_CATEGORIES
+
+        assert _EXTENSION_CATEGORIES[".pptx"] == "document"
+        assert _EXTENSION_CATEGORIES[".pdf"] == "document"
+
+    def test_legacy_ppt_is_not_in_the_whitelist(self):
+        from src.application.material_workflow import _SUPPORTED
+
+        assert ".ppt" not in _SUPPORTED
+        assert ".pps" not in _SUPPORTED
+        assert ".odp" not in _SUPPORTED
+
+
+class TestPptxRegistration:
+    def test_register_pptx(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "clase.pptx", "documents/lecture.pptx")
+        record = service.register_material(path)
+        assert record["processing_status"] == REGISTERED
+        assert record["source_type"] == "document"
+        assert record["extension"] == ".pptx"
+        assert record["material_type"] == "text"
+
+    def test_register_pptx_routes_to_the_documents_bucket(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "clase.pptx", "documents/lecture.pptx")
+        record = service.register_material(path)
+        assert record["stored_path"].startswith(service.layout.documents)
+        assert Path(record["stored_path"]).is_file()
+
+    def test_register_ppt_is_rejected_as_unsupported(self, tmp_path):
+        service, source = make_service(tmp_path)
+        record = service.register_material(
+            write(source, "old.ppt", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+        )
+        assert record["processing_status"] == FAILED
+        assert record["error"] == "UNSUPPORTED_EXTENSION"
+        assert record["material_id"] is None
+        assert "UNSUPPORTED_EXTENSION" in NON_RETRYABLE_ERROR_CODES
+
+    def test_rejected_ppt_is_never_copied_into_the_data_dir(self, tmp_path):
+        service, source = make_service(tmp_path)
+        service.register_material(write(source, "old.ppt", b"\xd0\xcf\x11\xe0"))
+        stored = service.list_materials()
+        assert all(not r.get("stored_path") for r in stored)
+
+    def test_unsupported_extension_message_points_at_pptx(self):
+        """前端提示文案必须写出 pptx, 并说明 .ppt 要先另存。"""
+        from src.application.processing_service import _RECOMMENDED_ACTIONS
+
+        message = _RECOMMENDED_ACTIONS["UNSUPPORTED_EXTENSION"]
+        assert "pptx" in message
+        assert ".ppt" in message
+        assert "PDF" in message
+
+
+class TestPptxProcessing:
+    def test_pptx_completes_with_evidence(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "clase.pptx", "documents/lecture.pptx")
+        record = service.register_material(path)
+        done = service.process_material(record["material_id"])
+        assert done["processing_status"] == COMPLETED
+        assert done["error"] is None
+        assert done["evidence_count"] > 0
+        assert done["evidence_ids"]
+
+    def test_pptx_evidence_comes_from_slides_tables_and_notes(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "clase.pptx", "documents/lecture.pptx")
+        record = service.register_material(path)
+        service.process_material(record["material_id"])
+        evidences = service.evidence_for_material(record["material_id"])
+        assert evidences
+        for ev in evidences:
+            assert ev["source"]["material_id"] == record["material_id"]
+        locations = {
+            (ev.get("metadata") or {}).get("location") for ev in evidences
+        }
+        assert any(loc and loc.startswith("pptx-slide-") for loc in locations)
+        contents = {ev["content"] for ev in evidences}
+        assert "x || f(x) | 0 || 0.25" in contents
+
+    def test_pptx_processing_is_idempotent(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "clase.pptx", "documents/lecture.pptx")
+        record = service.register_material(path)
+        first = service.process_material(record["material_id"])
+        second = service.process_material(record["material_id"])
+        assert first["evidence_ids"] == second["evidence_ids"]
+        assert second["processing_status"] == COMPLETED
+        assert len(service.store.all()) == len(first["evidence_ids"])
+
+    def test_encrypted_pptx_fails_processing_without_fabricating(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "locked.pptx", "documents/encrypted.pptx")
+        record = service.register_material(path)
+        done = service.process_material(record["material_id"])
+        assert done["processing_status"] == FAILED
+        assert done["error"] == "DOCUMENT_PARSE_FAILED"
+        assert done["evidence_ids"] == []
+        assert done.get("retryable") is False
+
+    def test_corrupted_pptx_fails_processing(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "broken.pptx", "documents/corrupted.pptx")
+        record = service.register_material(path)
+        done = service.process_material(record["material_id"])
+        assert done["processing_status"] == FAILED
+        assert done["error"] == "DOCUMENT_PARSE_FAILED"
+        assert done["evidence_ids"] == []
+
+    def test_picture_only_pptx_completes_with_ocr_or_warning(self, tmp_path):
+        """纯图课件: 成功, 要么有 OCR 证据, 要么 NO_TEXT_EXTRACTED —— 绝不 FAILED。"""
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "solo-imagen.pptx", "documents/picture_only.pptx")
+        record = service.register_material(path)
+        done = service.process_material(record["material_id"])
+        assert done["processing_status"] == COMPLETED
+        assert done["error"] is None
+        if done["evidence_count"] == 0:
+            assert done["warning"] == "NO_TEXT_EXTRACTED"
+        else:
+            assert done["warning"] is None
+
+    def test_empty_pptx_completes_with_the_no_text_warning(self, tmp_path):
+        service, source = make_service(tmp_path)
+        path = copy_fixture(source, "vacio.pptx", "documents/empty.pptx")
+        record = service.register_material(path)
+        done = service.process_material(record["material_id"])
+        assert done["processing_status"] == COMPLETED
+        assert done["warning"] == "NO_TEXT_EXTRACTED"
+        assert done["evidence_ids"] == []

@@ -14,7 +14,8 @@
 |---|---|---|
 | TXT / Markdown | 直接读取 | 正常（纯文本） |
 | PDF / DOCX | 文档解析 | `feature unavailable`（不伪造） |
-| PPT / PPTX | 文档解析（若支持） | `feature unavailable`（不伪造） |
+| PPTX | 文档解析（幻灯片文字 / 表格 / 备注 + 内嵌图片 OCR） | `feature unavailable`（不伪造） |
+| PPT（97-2003 二进制） | 不支持，注册期 `UNSUPPORTED_EXTENSION` | 提示另存为 `.pptx` 或 PDF |
 | 音频 (MP3/WAV/OGG) | Whisper ASR | `feature unavailable`（无 ASR 运行时） |
 | 图片 / 手写板 | OCR | `feature unavailable`（无 OCR 运行时） |
 

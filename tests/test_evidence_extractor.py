@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 
 from src.models import (
-    Confidence, Evidence, EvidenceType, Language, Material, SourceReference,
+    Confidence, Evidence, EvidenceType, Language, Material, MaterialType,
+    SourceReference,
 )
 from src.evidence_extractor import EvidenceExtractor
 
@@ -360,6 +361,74 @@ class TestEvidenceExtractorContentPreservation(unittest.TestCase):
         extractor = EvidenceExtractor(material)
         evidences = extractor.extract()
         self.assertEqual(evidences[0].content, content.strip())
+
+
+class TestEvidenceExtractorPPTX(unittest.TestCase):
+    """遗留链路的后缀白名单: .pptx 必须与 pdf / docx 同等待遇。"""
+
+    FIXTURES = Path(__file__).parent / "fixtures" / "documents"
+
+    def test_pptx_is_a_document_extension(self):
+        self.assertIn(".pptx", EvidenceExtractor._DOCUMENT_EXTENSIONS)
+        self.assertIn(".pdf", EvidenceExtractor._DOCUMENT_EXTENSIONS)
+        self.assertIn(".docx", EvidenceExtractor._DOCUMENT_EXTENSIONS)
+
+    def test_legacy_ppt_is_not_a_document_extension(self):
+        self.assertNotIn(".ppt", EvidenceExtractor._DOCUMENT_EXTENSIONS)
+
+    def test_pptx_extraction(self):
+        material = Material(
+            material_id="mat-legacy-pptx",
+            filename="lecture.pptx",
+            path=str(self.FIXTURES / "lecture.pptx"),
+            material_type=MaterialType.SYLLABUS,
+            language=Language.UNKNOWN,
+        )
+        evidences = EvidenceExtractor(material).extract()
+        self.assertEqual(len(evidences), 7)
+        self.assertTrue(
+            all(ev.evidence_type is EvidenceType.DOCUMENT for ev in evidences)
+        )
+        self.assertTrue(
+            all(
+                str(ev.source_reference.location).startswith("pptx-slide-")
+                for ev in evidences
+            )
+        )
+
+    def test_pptx_table_and_notes_survive(self):
+        material = Material(
+            filename="lecture.pptx",
+            path=str(self.FIXTURES / "lecture.pptx"),
+            material_type=MaterialType.SYLLABUS,
+            language=Language.UNKNOWN,
+        )
+        contents = {ev.content for ev in EvidenceExtractor(material).extract()}
+        self.assertIn("x || f(x) | 0 || 0.25", contents)
+        self.assertIn("Recordator: normalitzar abans de dibuixar.", contents)
+
+    def test_encrypted_pptx_yields_no_evidence_and_raises_nothing(self):
+        material = Material(
+            filename="encrypted.pptx",
+            path=str(self.FIXTURES / "encrypted.pptx"),
+            material_type=MaterialType.SYLLABUS,
+            language=Language.UNKNOWN,
+        )
+        self.assertEqual(EvidenceExtractor(material).extract(), [])
+
+    def test_ppt_is_not_parsed_as_a_note(self):
+        """``.ppt`` 不在白名单 -> 返回空列表, 而不是把二进制当笔记读。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ppt_path = os.path.join(tmpdir, "old.ppt")
+            with open(ppt_path, "wb") as fh:
+                fh.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 legacy binary deck")
+            material = Material(
+                filename="old.ppt",
+                path=ppt_path,
+                material_type=MaterialType.SYLLABUS,
+                language=Language.UNKNOWN,
+            )
+            self.assertEqual(EvidenceExtractor(material).extract(), [])
 
 
 if __name__ == "__main__":

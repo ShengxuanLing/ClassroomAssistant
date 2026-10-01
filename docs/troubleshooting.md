@@ -189,7 +189,7 @@ WHERE material_id = '<material-id>';
 | 类别 | 例子 | 可重试 |
 | --- | --- | --- |
 | 临时 | 模型不可用、磁盘暂时满、超时 | 是 |
-| 永久 | PDF / DOCX 本身损坏、格式不支持 | 否 |
+| 永久 | PDF / DOCX / PPTX 本身损坏、格式不支持 | 否 |
 
 永久失败重试会被明确拒绝——这是**刻意的**，避免无限重试掩盖真正的问题。
 检查 `GET /api/processing/{material_id}` 里的 `error` / `error_detail` /
@@ -199,7 +199,7 @@ WHERE material_id = '<material-id>';
 
 | 错误码 | 含义 | 处理 |
 | --- | --- | --- |
-| `UNSUPPORTED_EXTENSION` | 扩展名不在允许集合里 | 看 `docs/user_guide.md` 的支持类型表 |
+| `UNSUPPORTED_EXTENSION` | 扩展名不在允许集合里 | 看 `docs/user_guide.md` 的支持类型表。常见的 `.ppt`（旧版二进制格式）属于这一类：在 PowerPoint 里**另存为 `.pptx`** 或导出 PDF 再上传 |
 | `OVERSIZED_FILE` | 超过 `max_upload_size`（默认 200 MiB） | 调大 `CLASSROOM_MAX_UPLOAD_SIZE` 或切分文件 |
 | `ZERO_BYTE_FILE` | 0 字节 | 源文件就是空的，重新导出 |
 

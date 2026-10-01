@@ -1,7 +1,8 @@
-"""Document (PDF / DOCX) input & parsing layer (Task 21).
+"""Document (PDF / DOCX / PPTX) input & parsing layer (Task 21).
 
-Deterministic, evidence-first reading of PDF and DOCX course materials.
-Answers: "What is in this file, page by page / paragraph by paragraph?"
+Deterministic, evidence-first reading of PDF, DOCX and PPTX course
+materials.  Answers: "What is in this file, page by page / paragraph by
+paragraph / slide by slide?"
 
 Pipeline position:
 
@@ -13,7 +14,7 @@ Pipeline position:
         |
     DocumentInput                  (file identity: path, type, material link)
         |
-    create_document_parser(type)   (dispatch: PDF | DOCX)
+    create_document_parser(type)   (dispatch: PDF | DOCX | PPTX)
         |
     ParsedDocument                 (blocks + metadata + status + errors)
         |
@@ -26,8 +27,19 @@ Explicitly NOT done here (by design):
     KnowledgePoint / KnowledgeStructure / Review generation, automatic
     repair / reordering / cleanup of source text.
 
-Dependencies: pypdf (PDF text extraction) + python-docx (DOCX body).
-Both are local, offline, deterministic text-extraction libraries.
+Dependencies: pypdf (PDF text extraction) + python-docx (DOCX body) +
+python-pptx (PPTX slides).  All are local, offline, deterministic
+text-extraction libraries, imported lazily inside each parser so a
+missing wheel degrades to PARSER_UNAVAILABLE instead of breaking the
+whole app.
+
+PPTX scope (deliberate, see docs/architecture.md): text frames,
+tables and speaker notes are extracted verbatim; images are counted
+and their bytes are exposed as ``ParsedDocument.images`` for the
+existing image OCR path.  Layout fidelity (SmartArt, charts, WordArt
+placement) is NOT reproduced - python-pptx may surface only part of
+the text inside SmartArt / embedded charts, and that is accepted: the
+evidence chain needs traceable text, not a rendering.
 """
 
 from __future__ import annotations
@@ -50,14 +62,26 @@ from src.models import Material, MaterialType, SourceReference
 # Extension / type constants
 # ---------------------------------------------------------------------------
 
-SUPPORTED_DOCUMENT_EXTENSIONS: tuple[str, ...] = (".pdf", ".docx")
+SUPPORTED_DOCUMENT_EXTENSIONS: tuple[str, ...] = (".pdf", ".docx", ".pptx")
 
-_DOCUMENT_TYPES: tuple[str, ...] = ("PDF", "DOCX")
+_DOCUMENT_TYPES: tuple[str, ...] = ("PDF", "DOCX", "PPTX")
 
 _EXT_TO_DOC_TYPE: dict[str, str] = {
     ".pdf": "PDF",
     ".docx": "DOCX",
+    ".pptx": "PPTX",
 }
+
+#: Raster image formats inside a document that the existing image OCR path
+#: (rapidocr-onnxruntime) can actually decode.  Kept equal to
+#: ``src.ocr_provider.SUPPORTED_IMAGE_EXTENSIONS`` on purpose (asserted by
+#: ``tests/test_document_input.py``) so a picture lifted out of a deck is
+#: advertised as OCR-capable exactly when a standalone upload of that same
+#: picture would be.  Vector parts (.emf / .wmf) and other rasters are still
+#: counted and still exposed as bytes, they just are not OCR-capable.
+_OCR_IMAGE_EXTENSIONS: frozenset[str] = frozenset(
+    {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+)
 
 
 class DocumentValidationError(str, Enum):
@@ -83,6 +107,7 @@ class DocumentParserErrorCode(str, Enum):
 class DocumentType(str, Enum):
     PDF = "PDF"
     DOCX = "DOCX"
+    PPTX = "PPTX"
 
     @classmethod
     def from_extension(cls, ext: str) -> Optional["DocumentType"]:
@@ -91,6 +116,8 @@ class DocumentType(str, Enum):
             return cls.PDF
         if ext == ".docx":
             return cls.DOCX
+        if ext == ".pptx":
+            return cls.PPTX
         return None
 
     @classmethod
@@ -173,9 +200,16 @@ class DocumentBlock:
     block_id: str = ""
     block_type: DocumentBlockType = field(default_factory=lambda: DocumentBlockType.TEXT)
     text: str = ""
-    page_number: Optional[int] = None       # 1-based (PDF only)
+    page_number: Optional[int] = None       # 1-based (PDF pages / PPTX slides)
     block_index: Optional[int] = None       # 0-based within page (PDF only)
     paragraph_index: Optional[int] = None   # 0-based body position (DOCX only)
+    #: Explicit human-readable locator, e.g. PPTX's
+    #: ``pptx-slide-3-shape-2``.  Empty for PDF / DOCX, whose locators are
+    #: derived from page_number / paragraph_index.  When set it is
+    #: authoritative for both the id and the source reference: page/line
+    #: alone cannot name a shape, and a PPTX block must never be
+    #: mislabelled ``docx-paragraph-*``.
+    location: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -186,6 +220,7 @@ class DocumentBlock:
             "page_number": self.page_number,
             "block_index": self.block_index,
             "paragraph_index": self.paragraph_index,
+            "location": self.location,
             "metadata": dict(self.metadata),
         }
 
@@ -203,10 +238,13 @@ class DocumentBlock:
             page_number=data.get("page_number"),
             block_index=data.get("block_index"),
             paragraph_index=data.get("paragraph_index"),
+            location=str(data.get("location", "") or ""),
             metadata=dict(data.get("metadata", {})),
         )
 
     def _location_key(self) -> str:
+        if self.location:
+            return f"loc:{self.location}"
         if self.page_number is not None:
             return f"page:{self.page_number}"
         if self.paragraph_index is not None:
@@ -227,13 +265,61 @@ class DocumentBlock:
             ref["paragraph"] = f"paragraph_{self.paragraph_index}"
         if self.block_index is not None:
             ref["line"] = self.block_index
-        if self.block_type is DocumentBlockType.TABLE:
+        if self.location:
+            ref["location"] = self.location
+        elif self.block_type is DocumentBlockType.TABLE:
             ref["location"] = "table"
         elif self.page_number is not None:
             ref["location"] = f"pdf-page-{self.page_number}-block-{self.block_index}"
         elif self.paragraph_index is not None:
             ref["location"] = f"docx-paragraph-{self.paragraph_index}"
         return ref
+
+
+# ---------------------------------------------------------------------------
+# DocumentImage (PPTX image payload)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DocumentImage:
+    """One image lifted out of a document, kept **in memory** for OCR.
+
+    ``content`` is intentionally NOT part of :meth:`to_metadata` and is
+    never serialized into ``ParsedDocument.to_dict()`` - a slide deck can
+    hold megabytes of JPEGs and the registry / API payloads must stay
+    small.  Consumers that want the pixels (the image OCR path) read
+    ``content`` straight off the in-memory object produced by the parser.
+
+    image_id is deterministic:
+        "docimage-" + sha256(document_id|slide_number|shape_index|sha256(content))[:24]
+    """
+
+    image_id: str = ""
+    slide_number: Optional[int] = None
+    shape_index: Optional[int] = None
+    location: str = ""
+    extension: str = ""
+    content: bytes = b""
+    content_sha256: str = ""
+    byte_size: int = 0
+
+    @property
+    def is_ocr_capable(self) -> bool:
+        """True when the bytes are a raster format the OCR path can decode."""
+        return bool(self.content) and self.extension.lower() in _OCR_IMAGE_EXTENSIONS
+
+    def to_metadata(self) -> dict[str, Any]:
+        """Serializable descriptor (no pixel bytes)."""
+        return {
+            "image_id": self.image_id,
+            "slide_number": self.slide_number,
+            "shape_index": self.shape_index,
+            "location": self.location,
+            "extension": self.extension,
+            "content_sha256": self.content_sha256,
+            "byte_size": self.byte_size,
+            "ocr_capable": self.is_ocr_capable,
+        }
 
 # ---------------------------------------------------------------------------
 # ParsedDocument
@@ -248,7 +334,8 @@ class ParsedDocument:
 
     status:
         PARSED       - at least one non-empty block was extracted
-        PARSED_EMPTY - parsing succeeded, zero blocks (scanned PDF, empty DOCX)
+        PARSED_EMPTY - parsing succeeded, zero blocks (scanned PDF, empty DOCX,
+                       picture-only PPTX with no text frame and no notes)
         FAILED       - parser raised an error (corrupt, password-locked, etc.)
     """
 
@@ -260,6 +347,10 @@ class ParsedDocument:
     blocks: list[DocumentBlock] = field(default_factory=list)
     errors: tuple[ParserError, ...] = field(default_factory=tuple)
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Embedded images kept in memory for the OCR path.  Never serialized
+    #: (pixel bytes are not JSON); ``metadata["image_count"]`` /
+    #: ``metadata["images"]`` carry the serializable summary instead.
+    images: tuple[DocumentImage, ...] = field(default_factory=tuple)
 
     @property
     def page_count(self) -> int:
@@ -645,6 +736,7 @@ class DocumentParser(ABC):
         page_number: Optional[int] = None,
         block_index: Optional[int] = None,
         paragraph_index: Optional[int] = None,
+        location: str = "",
         metadata: Optional[dict[str, Any]] = None,
     ) -> DocumentBlock:
         b = DocumentBlock(
@@ -653,6 +745,7 @@ class DocumentParser(ABC):
             page_number=page_number,
             block_index=block_index,
             paragraph_index=paragraph_index,
+            location=location,
             metadata=dict(metadata or {}),
         )
         b.assign_block_id(document_id)
@@ -1017,19 +1110,339 @@ class DOCXDocumentParser(DocumentParser):
         )
 
 
+class PPTXDocumentParser(DocumentParser):
+    """Deterministic PPTX (PowerPoint) extraction via python-pptx.
+
+    - one TEXT block per non-empty shape text frame (text boxes **and**
+      placeholders), in slide order then shape order
+    - one TABLE block per table; text = cells joined with ' || ' per row
+      and ' | ' between rows (identical wire format to the DOCX parser, so
+      downstream evidence needs no PPTX special case)
+    - one TEXT block per slide's speaker notes, when present
+    - every locator is ``pptx-slide-<n>-shape-<k>`` /
+      ``pptx-slide-<n>-notes``; the ``docx-paragraph-*`` namespace is
+      never reused, so a PPTX block can never be mistaken for a DOCX one
+    - pictures are counted and their bytes are exposed as
+      ``ParsedDocument.images`` (OCR-capable rasters flagged), so the
+      existing image OCR path can consume them without a second parser
+    - picture-only deck (no text, no notes) -> PARSED_EMPTY with
+      ``metadata["scanned_or_no_text_layer"] = True`` (a legitimate
+      success: the OCR branch or the NO_TEXT_EXTRACTED warning owns it)
+    - corrupt / encrypted / non-OOXML pptx -> FAILED + INVALID_DOCUMENT
+    - python-pptx missing -> FAILED + PARSER_UNAVAILABLE
+    """
+
+    document_type = "PPTX"
+
+    def parse(
+        self,
+        source: Union[str, Path],
+        material_id: str = "",
+    ) -> ParsedDocument:
+        p = Path(source)
+
+        # 1. Missing / unreadable file.
+        try:
+            st = p.stat()
+        except OSError:
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.INVALID_DOCUMENT,
+                "file not found or unreadable",
+                material_id=material_id,
+            )
+
+        try:
+            with open(p, "rb") as fh:
+                raw = fh.read()
+        except OSError as e:
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.INVALID_DOCUMENT,
+                f"cannot read file: {e.strerror or e}",
+                material_id=material_id,
+            )
+
+        # 2. Lazy python-pptx import.
+        try:
+            from pptx import Presentation
+            from pptx.exc import PackageNotFoundError
+        except Exception as e:  # pragma: no cover
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.PARSER_UNAVAILABLE,
+                f"python-pptx import failed: {e}",
+                material_id=material_id,
+            )
+
+        # 3. Open the package.  An encrypted OOXML deck is an OLE/CFB
+        #    container, not a zip, so it lands here too - that is
+        #    INVALID_DOCUMENT, not a crash and not a fabricated success.
+        try:
+            prs = Presentation(io.BytesIO(raw))
+        except PackageNotFoundError:
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.INVALID_DOCUMENT,
+                "not a valid OOXML package",
+                material_id=material_id,
+            )
+        except zipfile.BadZipFile:
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.INVALID_DOCUMENT,
+                "not a valid ZIP container (corrupt or password-encrypted)",
+                material_id=material_id,
+            )
+        except Exception as e:
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.PARSER_ERROR,
+                f"pptx open failed: {e}",
+                material_id=material_id,
+            )
+
+        document_id = _compute_document_stable_id(
+            material_id, str(p), st.st_size, int(st.st_mtime_ns)
+        )
+
+        blocks: list[DocumentBlock] = []
+        images: list[DocumentImage] = []
+        notes_count = 0
+
+        # 4. Walk slides in presentation order.
+        try:
+            slides = list(prs.slides)
+        except Exception as e:
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.PARSER_ERROR,
+                f"slide collection unreadable: {e}",
+                material_id=material_id,
+            )
+
+        try:
+            for slide_idx, slide in enumerate(slides):
+                slide_no = slide_idx + 1
+                for shape_idx, shape in self._flatten_shapes(slide.shapes):
+                    location = f"pptx-slide-{slide_no}-shape-{shape_idx}"
+                    block = self._shape_block(
+                        document_id, shape, slide_no, shape_idx, location, images
+                    )
+                    if block is not None:
+                        blocks.append(block)
+                notes = self._notes_text(slide)
+                if notes:
+                    notes_count += 1
+                    blocks.append(
+                        self._make_block(
+                            document_id,
+                            DocumentBlockType.TEXT,
+                            notes,
+                            page_number=slide_no,
+                            location=f"pptx-slide-{slide_no}-notes",
+                            metadata={"kind": "notes"},
+                        )
+                    )
+        except Exception as e:
+            return self._failed(
+                p, "PPTX", DocumentParserErrorCode.PARSER_ERROR,
+                f"slide extraction failed: {e}",
+                material_id=material_id,
+            )
+
+        # 5. Metadata + status.
+        table_count = sum(
+            1 for b in blocks if b.block_type is DocumentBlockType.TABLE
+        )
+        has_text = any(b.text for b in blocks)
+        metadata: dict[str, Any] = {
+            "slide_count": len(slides),
+            # ``page_count`` mirrors the PDF convention so generic callers
+            # (and the material page) show a size without knowing the type.
+            "page_count": len(slides),
+            "image_count": len(images),
+            "notes_count": notes_count,
+            "table_count": table_count,
+        }
+        if images:
+            metadata["images"] = [img.to_metadata() for img in images]
+        if not has_text:
+            # Same meaning as a scanned PDF: there is no text layer, only
+            # pixels (or nothing at all).  Legitimate success, not a failure.
+            metadata["scanned_or_no_text_layer"] = True
+
+        status = DocumentStatus.PARSED if has_text else DocumentStatus.PARSED_EMPTY
+
+        return ParsedDocument(
+            document_id=document_id,
+            document_type="PPTX",
+            path=str(p),
+            material_id=material_id,
+            status=status,
+            blocks=blocks,
+            metadata=metadata,
+            images=tuple(images),
+        )
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _flatten_shapes(shapes: Any) -> list[tuple[int, Any]]:
+        """Deterministic (index, shape) list, descending into group shapes.
+
+        Groups are walked depth-first so a shape nested in a group still
+        gets a stable locator; the index is the position in that flattened
+        order, which is reproducible for an unchanged file.
+        """
+        flat: list[tuple[int, Any]] = []
+
+        def walk(shapes: Any) -> None:
+            try:
+                iterator = list(shapes)
+            except Exception:
+                return
+            for shape in iterator:
+                idx = len(flat)
+                flat.append((idx, shape))
+                sub = getattr(shape, "shapes", None)
+                if sub is not None and not getattr(shape, "has_text_frame", False):
+                    try:
+                        walk(sub)
+                    except Exception:
+                        pass
+
+        walk(shapes)
+        return flat
+
+    def _shape_block(
+        self,
+        document_id: str,
+        shape: Any,
+        slide_no: int,
+        shape_idx: int,
+        location: str,
+        images: list[DocumentImage],
+    ) -> Optional[DocumentBlock]:
+        """Table block, text block, image capture - or None when the shape
+        carries no content.  Precedence: table > text > picture, matching
+        how PowerPoint itself treats a graphic frame."""
+        # --- table ---
+        if self._shape_has_table(shape):
+            table = shape.table
+            row_texts: list[str] = []
+            for row in table.rows:
+                cells = [(cell.text or "").strip() for cell in row.cells]
+                row_texts.append(" || ".join(cells))
+            return self._make_block(
+                document_id,
+                DocumentBlockType.TABLE,
+                " | ".join(row_texts).strip(),
+                page_number=slide_no,
+                block_index=shape_idx,
+                location=location,
+                metadata={"kind": "table"},
+            )
+
+        # --- text frame (text boxes and placeholders alike) ---
+        if getattr(shape, "has_text_frame", False):
+            text = (shape.text_frame.text or "").strip()
+            if text:
+                return self._make_block(
+                    document_id,
+                    DocumentBlockType.TEXT,
+                    text,
+                    page_number=slide_no,
+                    block_index=shape_idx,
+                    location=location,
+                    metadata={"kind": "text"},
+                )
+
+        # --- picture (counted + exposed for OCR, never turned into text) ---
+        image = self._capture_image(document_id, shape, slide_no, shape_idx, location)
+        if image is not None:
+            images.append(image)
+        return None
+
+    @staticmethod
+    def _shape_has_table(shape: Any) -> bool:
+        try:
+            return bool(shape.has_table)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _notes_text(slide: Any) -> str:
+        """Speaker notes of one slide, or '' when the slide has none.
+
+        ``has_notes_slide`` is checked first so that reading notes never
+        *creates* a notes part in the package (no silent mutation).
+        """
+        try:
+            if not slide.has_notes_slide:
+                return ""
+            frame = slide.notes_slide.notes_text_frame
+        except Exception:
+            return ""
+        if frame is None:
+            return ""
+        try:
+            return (frame.text or "").strip()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _capture_image(
+        document_id: str,
+        shape: Any,
+        slide_no: int,
+        shape_idx: int,
+        location: str,
+    ) -> Optional[DocumentImage]:
+        """Lift a picture shape's bytes; None for every non-picture shape.
+
+        Uses ``shape.image`` (present on Picture and on picture
+        placeholders) instead of a shape-type switch, so a picture that
+        PowerPoint models as a placeholder is captured too.
+        """
+        try:
+            image = getattr(shape, "image", None)
+            if image is None:
+                return None
+            content = bytes(getattr(image, "blob", b"") or b"")
+        except Exception:
+            return None
+        if not content:
+            return None
+        try:
+            ext = str(getattr(image, "ext", "") or "").lower()
+        except Exception:
+            ext = ""
+        if ext and not ext.startswith("."):
+            ext = f".{ext}"
+        digest = hashlib.sha256(content).hexdigest()
+        raw = f"{document_id}|{slide_no}|{shape_idx}|{digest}".encode("utf-8")
+        return DocumentImage(
+            image_id="docimage-" + hashlib.sha256(raw).hexdigest()[:24],
+            slide_number=slide_no,
+            shape_index=shape_idx,
+            location=location,
+            extension=ext,
+            content=content,
+            content_sha256=digest,
+            byte_size=len(content),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Factory / top-level helpers
 # ---------------------------------------------------------------------------
 
-
 def create_document_parser(document_type: str) -> DocumentParser:
-    """Return the concrete parser for ``"PDF"`` or ``"DOCX"`` (case-
-    insensitive).  Raises ValueError for unknown types."""
+    """Return the concrete parser for ``"PDF"``, ``"DOCX"`` or ``"PPTX"``
+    (case-insensitive).  Raises ValueError for unknown types."""
     t = str(document_type or "").strip().upper()
     if t == "PDF":
         return PDFDocumentParser()
     if t == "DOCX":
         return DOCXDocumentParser()
+    if t == "PPTX":
+        return PPTXDocumentParser()
     raise ValueError(f"unknown document_type: {document_type!r}")
 
 

@@ -1,4 +1,4 @@
-"""Tests for Task 21: PDF / DOCX document input & parsing layer."""
+"""Tests for Task 21: PDF / DOCX / PPTX document input & parsing layer."""
 from __future__ import annotations
 
 import hashlib
@@ -11,14 +11,17 @@ import pytest
 from src.document_input import (
     DocumentBlock,
     DocumentBlockType,
+    DocumentImage,
     DocumentInput,
     DocumentMaterialValidator,
     DocumentParserErrorCode,
     DocumentStatus,
+    DocumentType,
     DocumentValidationError,
     DocumentValidationResult,
     ParsedDocument,
     ParserError,
+    SUPPORTED_DOCUMENT_EXTENSIONS,
     create_document_parser,
     parse_document,
     validate_document,
@@ -29,6 +32,10 @@ FIXTURES = Path(__file__).parent / "fixtures" / "documents"
 
 
 def _pdf(name: str) -> Path:
+    return FIXTURES / name
+
+
+def _pptx(name: str) -> Path:
     return FIXTURES / name
 
 
@@ -703,3 +710,304 @@ class TestIntegration:
             parser = create_document_parser("PDF" if name.endswith("pdf") else "DOCX")
             doc = parser.parse(path)
             assert doc.status is DocumentStatus.FAILED, name
+
+    @pytest.mark.integration
+    def test_full_pipeline_pptx(self) -> None:
+        v = DocumentMaterialValidator()
+        r = v.validate(_pptx("lecture.pptx"))
+        assert r.valid is True
+        assert r.document_type == "PPTX"
+        doc = create_document_parser(r.document_type or "").parse(
+            Path(r.path), material_id=v.compute_material_id(r)
+        )
+        assert doc.status is DocumentStatus.PARSED
+        for b in doc.blocks:
+            ref = b.to_source_reference(doc.material_id)
+            assert ref["material_id"] == doc.material_id
+            assert ref["location"].startswith("pptx-slide-")
+
+
+# ===========================================================================
+# PPTX (PowerPoint) — 白名单 / 校验 / 解析 / 失败语义
+# ===========================================================================
+
+
+class TestPptxWhitelist:
+    """``.pptx`` 必须和 pdf / docx 同等待遇; ``.ppt`` 必须仍然被拒。"""
+
+    def test_pptx_is_a_supported_document_extension(self) -> None:
+        assert ".pptx" in SUPPORTED_DOCUMENT_EXTENSIONS
+        assert ".pdf" in SUPPORTED_DOCUMENT_EXTENSIONS
+        assert ".docx" in SUPPORTED_DOCUMENT_EXTENSIONS
+
+    def test_legacy_ppt_binary_format_stays_unsupported(self) -> None:
+        assert ".ppt" not in SUPPORTED_DOCUMENT_EXTENSIONS
+        assert ".pps" not in SUPPORTED_DOCUMENT_EXTENSIONS
+        assert ".odp" not in SUPPORTED_DOCUMENT_EXTENSIONS
+
+    def test_validate_accepts_pptx(self) -> None:
+        result = validate_document(_pptx("lecture.pptx"))
+        assert result.valid is True
+        assert result.status.value == "VALID"
+        assert result.document_type == "PPTX"
+        assert result.extension == ".pptx"
+        assert result.errors == ()
+
+    def test_validate_accepts_uppercase_pptx_extension(self, tmp_path) -> None:
+        target = tmp_path / "DECK.PPTX"
+        target.write_bytes(_pptx("lecture.pptx").read_bytes())
+        result = validate_document(target)
+        assert result.valid is True
+        assert result.document_type == "PPTX"
+
+    def test_validate_rejects_ppt_with_unsupported_extension(self, tmp_path) -> None:
+        target = tmp_path / "old.ppt"
+        target.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 binary deck")
+        result = validate_document(target)
+        assert result.valid is False
+        assert DocumentValidationError.UNSUPPORTED_EXTENSION in result.errors
+        assert result.document_type is None
+
+    def test_validate_rejects_odp(self, tmp_path) -> None:
+        target = tmp_path / "deck.odp"
+        target.write_bytes(b"PK\x03\x04 odp")
+        result = validate_document(target)
+        assert DocumentValidationError.UNSUPPORTED_EXTENSION in result.errors
+
+    def test_document_type_enum_knows_pptx(self) -> None:
+        assert DocumentType.from_extension(".pptx") is DocumentType.PPTX
+        assert DocumentType.from_extension(".PPTX") is DocumentType.PPTX
+        assert DocumentType.from_extension(".ppt") is None
+        assert DocumentType.from_string("pptx") is DocumentType.PPTX
+
+
+class TestPptxParserContent:
+    """幻灯片文字 + 表格 + 演讲者备注, 定位符必须是 ``pptx-slide-*``。"""
+
+    @pytest.fixture()
+    def doc(self) -> ParsedDocument:
+        return create_document_parser("PPTX").parse(
+            _pptx("lecture.pptx"), material_id="mat-pptx"
+        )
+
+    def test_status_and_type(self, doc: ParsedDocument) -> None:
+        assert doc.document_type == "PPTX"
+        assert doc.status is DocumentStatus.PARSED
+        assert doc.material_id == "mat-pptx"
+        assert doc.errors == ()
+
+    def test_slide_text_is_extracted_verbatim(self, doc: ParsedDocument) -> None:
+        texts = [b.text for b in doc.blocks]
+        assert "Funcions de densitat" in texts
+        assert (
+            "La densitat de probabilitat integra 1 sobre tot el suport." in texts
+        )
+        # Unicode from the fixture must survive untouched.
+        assert any("à" in t for t in texts)
+
+    def test_placeholder_text_counts_like_a_text_box(self, doc: ParsedDocument) -> None:
+        # The body of slide 1 is a *placeholder*, not a plain text box.
+        placeholder = [b for b in doc.blocks if b.location == "pptx-slide-1-shape-1"]
+        assert len(placeholder) == 1
+        assert placeholder[0].block_type is DocumentBlockType.TEXT
+
+    def test_speaker_notes_are_extracted(self, doc: ParsedDocument) -> None:
+        notes = [b for b in doc.blocks if b.metadata.get("kind") == "notes"]
+        assert len(notes) == 2
+        assert "Recordator: normalitzar abans de dibuixar." in [b.text for b in notes]
+        assert all(b.location.endswith("-notes") for b in notes)
+
+    def test_table_uses_the_docx_wire_format(self, doc: ParsedDocument) -> None:
+        tables = [b for b in doc.blocks if b.block_type is DocumentBlockType.TABLE]
+        assert len(tables) == 1
+        assert tables[0].text == "x || f(x) | 0 || 0.25"
+
+    def test_locators_are_pptx_specific(self, doc: ParsedDocument) -> None:
+        for b in doc.blocks:
+            assert b.location.startswith("pptx-slide-"), b.location
+            assert "docx-paragraph" not in b.location
+            assert "pdf-page" not in b.location
+
+    def test_source_reference_keeps_slide_page_and_shape(self, doc: ParsedDocument) -> None:
+        first = doc.blocks[0]
+        ref = first.to_source_reference("mat-pptx")
+        assert ref["material_id"] == "mat-pptx"
+        assert ref["location"] == "pptx-slide-1-shape-0"
+        assert ref["page"] == 1          # slide 1
+        assert ref["line"] == 0          # shape 0
+        assert "paragraph" not in ref
+
+    def test_metadata_reports_slides_tables_notes_and_images(
+        self, doc: ParsedDocument
+    ) -> None:
+        assert doc.metadata["slide_count"] == 3
+        assert doc.metadata["page_count"] == 3
+        assert doc.metadata["table_count"] == 1
+        assert doc.metadata["notes_count"] == 2
+        assert doc.metadata["image_count"] == 1
+        assert "scanned_or_no_text_layer" not in doc.metadata
+
+    def test_same_slide_same_shape_keeps_one_block(self, doc: ParsedDocument) -> None:
+        locations = [b.location for b in doc.blocks]
+        assert len(locations) == len(set(locations))
+
+    def test_empty_paragraph_shapes_produce_no_block(self, doc: ParsedDocument) -> None:
+        assert all(b.text.strip() for b in doc.blocks)
+
+
+class TestPptxImagePayload:
+    """图片: 计数 + 可 OCR payload, 字节不泄进 to_dict()。"""
+
+    @pytest.fixture()
+    def doc(self) -> ParsedDocument:
+        return create_document_parser("PPTX").parse(
+            _pptx("lecture.pptx"), material_id="mat-pptx"
+        )
+
+    def test_image_is_counted_and_exposed_with_bytes(self, doc: ParsedDocument) -> None:
+        assert len(doc.images) == 1
+        image = doc.images[0]
+        assert isinstance(image, DocumentImage)
+        assert image.content
+        assert image.content[:8] == b"\x89PNG\r\n\x1a\n"
+        assert image.extension == ".png"
+        assert image.slide_number == 3
+        assert image.location == "pptx-slide-3-shape-1"
+        assert image.byte_size == len(image.content)
+        assert image.content_sha256 == hashlib.sha256(image.content).hexdigest()
+        assert image.image_id.startswith("docimage-")
+
+    def test_image_is_flagged_ocr_capable(self, doc: ParsedDocument) -> None:
+        assert doc.images[0].is_ocr_capable is True
+
+    def test_image_bytes_never_reach_to_dict(self, doc: ParsedDocument) -> None:
+        payload = doc.to_dict()
+        assert "images" not in payload
+        # The serializable *summary* is there; the pixels are not.
+        summary = payload["metadata"]["images"]
+        assert summary[0]["content_sha256"] == doc.images[0].content_sha256
+        assert "content" not in summary[0]
+
+    def test_ocr_extension_set_matches_the_ocr_provider(
+        self, doc: ParsedDocument
+    ) -> None:
+        from src.document_input import _OCR_IMAGE_EXTENSIONS
+        from src.ocr_provider import SUPPORTED_IMAGE_EXTENSIONS
+
+        assert set(_OCR_IMAGE_EXTENSIONS) == set(SUPPORTED_IMAGE_EXTENSIONS)
+
+    def test_vector_or_unknown_pictures_are_counted_but_not_ocr_capable(
+        self,
+    ) -> None:
+        image = DocumentImage(
+            image_id="docimage-x",
+            location="pptx-slide-1-shape-0",
+            extension=".emf",
+            content=b"\x01\x00\x00\x00",
+        )
+        assert image.is_ocr_capable is False
+        assert image.to_metadata()["ocr_capable"] is False
+
+
+class TestPptxEmptyAndFailure:
+    def test_picture_only_deck_is_parsed_empty_with_the_image(self) -> None:
+        doc = create_document_parser("PPTX").parse(_pptx("picture_only.pptx"))
+        assert doc.status is DocumentStatus.PARSED_EMPTY
+        assert doc.block_count == 0
+        assert doc.errors == ()
+        assert doc.metadata["image_count"] == 1
+        assert doc.metadata["scanned_or_no_text_layer"] is True
+        assert len(doc.images) == 1
+
+    def test_deck_without_slides_is_parsed_empty(self) -> None:
+        doc = create_document_parser("PPTX").parse(_pptx("empty.pptx"))
+        assert doc.status is DocumentStatus.PARSED_EMPTY
+        assert doc.metadata["slide_count"] == 0
+        assert doc.metadata["scanned_or_no_text_layer"] is True
+
+    def test_encrypted_deck_fails_with_invalid_document(self) -> None:
+        doc = create_document_parser("PPTX").parse(_pptx("encrypted.pptx"))
+        assert doc.status is DocumentStatus.FAILED
+        assert doc.block_count == 0
+        assert len(doc.errors) == 1
+        assert doc.errors[0].error_code is DocumentParserErrorCode.INVALID_DOCUMENT
+        # No fabricated content, no traceback, no absolute path leakage.
+        assert "Traceback" not in doc.errors[0].message
+
+    def test_corrupted_deck_fails_with_invalid_document(self) -> None:
+        doc = create_document_parser("PPTX").parse(_pptx("corrupted.pptx"))
+        assert doc.status is DocumentStatus.FAILED
+        assert doc.errors[0].error_code is DocumentParserErrorCode.INVALID_DOCUMENT
+
+    def test_missing_file_fails_with_invalid_document(self, tmp_path) -> None:
+        doc = create_document_parser("PPTX").parse(tmp_path / "nope.pptx")
+        assert doc.status is DocumentStatus.FAILED
+        assert doc.errors[0].error_code is DocumentParserErrorCode.INVALID_DOCUMENT
+
+    def test_missing_python_pptx_reports_parser_unavailable(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "pptx", None)
+        monkeypatch.setitem(sys.modules, "pptx.exc", None)
+        doc = create_document_parser("PPTX").parse(_pptx("lecture.pptx"))
+        assert doc.status is DocumentStatus.FAILED
+        assert doc.errors[0].error_code is DocumentParserErrorCode.PARSER_UNAVAILABLE
+        assert "python-pptx import failed" in doc.errors[0].message
+
+    def test_corrupt_deck_never_succeeds_with_zero_evidence(self) -> None:
+        for name in ("encrypted.pptx", "corrupted.pptx"):
+            doc = create_document_parser("PPTX").parse(_pptx(name))
+            assert doc.status is DocumentStatus.FAILED, name
+            assert doc.block_count == 0, name
+            assert doc.images == (), name
+
+
+class TestPptxFactoryAndIdentity:
+    def test_factory_returns_pptx_parser(self) -> None:
+        from src.document_input import PPTXDocumentParser
+
+        parser = create_document_parser("pptx")
+        assert isinstance(parser, PPTXDocumentParser)
+        assert parser.document_type == "PPTX"
+
+    def test_parse_document_dispatches_by_extension(self) -> None:
+        doc = parse_document(_pptx("lecture.pptx"), material_id="mat-pptx")
+        assert doc.document_type == "PPTX"
+        assert doc.status is DocumentStatus.PARSED
+
+    def test_parse_document_rejects_ppt(self, tmp_path) -> None:
+        target = tmp_path / "old.ppt"
+        target.write_bytes(b"\xd0\xcf\x11\xe0")
+        with pytest.raises(ValueError):
+            parse_document(target)
+
+    def test_pptx_id_differs_from_pdf_and_docx_for_the_same_material(self) -> None:
+        from src.document_input import _compute_document_stable_id
+
+        a = _compute_document_stable_id("mat-1", "deck.pptx", 100, 0)
+        b = _compute_document_stable_id("mat-1", "deck.pdf", 100, 0)
+        c = _compute_document_stable_id("mat-1", "deck.docx", 100, 0)
+        assert len({a, b, c}) == 3
+        assert a == _compute_document_stable_id("mat-1", "deck.pptx", 100, 0)
+
+    def test_parsing_is_deterministic(self) -> None:
+        first = create_document_parser("PPTX").parse(
+            _pptx("lecture.pptx"), material_id="mat-pptx"
+        )
+        second = create_document_parser("PPTX").parse(
+            _pptx("lecture.pptx"), material_id="mat-pptx"
+        )
+        assert first.document_id == second.document_id
+        assert [b.block_id for b in first.blocks] == [b.block_id for b in second.blocks]
+        assert [i.image_id for i in first.images] == [i.image_id for i in second.images]
+
+    def test_to_dict_roundtrip_preserves_the_pptx_locator(self) -> None:
+        doc = create_document_parser("PPTX").parse(_pptx("lecture.pptx"))
+        rehydrated = ParsedDocument.from_dict(doc.to_dict())
+        assert rehydrated.document_type == "PPTX"
+        assert [b.location for b in rehydrated.blocks] == [
+            b.location for b in doc.blocks
+        ]
+        assert [b.block_id for b in rehydrated.blocks] == [
+            b.block_id for b in doc.blocks
+        ]

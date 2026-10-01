@@ -55,7 +55,7 @@ Each Evidence carries:
 - metadata (minimal, no full block copy):
     - block_id      : the deterministic DocumentBlock identity
     - block_type    : "TEXT" / "PARAGRAPH" / "HEADING" / "TABLE"
-    - document_type : "PDF" / "DOCX"
+    - document_type : "PDF" / "DOCX" / "PPTX"
     - document_id   : the Task 21 document identity
     - location      : human-readable source location
 
@@ -129,7 +129,7 @@ def block_evidence_id(
 
     Components:
         document_id   - Task 21 document identity ("document-...")
-        document_type - "PDF" / "DOCX"
+        document_type - "PDF" / "DOCX" / "PPTX"
         block_type    - DocumentBlockType value
         location_key  - DocumentBlock._location_key() semantics
         text          - exact block text
@@ -145,6 +145,8 @@ def block_evidence_id(
 
 def _location_key(block: DocumentBlock) -> str:
     """Reproduce DocumentBlock._location_key() semantics without mutating the block."""
+    if block.location:
+        return f"loc:{block.location}"
     if block.page_number is not None:
         return f"page:{block.page_number}"
     if block.paragraph_index is not None:
@@ -153,7 +155,15 @@ def _location_key(block: DocumentBlock) -> str:
 
 
 def _location_label(block: DocumentBlock, document_type: str) -> str:
-    """Human-readable source location label for Evidence.metadata['location']."""
+    """Human-readable source location label for Evidence.metadata['location'].
+
+    An explicit block locator (PPTX's ``pptx-slide-N-shape-K``) wins over
+    the derived PDF / DOCX forms: it is the only value that names a real
+    shape, and it keeps a slide from ever being reported as
+    ``docx-paragraph-*``.
+    """
+    if block.location:
+        return block.location
     if document_type == "PDF" and block.page_number is not None:
         return f"pdf-page-{block.page_number}-block-{block.block_index or 0}"
     if block.paragraph_index is not None:

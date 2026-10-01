@@ -3,7 +3,7 @@
 
 把 Task 35 的材料工作流与 Task 25 的知识装配串成一条真正的课堂处理链::
 
-    Audio / Image / PDF / DOCX
+    Audio / Image / PDF / DOCX / PPTX
               ↓
            Material
               ↓
@@ -99,7 +99,7 @@ PROCESS_STAGE_LABELS: dict[str, str] = {
 #: Task 57.3: 失败材料的"推荐操作"必须是**可判定的**, 不能把 traceback 甩给
 #: 用户, 也不能用 LLM 现编。这里用错误码 -> 确定性中文文案的映射。
 _RECOMMENDED_ACTIONS: dict[str, str] = {
-    "UNSUPPORTED_EXTENSION": "请转换为支持的格式（pdf / docx / txt / md / 音频 / 图片）后重新上传",
+    "UNSUPPORTED_EXTENSION": "请转换为支持的格式（pdf / docx / pptx / txt / md / 音频 / 图片）后重新上传；.ppt 为旧版二进制格式，请先另存为 .pptx 或 PDF",
     "PATH_TRAVERSAL": "文件名含非法路径，请重命名后再上传",
     "ZERO_BYTE_FILE": "文件为空，请重新上传有内容的文件",
     "EMPTY_PATH": "文件路径为空，请重新上传",
