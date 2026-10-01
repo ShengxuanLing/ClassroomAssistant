@@ -176,6 +176,9 @@ classroom-data/
 ## 开发
 
 ```bash
+# 开发依赖 = 运行时依赖 + pytest（应用运行时本身不需要 pytest）
+pip install -r requirements-dev.txt
+
 # 完整回归（不含需要真实模型的集成测试）
 python -m pytest -q -m "not integration"
 

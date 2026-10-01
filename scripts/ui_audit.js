@@ -2858,7 +2858,14 @@ async function audit() {
         && /function actionSessionMonth/.test(APP_JS));
 
     for (const lang of ['es', 'ca']) {
-      const area = regionOf(html(await renderPage(pageByName('course'), table, lang)));
+      // 必须和 zh 区块一样先切到 9 月: 夹具里唯一无标题的 session-d 在 9 月,
+      // 默认月份随运行时钟变 (当前是 10 月), 不切月的话这个回退文案永不渲染,
+      // 检查会随日历飘红 —— 这正是 2026-09 之前没暴露、换月份就红的预存 bug。
+      const sb = await loadApp(table, lang);
+      sb.window.location.hash = '#/courses/' + COURSE_ID;
+      await sb.pageCourse(COURSE_ID);
+      await sb.actionSessionMonth(COURSE_ID, '2026-09');
+      const area = regionOf(html(sb));
       check('sessions summary is localized in ' + lang,
         area.includes(lang === 'es' ? '6 sesiones · ' : '6 sessions · '),
         area.slice(0, 160));

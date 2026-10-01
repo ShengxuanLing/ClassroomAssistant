@@ -1,0 +1,14 @@
+# 课堂助手 - 开发 / CI 依赖（应用运行时不需要这些）
+#
+# 运行时依赖在 requirements.txt 里；本文件用 `-r` 复用它们，
+# 只额外补上测试框架，让 CI 与本地开发走同一个安装入口：
+#
+#     pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# 测试框架。
+# 本地实测版本 9.1.1（Python 3.14.7 / Windows x64）。
+# 上限压在 10 以下：pytest 的大版本会改收集与 fixture 行为，
+# CI 门禁口径必须可复现，不能让上游大版本静默改变它。
+pytest>=9.0,<10.0
