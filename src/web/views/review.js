@@ -156,8 +156,10 @@ async function pageReviews() {
 
   setView(
     '<div class="page-head"><h1>' + t('待审核') + '</h1>' +
+    // TASK-81 §B: 模型有把握的知识点已自动确认, 所以这一页只剩"模型自己
+    // 说不准"的那批。页面不该继续宣称"审核状态永远不会被自动改写"。
     '<p class="subtitle">' + t('课程 ') + '<strong>' + esc(courseLabel(courseId)) + '</strong> · ' + esc(candidates.length) +
-    t(' 项待人工决策 · 审核状态永远不会被自动改写') + '</p></div>' +
+    t(' 项待人工决策 · 模型有把握的已自动确认，这里只剩模型存疑的项') + '</p></div>' +
     '<div class="card">' +
     (candidates.length
       ? '<table class="data">' + tableCaption(t('待审核')) + '<thead><tr><th scope="col">' + t('知识点') + '</th><th scope="col">' + t('原因') + '</th><th scope="col">' + t('当前审核状态') + '</th><th scope="col">' + t('操作') + '</th></tr></thead><tbody>' +
@@ -169,7 +171,7 @@ async function pageReviews() {
             '<td>' + pill(c.review_status || c.decision || 'PENDING', 'PENDING') + '</td>' +
             '<td><a class="btn" href="' + link + '">' + t('去审核') + '</a></td></tr>';
         }).join('') + '</tbody></table>'
-      : emptyState(t('没有待审核的知识点。'))) +
+      : emptyState(t('没有待审核的知识点：模型有把握的已自动确认。'))) +
     '</div>'
   );
 }

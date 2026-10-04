@@ -99,6 +99,14 @@ AI_REPORT_SUBDIR = "ai-reports"
 AI_REPORT_VERSION = "ai-report-v2"
 COURSE_AI_OVERVIEW_FILENAME = "_course_overview.json"
 
+#: TASK-79: 知识点级中文解释的缓存位置 (``materials/ai-reports/<课>/
+#: kp-translations/<kp>.json``) 与缓存文件版本。放在 AI 报告层之下而不是
+#: 数据库里, 因为它 100% 可由「知识点 + Evidence」重新推导 —— 这正是
+#: TASK-76 "零 DB migration" 的一致做法, 也意味着改 prompt 或改知识点内容
+#: 只需换 identity, 不需要 migration。
+KP_TRANSLATION_SUBDIR = "kp-translations"
+KP_TRANSLATION_VERSION = "kp-translation-v1"
+
 
 def _sha256_file(path: str, *, chunk_size: int = 1024 * 1024) -> str:
     """流式计算文件哈希 (材料可能是几百 MB 的音频, 不能整个读进内存)。"""
@@ -132,6 +140,21 @@ def _as_optional_bool(value: Any) -> Optional[bool]:
     if text in _FALSE_LITERALS:
         return False
     return None
+
+
+def _reported_kp_ids(report: Mapping[str, Any]) -> list[str]:
+    """本次 AI 报告里落库的知识点 id (自动 / 待确认 / 冲突, 顺序去重)。
+
+    只取报告**已经列出来**的 id —— 不重新扫全课, 否则一次材料重跑会把整门
+    课的知识点重翻一遍。
+    """
+    ids: list[str] = []
+    for group in ("auto_accepted", "needs_review", "conflicts"):
+        for item in report.get(group) or []:
+            value = str((item or {}).get("knowledge_id") or "")
+            if value:
+                ids.append(value)
+    return list(dict.fromkeys(ids))
 
 
 @dataclass
@@ -1752,6 +1775,501 @@ class Workspace:
         return self.context(course_id).knowledge_service.get_knowledge_point(knowledge_id)
 
     # ------------------------------------------------------------------
+    # TASK-79: 知识点级中文解释 (按需翻译 + 术语表)
+    # ------------------------------------------------------------------
+    #
+    # 三条硬边界:
+    #
+    # 1. **只读**。本组方法不写 KnowledgePoint、不改 Evidence、不动 Review
+    #    状态 —— 中文是一个**解释层**, 不是知识点的新事实。落盘的是
+    #    ``classroom-data/materials/ai-reports/<课>/kp-translations/<kp>.json``
+    #    一个可随时重建的衍生缓存, 因此零 DB migration。
+    # 2. **证据原文零改动**。返回值只带原文与它的引用; prompt 明确禁止逐字
+    #    全文翻译, 术语必须逐字出现在知识点自身文本里 (ground_kp_zh 校验)。
+    # 3. **GET 绝不调 LLM**。读接口只暴露**已存在**的缓存 (同 §36.5/36.6);
+    #    调 LLM 的入口只有显式的 POST。
+
+    def _kp_translation_path(self, course_id: str, knowledge_id: str) -> str:
+        """知识点翻译缓存路径 (经 safe_join, 不接受路径逃逸)。"""
+        return safe_join(
+            self._layout.materials,
+            AI_REPORT_SUBDIR,
+            course_id,
+            KP_TRANSLATION_SUBDIR,
+            knowledge_id + ".json",
+        )
+
+    @staticmethod
+    def _kp_content_hash(kp: Mapping[str, Any]) -> str:
+        """知识点"用于翻译的那部分"的稳定指纹。
+
+        只取 title + content + original_terms + evidence_refs —— 这些就是
+        进入 prompt 的字段。不含 validation/review 状态: 人工审核的推进不应
+        让一份仍然有效的中文解释失效并重新花一次 LLM 调用。
+        """
+        raw = "|".join(
+            [
+                str(kp.get("title") or ""),
+                str(kp.get("content") or ""),
+                "\n".join(str(value) for value in (kp.get("original_terms") or [])),
+                "\n".join(str(value) for value in (kp.get("evidence_refs") or [])),
+            ]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _normalise_kp_translation(payload: Mapping[str, Any]) -> dict[str, Any]:
+        report = dict(payload or {})
+        report.setdefault("translation_version", KP_TRANSLATION_VERSION)
+        report.setdefault("translation_zh", "")
+        report.setdefault("terms_zh", [])
+        report.setdefault("evidence_refs", [])
+        report.setdefault("terms_rejected", [])
+        if not isinstance(report.get("terms_zh"), list):
+            report["terms_zh"] = []
+        if not isinstance(report.get("evidence_refs"), list):
+            report["evidence_refs"] = []
+        if not isinstance(report.get("terms_rejected"), list):
+            report["terms_rejected"] = []
+        return report
+
+    def _load_kp_translation(
+        self, course_id: str, knowledge_id: str, content_hash: str
+    ) -> Optional[dict[str, Any]]:
+        """读知识点翻译缓存 (身份不匹配或形状不对一律当未缓存)。"""
+        if self._persistence is None:
+            return None
+        from src.application.ai.prompts import KP_ZH_PROMPT_VERSION
+        from src.application.ai.validators import kp_translation_id
+
+        identity = kp_translation_id(
+            knowledge_id=knowledge_id,
+            content_hash=content_hash,
+            prompt_version=KP_ZH_PROMPT_VERSION,
+        )
+        try:
+            target = self._kp_translation_path(course_id, knowledge_id)
+        except ValueError:
+            return None
+        try:
+            with open(target, "rb") as handle:
+                payload = json.loads(handle.read().decode("utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        # 双重门禁: 缓存必须**同时**属于这一门课、这一条知识点、这一份内容。
+        # 三者任一不符就当未缓存 (宁可重算一次, 也不展示别人的中文)。
+        if str(payload.get("course_id") or course_id) != str(course_id):
+            return None
+        if str(payload.get("knowledge_id") or knowledge_id) != str(knowledge_id):
+            return None
+        if str(payload.get("translation_identity") or "") != identity:
+            return None
+        if not str(payload.get("translation_zh") or "").strip():
+            return None
+        return self._normalise_kp_translation(payload)
+
+    def _persist_kp_translation(
+        self, course_id: str, knowledge_id: str, payload: Mapping[str, Any]
+    ) -> None:
+        """翻译缓存落盘 (最佳努力)。失败**不**影响本次已返回的结果。"""
+        if self._persistence is None:
+            return
+        try:
+            stored = self._normalise_kp_translation(payload)
+            atomic_write_bytes(
+                self._kp_translation_path(course_id, knowledge_id),
+                json.dumps(stored, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            )
+        except (OSError, ValueError):
+            return
+
+    def kp_glossary(self, course_id: str, knowledge_id: str) -> dict[str, Any]:
+        """知识点级术语表 (零 LLM 成本: 复用材料报告里已落盘的术语表)。
+
+        按 ``kp_id`` 过滤是唯一判据 —— 术语表是材料级产物, 一条证据可能同时
+        支撑多个知识点, 因此同一个术语可以合法地出现在多条证据支撑的知识点
+        下。没有分析过 AI 的知识点返回空列表 (而不是 404): "这里没有中文术语"
+        是合法答案, 不该报错。
+        """
+        kp = self.knowledge_point(course_id, knowledge_id)
+        entries: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for evidence_ref in kp.get("evidence_refs") or []:
+            evidence_id = str(evidence_ref)
+            try:
+                evidence = self.store.get(evidence_id)
+                material_id = (
+                    str(evidence.source_reference.material_id) if evidence else ""
+                )
+            except Exception:  # noqa: BLE001 - 断链证据不应让只读读路径报 500
+                continue
+            if not material_id:
+                continue
+            try:
+                summary = self.ai_summary(course_id, str(material_id))
+            except Exception:  # noqa: BLE001 - 材料未分析过 -> 无报告, 继续下一条
+                continue
+            for entry in summary.get("glossary") or []:
+                if not isinstance(entry, Mapping):
+                    continue
+                entry_kp = str(entry.get("kp_id") or "")
+                refs = entry.get("evidence_ids") or entry.get("evidence_refs") or []
+                # 术语表的归属有两个合法来源: 模型明确挂上的 kp_id, 或该条目
+                # 引用了本知识点的证据。两者都不满足则不属于这个知识点。
+                if entry_kp != str(knowledge_id) and evidence_id not in [
+                    str(value) for value in refs
+                ]:
+                    continue
+                key = str(entry.get("glossary_id") or entry.get("term") or "")
+                if key in seen:
+                    continue
+                seen.add(key)
+                entries.append(dict(entry))
+        return {
+            "course_id": course_id,
+            "knowledge_id": knowledge_id,
+            "glossary": entries,
+            "glossary_total": len(entries),
+            "source": "material-ai-report",
+        }
+
+    def kp_translation(
+        self, course_id: str, knowledge_id: str
+    ) -> dict[str, Any]:
+        """已缓存的知识点中文解释 (只读; 没有缓存则 NotFoundError)。
+
+        同 ``ai_summary``: 绝不为了"让页面好看"而现场调 LLM。
+        """
+        kp = self.knowledge_point(course_id, knowledge_id)
+        content_hash = self._kp_content_hash(kp)
+        payload = self._load_kp_translation(course_id, knowledge_id, content_hash)
+        if payload is None:
+            raise NotFoundError(
+                "no Chinese explanation cached for knowledge point %r yet"
+                % (knowledge_id,),
+                detail={"knowledge_id": knowledge_id},
+            )
+        return payload
+
+    def translate_kp(
+        self,
+        course_id: str,
+        knowledge_id: str,
+        *,
+        target_lang: str = "zh",
+        content_language: Optional[str] = None,
+        provider: Optional[Any] = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """按需为一个知识点生成中文解释 (可缓存、可重试、幂等)。
+
+        失败一律抛 ``ProcessingError`` → HTTP 422, 知识点与证据原封不动,
+        用户点"重试"即可。重复请求命中缓存则**不**再调 LLM; ``force=True``
+        (同一次请求的显式重试) 绕过缓存, 身份仍按内容计算, 不会堆积重复文件。
+        """
+        from src.application.ai.pipeline import AIUnderstandingPipeline
+        from src.application.ai.prompts import KP_ZH_PROMPT_VERSION
+        from src.application.ai.service import require_enabled
+        from src.application.ai.validators import kp_translation_id
+
+        started = time.monotonic()
+        ok = False
+        failure_reason: Optional[str] = None
+        try:
+            require_enabled(self._ai_enabled)
+            language = str(target_lang or "zh").strip().lower()
+            if language != "zh":
+                # 证据语言只有 es/ca; 中文解释层是本项目目前唯一的目标语言。
+                # 其它取值明确拒绝, 而不是悄悄按 zh 回答 (用户会以为拿到了
+                # 另一种语言的中文)。
+                raise InvalidInputError(
+                    "target_lang must be zh; this build only offers a Chinese "
+                    "explanation layer",
+                    detail={"target_lang": language},
+                )
+            kp = self.knowledge_point(course_id, knowledge_id)
+            content_hash = self._kp_content_hash(kp)
+            if not force:
+                cached = self._load_kp_translation(
+                    course_id, knowledge_id, content_hash
+                )
+                if cached is not None:
+                    ok = True
+                    return cached
+            evidence_ids = [
+                str(value) for value in (kp.get("evidence_refs") or []) if str(value)
+            ]
+            # 知识点本身没有"语言"字段。课程声明语言是这里唯一**已声明**的
+            # 信号, 拿它当提示词的上下文; 不声明就传 None, 让 prompt 用中性
+            # 措辞 (而不是替用户猜 es / ca)。
+            declared = content_language or str(
+                (self.get_course(course_id) or {}).get("language") or ""
+            ).strip()
+            pipeline = AIUnderstandingPipeline(provider or self._ai_provider)
+            result = pipeline.build_kp_zh(
+                knowledge_id=knowledge_id,
+                title=str(kp.get("title") or ""),
+                content=str(kp.get("content") or ""),
+                terms=list(kp.get("original_terms") or []),
+                evidence_ids=evidence_ids,
+                content_language=declared or None,
+            )
+            if str(result.get("status") or "") != "completed":
+                ok = True
+                skipped = self._normalise_kp_translation(
+                    {
+                        "course_id": course_id,
+                        "knowledge_id": knowledge_id,
+                        "created_at": self._clock(),
+                        "reason": str(result.get("reason") or "skipped"),
+                        **{
+                            key: value
+                            for key, value in result.items()
+                            if key != "status"
+                        },
+                    }
+                )
+                # 只缓存"真的有中文"的条目: skipped 结果不落盘, 这样重试
+                # (改了证据/补了内容) 仍会真跑一次, 而不是永久命中一个空缓存。
+                return skipped
+            payload = self._normalise_kp_translation(
+                {
+                    **result,
+                    "course_id": course_id,
+                    "knowledge_id": knowledge_id,
+                    "created_at": self._clock(),
+                    "translation_identity": kp_translation_id(
+                        knowledge_id=knowledge_id,
+                        content_hash=content_hash,
+                        prompt_version=KP_ZH_PROMPT_VERSION,
+                    ),
+                }
+            )
+            # 落盘在事务之外: 翻译缓存写失败绝不回滚任何东西 (这里本来也没
+            # 写数据库) —— TASK-77 的坑在这里直接避开, 不走"只写内存"。
+            self._persist_kp_translation(course_id, knowledge_id, payload)
+            ok = True
+            return payload
+        except Exception as exc:  # noqa: BLE001 - 记录失败原因, 然后照常向上抛
+            failure_reason = "%s: %s" % (type(exc).__name__, exc)
+            raise
+        finally:
+            self._record_op(
+                "translate_kp",
+                course=course_id,
+                knowledge=knowledge_id,
+                success=ok,
+                failure=failure_reason,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+
+    # ------------------------------------------------------------------
+    # TASK-81 §A: 自动中文层 (分析时逐条翻 + 一键补历史)
+    # ------------------------------------------------------------------
+    #
+    # ``translate_kp`` 是显式 POST 的入口, 那里**必须**抛 (422 可重试);
+    # 自动路径必须反过来: 一条失败只记 skipped/failed, 绝不抛出、绝不回滚
+    # 已落库的知识点 (与 summary_zh / glossary 同一规)。两条路径共用同一份
+    # 缓存身份 (``kp_translation_id``), 所以"自动翻过的"与"手点翻过的"是同
+    # 一个文件, 命中缓存即零 LLM 成本 —— 二次分析 / 二次补翻都是空跑。
+
+    def _translate_kp_once(
+        self,
+        course_id: str,
+        kp: Mapping[str, Any],
+        *,
+        pipeline: Any,
+        content_language: Optional[str] = None,
+        force: bool = False,
+        timeout_seconds: int = 60,
+    ) -> dict[str, Any]:
+        """一条知识点 -> 一条有据可查的中文解释, 写进同一份缓存。
+
+        **永不抛异常**: 返回 ``{"knowledge_id", "status", "reason"}``, status
+        为 ``translated`` / ``cached`` / ``skipped`` / ``failed``。调用方
+        (自动阶段 / 一键补翻) 只统计计数, 不需要也不允许处理异常。
+        """
+        knowledge_id = str((kp or {}).get("knowledge_id") or "")
+        if not knowledge_id:
+            return {"knowledge_id": "", "status": "failed", "reason": "missing_id"}
+        from src.application.ai.prompts import KP_ZH_PROMPT_VERSION
+        from src.application.ai.validators import kp_translation_id
+
+        try:
+            content_hash = self._kp_content_hash(kp)
+            if not force and (
+                self._load_kp_translation(course_id, knowledge_id, content_hash)
+                is not None
+            ):
+                return {"knowledge_id": knowledge_id, "status": "cached"}
+            result = pipeline.build_kp_zh(
+                knowledge_id=knowledge_id,
+                title=str(kp.get("title") or ""),
+                content=str(kp.get("content") or ""),
+                terms=list(kp.get("original_terms") or []),
+                evidence_ids=[
+                    str(value) for value in (kp.get("evidence_refs") or []) if str(value)
+                ],
+                content_language=content_language,
+                timeout_seconds=timeout_seconds,
+            )
+            if str(result.get("status") or "") != "completed":
+                # 没有证据 / 空知识点: 合法答案"这里没有中文", 不是失败。
+                return {
+                    "knowledge_id": knowledge_id,
+                    "status": "skipped",
+                    "reason": str(result.get("reason") or "skipped"),
+                }
+            payload = self._normalise_kp_translation(
+                {
+                    **result,
+                    "course_id": course_id,
+                    "knowledge_id": knowledge_id,
+                    "created_at": self._clock(),
+                    "translation_identity": kp_translation_id(
+                        knowledge_id=knowledge_id,
+                        content_hash=content_hash,
+                        prompt_version=KP_ZH_PROMPT_VERSION,
+                    ),
+                }
+            )
+            # 落盘失败也不回滚 (这里本来就没写数据库): 缓存是衍生物, 下一轮
+            # 自动阶段 / 补翻会真的再跑一次。
+            self._persist_kp_translation(course_id, knowledge_id, payload)
+            return {"knowledge_id": knowledge_id, "status": "translated"}
+        except Exception as exc:  # noqa: BLE001 - 单条失败只记账, 不中断整批
+            return {
+                "knowledge_id": knowledge_id,
+                "status": "failed",
+                "reason": "%s: %s" % (type(exc).__name__, exc),
+            }
+
+    def _kp_translation_stage(
+        self,
+        course_id: str,
+        knowledge_ids: Sequence[str],
+        *,
+        provider: Optional[Any] = None,
+        content_language: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """本次分析新落库的知识点 -> 逐条中文解释, 返回一个 stage 记录。
+
+        与 summary_zh / glossary 同一条铁律: 单条失败不抛、不回滚知识点,
+        只把 failed / skipped 记进 detail。``cached`` 计入 "ok" —— 它意味着
+        "这条已经有中文了, 这次没花钱"。
+        """
+        from src.application.ai.pipeline import AIUnderstandingPipeline
+
+        unique = [value for value in dict.fromkeys(knowledge_ids or ()) if value]
+        if not unique:
+            return {
+                "stage": "kp_zh_auto",
+                "state": "skipped",
+                "detail": "0/0 translated, 0 skipped",
+            }
+        pipeline = AIUnderstandingPipeline(provider or self._ai_provider)
+        counts = {"translated": 0, "cached": 0, "skipped": 0, "failed": 0}
+        reasons: list[str] = []
+        for knowledge_id in unique:
+            try:
+                kp = self.knowledge_point(course_id, knowledge_id)
+            except Exception as exc:  # noqa: BLE001 - 单条读失败只记账
+                counts["failed"] += 1
+                reasons.append("%s: %s" % (knowledge_id, type(exc).__name__))
+                continue
+            outcome = self._translate_kp_once(
+                course_id, kp, pipeline=pipeline, content_language=content_language
+            )
+            counts[str(outcome["status"])] += 1
+            if outcome.get("reason"):
+                reasons.append("%s: %s" % (knowledge_id, outcome["reason"]))
+        total = len(unique)
+        ok = counts["translated"] + counts["cached"]
+        incomplete = counts["skipped"] + counts["failed"]
+        return {
+            "stage": "kp_zh_auto",
+            "state": "done" if not incomplete else "partial",
+            "detail": "%d/%d ok (%d translated, %d cached), %d skipped, %d failed%s"
+            % (
+                ok,
+                total,
+                counts["translated"],
+                counts["cached"],
+                counts["skipped"],
+                counts["failed"],
+                (" · " + "; ".join(reasons[:3])) if reasons else "",
+            ),
+        }
+
+    def backfill_kp_translations(
+        self,
+        course_id: str,
+        *,
+        provider: Optional[Any] = None,
+        content_language: Optional[str] = None,
+        force: bool = False,
+        limit: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """一键补翻整门课的历史知识点 (幂等: 已缓存的不花钱)。
+
+        自动阶段只覆盖"分析之后"的知识点, 早于它存在的那些知识点永远没有
+        中文。这个入口是它们唯一的批量补法: 逐条走同一个缓存身份, 因此
+        ``translated=0`` 的第二次运行 = 全部命中缓存, 零 provider 调用。
+
+        返回 ``{course_id, total, translated, cached, skipped, failed, details}``;
+        单条失败只记 ``failed`` + 原因, 绝不中断整批 (422 由调用方重试)。
+        """
+        from src.application.ai.pipeline import AIUnderstandingPipeline
+        from src.application.ai.service import require_enabled
+
+        started = time.monotonic()
+        ok = False
+        failure_reason: Optional[str] = None
+        try:
+            require_enabled(self._ai_enabled)
+            course = self.get_course(course_id)
+            pipeline = AIUnderstandingPipeline(provider or self._ai_provider)
+            declared = str(content_language or "").strip() or str(
+                (course or {}).get("language") or ""
+            ).strip()
+            points = list(self.knowledge_points(course_id))
+            if limit is not None and limit >= 0:
+                points = points[:limit]
+            details: list[dict[str, Any]] = []
+            counts = {"translated": 0, "cached": 0, "skipped": 0, "failed": 0}
+            for kp in points:
+                outcome = self._translate_kp_once(
+                    course_id,
+                    kp,
+                    pipeline=pipeline,
+                    content_language=declared or None,
+                    force=force,
+                )
+                counts[str(outcome["status"])] += 1
+                details.append(outcome)
+            ok = True
+            return {
+                "course_id": course_id,
+                "total": len(details),
+                "limit_applied": limit,
+                **counts,
+                "details": details,
+            }
+        except Exception as exc:  # noqa: BLE001 - 记录失败原因, 然后照常向上抛
+            failure_reason = "%s: %s" % (type(exc).__name__, exc)
+            raise
+        finally:
+            self._record_op(
+                "backfill_kp_translations",
+                course=course_id,
+                success=ok,
+                failure=failure_reason,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+
+    # ------------------------------------------------------------------
     # Flashcards (evidence-grounded; scheduling is a separate projection)
     # ------------------------------------------------------------------
 
@@ -1999,6 +2517,10 @@ class Workspace:
         成功报告形如 ``自动确认 N / 待确认 M / 冲突 K``; 低置信度与冲突进
         Review 队列 (review_status=pending, 需人工 confirm/reject)。
         重复调用幂等 (同一 processing_identity + 确定性 aikp-* ID)。
+
+        TASK-81 §A/§B: 本次新落库的知识点自动获得有据可查的中文解释
+        (``kp_zh_auto`` stage), 且 auto 候选直接落 ``review_status=confirmed``
+        (模型有把握的那批不再排人工队; needs_review / 冲突候选仍 pending)。
         """
         from src.application.ai.service import AIAnalysisService, require_enabled
 
@@ -2025,6 +2547,22 @@ class Workspace:
                 self._flush_organization(course_id)
                 payload = report.to_dict()
                 self._ai_reports[(course_id, material_id)] = payload
+            # TASK-81 §A: 自动逐条中文解释。在**事务之外**、KP 已提交之后跑:
+            # 每条只调一次 build_kp_zh, 落进与手点翻译同一份缓存, 命中即零成本;
+            # 单条失败只写进 stage detail, 绝不回滚已提交的知识点。
+            try:
+                payload["stages"].append(
+                    self._kp_translation_stage(
+                        course_id,
+                        _reported_kp_ids(payload),
+                        provider=analysis_provider,
+                        content_language=content_language,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - 翻译阶段任何意外都不影响已提交的材料
+                payload["stages"].append(
+                    {"stage": "kp_zh_auto", "state": "skipped", "detail": "not attempted"}
+                )
             # TASK-77: 落盘在事务之外 —— 衍生缓存写失败绝不回滚已提交的 KP。
             self._persist_ai_report(course_id, material_id, payload)
             # Course synthesis is also derived-only.  Trigger it from the

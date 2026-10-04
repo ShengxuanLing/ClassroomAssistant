@@ -44,11 +44,13 @@ from src.application.ai.prompts import (
     SUMMARY_PROMPT_VERSION,
     SUMMARY_ZH_PROMPT_VERSION,
     GLOSSARY_PROMPT_VERSION,
+    KP_ZH_PROMPT_VERSION,
     COURSE_OVERVIEW_PROMPT_VERSION,
     build_chunk_extraction_prompt,
     build_merge_prompt,
     build_summary_prompt,
     build_summary_zh_prompt,
+    build_kp_zh_prompt,
     build_glossary_prompt,
     build_course_overview_prompt,
 )
@@ -63,11 +65,13 @@ from src.application.ai.schemas import (
     KnowledgeCandidate,
     MaterialAIResult,
     SummaryZhResult,
+    KpZhResult,
     GlossaryEntry,
     CourseOverviewResult,
     parse_material_response,
     parse_structured_response,
     parse_summary_zh_response,
+    parse_kp_zh_response,
     parse_glossary_response,
     parse_course_overview_response,
 )
@@ -75,6 +79,7 @@ from src.application.ai.validators import (
     GroundedCandidate,
     ground_candidates,
     ground_glossary,
+    ground_kp_zh,
     map_candidate_to_kp_payload,
 )
 from src.application.errors import ProcessingError
@@ -87,7 +92,12 @@ __all__ = [
     "AIUnderstandingPipeline",
     "processing_identity",
     "detect_material_kind",
+    "KP_TRANSLATION_FAILED",
 ]
+
+#: TASK-79: 知识点级按需翻译的失败码。与材料级分析一样走 422 (证据安全、
+#: 可 retry), 且**从不**触发任何 KnowledgePoint 写入。
+KP_TRANSLATION_FAILED = "KP_TRANSLATION_FAILED"
 
 #: AI 分析失败的统一错误码 (processing failure, Evidence 安全)。
 AI_ANALYSIS_FAILED = "AI_ANALYSIS_FAILED"
@@ -711,6 +721,116 @@ class AIUnderstandingPipeline:
                 "status": "skipped",
                 "prompt_version": SUMMARY_ZH_PROMPT_VERSION,
             }
+
+    # ------------------------------------------------------------------
+    # TASK-79: knowledge-point Chinese explanation (on demand, one LLM call)
+    # ------------------------------------------------------------------
+    #
+    # Deliberately **not** a derived-report stage of ``analyze_material``:
+    # a semester holds hundreds of knowledge points and the user asked for a
+    # specific one.  Spending the budget up front would be both expensive and
+    # unread; the call happens when a student opens a knowledge point.
+
+    def build_kp_zh(
+        self,
+        *,
+        knowledge_id: str,
+        title: str = "",
+        content: str = "",
+        terms: Optional[Sequence[Any]] = None,
+        evidence_ids: Optional[Sequence[str]] = None,
+        content_language: Optional[str] = None,
+        timeout_seconds: int = 60,
+    ) -> dict[str, Any]:
+        """One grounded Chinese explanation for a single knowledge point.
+
+        Returns a ``status`` dict instead of raising for the two "there is
+        nothing to explain" cases (no evidence / empty statement), so the
+        caller can show an honest empty state.  Provider and shape failures
+        raise ``AIAnalysisFailure``: the caller may retry, and nothing has
+        been written either way.
+        """
+        refs = [str(value) for value in (evidence_ids or []) if str(value)]
+        if not refs:
+            return {
+                "knowledge_id": str(knowledge_id or ""),
+                "translation_zh": "",
+                "terms_zh": [],
+                "status": "skipped",
+                "reason": "no_evidence",
+                "prompt_version": KP_ZH_PROMPT_VERSION,
+            }
+        if not (str(title or "").strip() or str(content or "").strip()):
+            return {
+                "knowledge_id": str(knowledge_id or ""),
+                "translation_zh": "",
+                "terms_zh": [],
+                "status": "skipped",
+                "reason": "empty_knowledge_point",
+                "prompt_version": KP_ZH_PROMPT_VERSION,
+            }
+        prompt = build_kp_zh_prompt(
+            knowledge_id=str(knowledge_id or ""),
+            title=str(title or ""),
+            content=str(content or ""),
+            terms=list(terms or []),
+            evidence_ids=refs,
+            content_language=content_language,
+        )
+        try:
+            raw_text = self._provider.generate_structured(
+                prompt, timeout_seconds=timeout_seconds
+            )
+        except Exception as exc:  # noqa: BLE001 - any provider fault is a 422
+            # 窄化到 ``AIRequestError`` 会让一个真实 provider 的内部异常
+            # (socket / ssl / 解析) 穿透成 HTTP 500 —— 而本项目的硬规则是
+            # "AI 失败从不是 500, 永远是 422 且可 retry"。
+            raise AIAnalysisFailure(
+                "AI translation failed; the knowledge point is unchanged",
+                detail={
+                    "provider": self.provider_name,
+                    "failure": KP_TRANSLATION_FAILED,
+                    "knowledge_id": str(knowledge_id or ""),
+                },
+            ) from exc
+        parsed, error = parse_kp_zh_response(raw_text, allowed_evidence_ids=refs)
+        if error is not None or parsed is None:
+            raise AIAnalysisFailure(
+                "AI returned a malformed knowledge-point translation; nothing was changed",
+                detail={
+                    "provider": self.provider_name,
+                    "error_code": MALFORMED_ERROR,
+                    "failure": KP_TRANSLATION_FAILED,
+                    "knowledge_id": str(knowledge_id or ""),
+                },
+            )
+        source_texts = [str(title or ""), str(content or "")]
+        source_texts.extend(str(value) for value in (terms or []) if str(value).strip())
+        grounded, rejected = ground_kp_zh(
+            parsed,
+            knowledge_id=str(knowledge_id or ""),
+            source_texts=source_texts,
+            evidence_ids=refs,
+        )
+        if grounded is None:
+            return {
+                "knowledge_id": str(knowledge_id or ""),
+                "translation_zh": "",
+                "terms_zh": [],
+                "status": "skipped",
+                "reason": "not_grounded",
+                "prompt_version": KP_ZH_PROMPT_VERSION,
+            }
+        grounded.update(
+            {
+                "status": "completed",
+                "prompt_version": KP_ZH_PROMPT_VERSION,
+                "provider": self.provider_name,
+                "model": self.model_id,
+            }
+        )
+        grounded["terms_rejected"] = rejected
+        return grounded
 
     @staticmethod
     def _glossary_digest(

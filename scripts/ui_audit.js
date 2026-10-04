@@ -96,6 +96,14 @@ const WEB_SOURCES = WEB_FILES.map((rel) => ({
 // 全部前端源码 (按加载顺序拼接)。本文件里对源码做的 indexOf / 正则断言
 // 一律针对它 —— 与拆分前针对单个 app.js 断言等价。
 const APP_JS = WEB_SOURCES.map((source) => source.code).join('\n');
+//: 单个 views/*.js 的源码 —— 当一条断言**必须**限定在某一个页面里时用它。
+//: 用拼接后的 APP_JS 断言“某个字符串只在 A 页面出现”时永远查不出来。
+function viewSource(rel) {
+  return WEB_SOURCES.filter((source) => source.name === rel)[0].code;
+}
+const VIEWS_KNOWLEDGE = viewSource('views/knowledge.js');
+const VIEWS_FLASHCARDS = viewSource('views/flashcards.js');
+const VIEWS_MATERIALS = viewSource('views/materials.js');
 const CSS = fs.readFileSync(path.join(ROOT, 'src', 'web', 'styles.css'), 'utf8');
 const INDEX_HTML = fs.readFileSync(path.join(ROOT, 'src', 'web', 'index.html'), 'utf8');
 
@@ -556,6 +564,137 @@ function trace() {
   };
 }
 
+/**
+ * TASK-79: 知识点级中文层的夹具。
+ *
+ * **全 ASCII**: 中文解释的夹具内容故意写成 ASCII 占位串, 而不是真中文。
+ * 理由是审计第 1 组那条“es/ca 渲染结果里不得出现 CJK”的断言 —— 它的全部
+ * 力量来自“夹具数据全是 ASCII”这一个前提。一旦这里填真中文, 断言就会把
+ * **数据**当成**界面漏译**而失败 (假阳性), 于是要么这条断言被弱化, 要么
+ * 夹具被特殊处理。保持 ASCII 可以让那条零假阳性的断言继续成立; 中文层
+ * 真的显示不显示, 由下面那几条断言单独管。
+ */
+function kpGlossary() {
+  return {
+    course_id: COURSE_ID,
+    knowledge_id: KP_ID,
+    glossary: [
+      {
+        glossary_id: 'gls-1',
+        term: 'funcion',
+        lang: 'es',
+        zh: 'FIXTURE-zh-function',
+        evidence_refs: ['evid-1'],
+        evidence_ids: ['evid-1'],
+        kp_id: KP_ID,
+      },
+      {
+        glossary_id: 'gls-2',
+        term: 'relacion',
+        lang: 'es',
+        zh: 'FIXTURE-zh-relation',
+        evidence_refs: ['evid-1'],
+        evidence_ids: ['evid-1'],
+        kp_id: KP_ID,
+      },
+    ],
+    glossary_total: 2,
+    source: 'material-ai-report',
+  };
+}
+
+function kpTranslation() {
+  return {
+    course_id: COURSE_ID,
+    knowledge_id: KP_ID,
+    translation_zh: 'FIXTURE chinese explanation placeholder',
+    terms_zh: [
+      { term: 'funcion', lang: 'es', zh: 'FIXTURE-zh-function-from-translation', evidence_refs: ['evid-1'] },
+    ],
+    evidence_refs: ['evid-1'],
+    terms_rejected: [],
+    translation_identity: 'kpzh-fixture00000000',
+    translation_version: 'kp-translation-v1',
+    prompt_version: 'ai-prompts-v1:kp-zh-v1',
+    provider: 'fake-deterministic',
+    model: 'fake-deterministic',
+    status: 'completed',
+  };
+}
+
+/** Task 29: grounded explanation 面板。
+ *
+ * TASK-81 §C 之后语言由**证据**决定 (不再由下拉选), 因此这条夹具模拟的
+ * 就是“证据是西语 → 请求 es → 有解释”的主路径。夹具全 ASCII, es/ca 下
+ * 渲染出 CJK 就只能是界面文案漏译。
+ */
+function groundedExplanation() {
+  return {
+    knowledge_point_id: KP_ID,
+    requested_language: 'es',
+    status: 'ok',
+    available: true,
+    message: '',
+    representation: {
+      representation_id: 'rep-fixture-1',
+      knowledge_point_id: KP_ID,
+      language: 'es',
+      title: 'Definicion de funcion',
+      explanation: 'Una funcion es una relacion entre conjuntos.',
+      key_points: ['Cada entrada tiene una salida.'],
+      examples: ['f(x) = x'],
+      claims: [
+        { text: 'Una funcion es una relacion entre conjuntos.', evidence_ids: ['evid-1'] },
+      ],
+    },
+    evidence: [
+      {
+        evidence_id: 'evid-1',
+        evidence_type: 'document',
+        language: 'es',
+        confidence: 'HIGH',
+        content: 'Una funcion es una relacion entre conjuntos.',
+        source: { material_id: MATERIAL_ID, locator: 'p.1' },
+      },
+    ],
+    evidence_languages: ['es'],
+    supported_languages: ['es'],
+    related_concepts: [],
+    prerequisites: [],
+  };
+}
+
+function flashcards() {
+  return {
+    flashcards: [
+      {
+        flashcard_id: 'fc-1',
+        course_id: COURSE_ID,
+        student_id: STUDENT_ID,
+        kp_id: KP_ID,
+        front: 'Definicion de funcion',
+        back: 'Una funcion es una relacion entre conjuntos.',
+        example: '',
+        state: 'new',
+        due: '2026-09-25T00:00:00+00:00',
+        source_refs: ['evid-1'],
+      },
+      {
+        flashcard_id: 'fc-2',
+        course_id: COURSE_ID,
+        student_id: STUDENT_ID,
+        kp_id: KP_ID,
+        front: 'Dominio de una funcion',
+        back: 'El dominio es el conjunto de entrada.',
+        example: 'Ejemplo del dominio.',
+        state: 'review',
+        due: '2026-09-26T00:00:00+00:00',
+        source_refs: ['evid-1'],
+      },
+    ],
+  };
+}
+
 function exerciseView() {
   return {
     course_id: COURSE_ID,
@@ -909,6 +1048,14 @@ function routes() {
   table['/api/processing'] = { by_status: { SUCCEEDED: 3 } };
   table['/api/reviews'] = { reviews: [{ knowledge_point_id: KP_ID, reason: 'UNVERIFIED', review_status: 'PENDING' }] };
   table['/api/knowledge/' + KP_ID + '/trace'] = trace();
+  // TASK-79: 知识点级中文层。三个端点分开: glossary 与 translate 都是 GET
+  // (只读缓存), POST /translate 才会真的调 LLM。
+  table['/api/knowledge/' + KP_ID + '/glossary'] = kpGlossary();
+  table['/api/knowledge/' + KP_ID + '/translate'] = kpTranslation();
+  // TASK-81 §C: 解释面板 (语言由证据决定, 不再由下拉选)。
+  table['/api/knowledge/' + KP_ID + '/explanation'] = groundedExplanation();
+  // 记忆卡片页 (TASK-79 降级为“背题入口”).
+  table['/api/flashcards'] = flashcards();
   table['/api/students'] = { students: [{ student_id: STUDENT_ID, display_name: 'Ana' }] };
   table['/api/students/' + STUDENT_ID + '/exercises'] = {
     course_id: COURSE_ID,
@@ -1506,6 +1653,9 @@ function makeElement(id) {
       return null;
     },
     appendChild() {},
+    // toast() 的自动消失靠 Element.remove(); 桩里缺它会在审计**结束后**的
+    // 定时器里抛 TypeError, 把一次通过的审计报成 exit 1。
+    remove() {},
     querySelector() {
       return null;
     },
@@ -1524,6 +1674,10 @@ function makeSandbox(routeTable, lang) {
   const elements = new Map();
   const storage = new Map();
   const fetched = [];
+  // TASK-80: ``fetched`` 只有 URL, 分不出 GET /translate 与 POST /translate ——
+  // 而这两个正是本任务要钉死的两种形状。``requests`` 额外记下 method 与 body,
+  // 断言才能只看**写**请求。
+  const requests = [];
   if (lang) storage.set('ca.lang', lang);
 
   const getElement = (id) => {
@@ -1538,6 +1692,9 @@ function makeSandbox(routeTable, lang) {
     addEventListener() {},
     createElement: (tag) => makeElement(tag),
     documentElement: makeElement('html'),
+    // TASK-80: toast() 往 document.body 挂节点。没有 body 时任何**失败路径**
+    // (点翻译失败 toast) 在审计里直接抛 TypeError —— 等于失败路径根本没法测。
+    body: makeElement('body'),
   };
 
   const window = {
@@ -1552,8 +1709,14 @@ function makeSandbox(routeTable, lang) {
     matchMedia: () => ({ matches: false, addEventListener() {} }),
   };
 
-  async function fetchStub(url) {
+  async function fetchStub(url, init) {
     fetched.push(url);
+    const opts = init || {};
+    requests.push({
+      url: String(url),
+      method: String(opts.method || 'GET').toUpperCase(),
+      body: opts.body == null ? null : String(opts.body),
+    });
     const pathOnly = String(url).split('?')[0];
     const route = routeTable[pathOnly];
     if (!route) {
@@ -1588,6 +1751,7 @@ function makeSandbox(routeTable, lang) {
     ApiError: class ApiError extends Error {},
     __elements: elements,
     __fetched: fetched,
+    __requests: requests,
     __storage: storage,
   };
   sandbox.globalThis = sandbox;
@@ -1622,6 +1786,8 @@ const PAGES = [
   { name: 'exercises', args: [] },
   { name: 'mistakes', args: [] },
   { name: 'mistakeDetail', args: [COURSE_ID, KP_ID] },
+  // TASK-79: 记忆卡片页 (标题可点进详情 + 中文预览行)。
+  { name: 'flashcards', args: [] },
   { name: 'exercise', args: [COURSE_ID, EXERCISE_ID, STUDENT_ID] },
   // Task 66: 今天的学习流程 (入口 + 知识点学习页)
   { name: 'learn', args: [] },
@@ -1664,6 +1830,17 @@ function check(name, condition, detail) {
 }
 
 const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+/**
+ * 取某个 key 的**中文**译文, 供界面文案断言使用。
+ *
+ * 为什么要从真表里取而不是把中文硬写两遍: 写死的断言在改文案时会**静默失效**
+ * —— 页面换了文案, 断言还在找旧句子, 审计全程绿 —— 而失效的断言比没有断言更糟。
+ * ``sandbox.t`` 就是页面本身用的那个函数, 所以这里和页面看到的字面完全一致。
+ */
+function t_zh(sandbox, key) {
+  return sandbox.t(key);
+}
 
 function firstCjk(text) {
   const match = CJK.exec(text);
@@ -3464,6 +3641,213 @@ async function audit() {
         warnKeys.every((k) => !CJK.test(tables.es[k]) && !CJK.test(tables.ca[k])),
         warnKeys.filter((k) => CJK.test(tables.es[k]) || CJK.test(tables.ca[k])).join(','));
     }
+  }
+
+  // ---- TASK-79: 知识点级中文解释层 (按需翻译 + 术语表) ------------------
+  //
+  // 三条边界在这里变成断言:
+  //
+  // 1. **证据原文零改动**。详情页的溯源链仍然用 originalBlock 逐字渲染
+  //    fixture 里的 evidence content —— 中文层是**加**上去的, 不是换掉它的。
+  // 2. **三语界面文案**。kpZh.* 九个 key 在 es/ca 下不得出现 CJK, 否则就是
+  //    漏译; 中文**数据**用 ASCII 夹具 (理由见 kpGlossary() 的注释)。
+  // 3. **卡片标题是链接**。 flashcards 降级为“背题入口”: front 必须是指向
+  //    知识点详情的 <a>, 否则学生看到一个不懂的西语概念却无处可去。
+  {
+    const sandbox = await renderPage(pageByName('knowledgeDetail'), routes(), 'zh');
+    const out = html(sandbox);
+    const zhPanel = sandbox.__elements.get('kp-zh-panel');
+    const zhHtml = zhPanel ? zhPanel.innerHTML : '';
+
+    // 1) 证据原文仍然是 originalBlock 的逐字渲染。
+    check('the knowledge detail still renders the evidence verbatim',
+      out.indexOf('Una funcion es una relacion.') >= 0, out.slice(0, 200));
+    check('the evidence block is still the original-language block',
+      /<div class="original">Una funcion es una relacion\./.test(out),
+      out.slice(0, 200));
+
+    // 2) 中文层挂载在详情页。
+    check('the knowledge detail mounts a Chinese layer panel',
+      out.indexOf('id="kp-zh-panel"') >= 0);
+    check('the Chinese layer panel renders the cached explanation',
+      zhHtml.indexOf('FIXTURE chinese explanation placeholder') >= 0, zhHtml.slice(0, 300));
+    check('the Chinese layer renders the glossary terms of this point',
+      zhHtml.indexOf('funcion') >= 0 && zhHtml.indexOf('FIXTURE-zh-function') >= 0,
+      zhHtml.slice(0, 400));
+    // 翻译自带的 terms_zh **必须**上屏 —— 否则一次花了钱的翻译只留下一句话,
+    // 而用户点开这一页多半就是为了看术语。下面的夹具让两个来源的 term 不同,
+    // 因此“只渲染材料报告那份”会立刻被这条断言抓住。
+    check('the terms produced by the translation itself are rendered',
+      zhHtml.indexOf('FIXTURE-zh-function-from-translation') >= 0, zhHtml.slice(0, 600));
+    check('the knowledge-point glossary merges both zero-cost and translated terms',
+      zhHtml.indexOf('FIXTURE-zh-function') >= 0 &&
+      zhHtml.indexOf('FIXTURE-zh-relation') >= 0, zhHtml.slice(0, 600));
+    check('the Chinese layer always carries its explanation-layer disclaimer',
+      zhHtml.indexOf(t_zh(sandbox, 'kpZh.disclaimer')) >= 0, zhHtml.slice(0, 400));
+    check('a translated knowledge point offers a retry, not a second translate label',
+      zhHtml.indexOf('data-action="kp-translate"') >= 0);
+
+    // 3) 中文读路径只用 GET, 绝不 POST。
+    const fetched = sandbox.__fetched.slice();
+    check('the Chinese layer reads the glossary endpoint',
+      fetched.some((url) => String(url).split('?')[0].indexOf('/glossary') >= 0),
+      fetched.join(' '));
+    check('the Chinese layer reads the cached-translation endpoint',
+      fetched.some((url) => String(url).split('?')[0].indexOf('/translate') >= 0),
+      fetched.join(' '));
+
+    // 4) 三语界面文案。
+    const tables = vm.runInContext('I18N', await loadApp(routes(), 'zh'));
+    const kpZhKeys = Object.keys(tables.zh).filter((k) => k.indexOf('kpZh.') === 0).sort();
+    check('the knowledge-point Chinese layer has i18n keys', kpZhKeys.length >= 6,
+      kpZhKeys.join(','));
+    check('every kpZh.* key exists in all three languages',
+      kpZhKeys.every((k) => tables.es[k] && tables.ca[k]), kpZhKeys.join(','));
+    check('no kpZh.* translation falls back to Chinese',
+      kpZhKeys.every((k) => !CJK.test(tables.es[k]) && !CJK.test(tables.ca[k])),
+      kpZhKeys.filter((k) => CJK.test(tables.es[k]) || CJK.test(tables.ca[k])).join(','));
+  }
+
+  // ---- TASK-80: “翻译成中文”按钮的可点性 (无缓存态 + 契约对齐) -----------
+  //
+  // TASK-79 遗留的坏链路, 用户实测**点击毫无反应** (无 toast / 无请求):
+  //
+  //   B1  无缓存时 ``report`` 为 null → 按钮 data-course="" data-knowledge=""
+  //       → 委托里 actionTranslateKp 首行 early-return → 静默吞掉点击。
+  //   B2  修好 B1 后 POST 只带 body.course_id, 而后端只读 query → 必现 400。
+  //
+  // 两条都必须在这里钉住, 否则会退回“翻过一次的能点, 没翻过的点不动”。
+  {
+    // 无缓存夹具: 抽掉 /translate 这条路由, fetchStub 自然返回 404 NOT_FOUND,
+    // 与真机“还没翻过”完全同路径 (而不是拿一份有缓存的报告去证明按钮能用)。
+    const noCache = routes();
+    delete noCache['/api/knowledge/' + KP_ID + '/translate'];
+    const cold = await renderPage(pageByName('knowledgeDetail'), noCache, 'zh');
+    const coldPanel = cold.__elements.get('kp-zh-panel');
+    const coldHtml = coldPanel ? coldPanel.innerHTML : '';
+    const button = /<button[^>]*data-action="kp-translate"[^>]*>/.exec(coldHtml);
+    check('the uncached translate button carries the course and knowledge ids',
+      !!button &&
+      button[0].indexOf('data-course="' + COURSE_ID + '"') >= 0 &&
+      button[0].indexOf('data-knowledge="' + KP_ID + '"') >= 0,
+      button ? button[0] : coldHtml.slice(0, 300));
+
+    // 点一下真的会发生什么: 直接调 actionTranslateKp (等价于委托转发),
+    // 断言**写**请求的 URL 带上 course_id —— B2 的真实形状。
+    // 先把 /translate 路由放回去: 刚才的 404 只用来造“还没翻过”的面板,
+    // 真机上点下去时服务端是有这个 POST 端点的。
+    noCache['/api/knowledge/' + KP_ID + '/translate'] = kpTranslation();
+    await cold.actionTranslateKp(COURSE_ID, KP_ID, null);
+    const writes = cold.__requests.filter((r) => r.method === 'POST');
+    const post = writes.filter((r) => r.url.split('?')[0].indexOf('/translate') >= 0);
+    const zhAfter = (cold.__elements.get('kp-zh-panel') || {}).innerHTML || '';
+    check('the translate click posts course_id on the query string',
+      post.length === 1 &&
+      post[0].url.indexOf('course_id=' + COURSE_ID) >= 0 &&
+      // 成功后面板必须真的重绘出中文 (B1 修好 + B2 对齐的联合证据)。
+      zhAfter.indexOf('FIXTURE chinese explanation placeholder') >= 0,
+      JSON.stringify(writes) + ' | panel=' + zhAfter.slice(0, 200));
+  }
+
+  // ---- TASK-81: 自动确认的人工卡 / 删掉的语言下拉 / 一键补翻 ----------
+  //
+  // 三条界面契约, 任何一条退回去都会直接改变用户看到的东西:
+  //
+  //   B 自动确认之后, 人工卡只剩**否决**与**解决冲突**; 留着“确认/保持未验证”
+  //     会让人以为点一下确认等于验证, 而它什么新证据都没带来。
+  //   C 解释面板不再有“请求语言”下拉 —— 选项是界面语言 (es/ca/zh), 而后端只
+  //     在证据是那种语言时才给解释; 选 zh 必然得到 language_not_available。
+  //   A2 一键补翻按钮必须**自带费用提示** (每条缺失的知识点一次模型调用)。
+  {
+    const sandbox = await renderPage(pageByName('knowledgeDetail'), routes(), 'zh');
+    const out = html(sandbox);
+    const explPanel = sandbox.__elements.get('explanation-panel');
+    const explHtml = explPanel ? explPanel.innerHTML : '';
+
+    // B: 只剩否决与解决冲突。
+    check('the review card still offers rejection and conflict resolution',
+      out.indexOf('data-action="review-reject"') >= 0 &&
+      out.indexOf('data-action="review-resolve"') >= 0, out.slice(0, 200));
+    check('the review card no longer offers a confirm button',
+      out.indexOf('data-action="review-confirm"') === -1);
+    check('the review card no longer offers a keep-unverified button',
+      out.indexOf('data-action="review-keep"') === -1);
+
+    // C: 下拉没了, 证据原文还在。
+    check('the explanation panel has no request-language picker',
+      explHtml.indexOf('explain-language') === -1, explHtml.slice(0, 300));
+    check('the explanation panel asks for one language only',
+      sandbox.__fetched.filter(
+        (url) => String(url).split('?')[0].indexOf('/explanation') >= 0).length === 1,
+      sandbox.__fetched.join(' '));
+    check('the explanation still renders the evidence verbatim',
+      /<div class="original">Una funcion es una relacion entre conjuntos\./.test(explHtml),
+      explHtml.slice(0, 300));
+
+    // A2: 知识点列表页的补翻按钮 + 费用提示, 且真的发 POST 到补翻端点。
+    const backfillTable = routes();
+    backfillTable['/api/courses/' + COURSE_ID + '/kp-translations/backfill'] =
+      { course_id: COURSE_ID, total: 3, translated: 3, cached: 0, skipped: 0, failed: 0 };
+    const list = await renderPage(pageByName('knowledge'), backfillTable, 'zh');
+    const listHtml = html(list);
+    check('the knowledge list offers a one-click Chinese backfill',
+      listHtml.indexOf('data-action="kp-backfill"') >= 0, listHtml.slice(0, 300));
+    check('the backfill button states its per-point cost',
+      listHtml.indexOf(t_zh(list, 'kpZh.backfillHint')) >= 0, listHtml.slice(0, 300));
+    await list.actionBackfillKpTranslations(COURSE_ID, null);
+    const backfillPosts = list.__requests.filter(
+      (r) => r.method === 'POST' &&
+        r.url.indexOf('/kp-translations/backfill') >= 0);
+    check('the backfill button posts to the backfill endpoint',
+      backfillPosts.length === 1 &&
+      backfillPosts[0].url.indexOf('/api/courses/' + COURSE_ID) >= 0,
+      JSON.stringify(list.__requests.filter((r) => r.method === 'POST')));
+  }
+
+  // ---- TASK-79: 记忆卡片降级为“背题入口” (FSRS 打分未动) ---------------
+  {
+    const sandbox = await renderPage(pageByName('flashcards'), routes(), 'zh');
+    const out = html(sandbox);
+    const detailHref = '#/courses/' + encodeURIComponent(COURSE_ID) +
+      '/knowledge/' + encodeURIComponent(KP_ID);
+    check('the flashcard title links to the knowledge point detail',
+      out.indexOf('<h2><a href="' + detailHref + '">') >= 0, out.slice(0, 400));
+    check('the flashcard title is no longer plain text',
+      out.indexOf('<h2>Definicion de funcion</h2>') === -1, out.slice(0, 400));
+    check('the flashcard still renders the source text unchanged',
+      out.indexOf('Una funcion es una relacion entre conjuntos.') >= 0, out.slice(0, 400));
+    check('the flashcard still offers the three FSRS ratings',
+      ['again', 'good', 'easy'].every((rating) =>
+        out.indexOf('data-rating="' + rating + '"') >= 0), out.slice(0, 400));
+    check('the flashcard shows the cached Chinese explanation',
+      out.indexOf('FIXTURE chinese explanation placeholder') >= 0, out.slice(0, 400));
+    check('the flashcard Chinese preview carries the disclaimer',
+      out.indexOf(t_zh(sandbox, 'kpZh.disclaimer')) >= 0, out.slice(0, 400));
+
+    // 一页卡片对每个知识点只发一对只读请求 (两张卡共享一个 KP -> 不是 4 次)。
+    const glossaryCalls = sandbox.__fetched.filter(
+      (url) => String(url).split('?')[0].indexOf('/glossary') >= 0).length;
+    check('the flashcard page reads the Chinese layer once per knowledge point',
+      glossaryCalls === 1, String(glossaryCalls));
+  }
+
+  // ---- TASK-79: 静态守卫 —— 共用渲染器只有一份 -----------------------------
+  {
+    const all = WEB_SOURCES.map((s) => s.code).join('\n');
+    check('the Chinese-layer renderers live in exactly one place',
+      (all.match(/function renderGlossaryCard\s*\(/g) || []).length === 1 &&
+      (all.match(/function renderTranslationZhCard\s*\(/g) || []).length === 1 &&
+      (all.match(/function renderGlossaryTable\s*\(/g) || []).length === 1);
+    check('the materials view delegates to the shared glossary renderer',
+      VIEWS_MATERIALS.indexOf('renderGlossaryCard(') >= 0 &&
+      VIEWS_MATERIALS.indexOf('function renderAiGlossary') < 0);
+    check('the knowledge detail and the flashcard page share the Chinese layer',
+      VIEWS_KNOWLEDGE.indexOf('renderTranslationZhCard(') >= 0 &&
+      VIEWS_FLASHCARDS.indexOf('renderCardZh') >= 0);
+    check('the Chinese-layer styles are declared for .card-zh',
+      /\.card-zh\s*\{/.test(CSS));
+    check('the Chinese layer never reuses the original block markup',
+      !/renderCardZh[\s\S]{0,400}originalBlock/.test(VIEWS_FLASHCARDS));
   }
 }
 

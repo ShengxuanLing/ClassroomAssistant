@@ -19,7 +19,7 @@ from difflib import SequenceMatcher
 from typing import Any, Mapping, Optional, Sequence
 
 from src.application.ai.prompts import ALLOWED_KNOWLEDGE_TYPES
-from src.application.ai.schemas import GlossaryEntry, KnowledgeCandidate
+from src.application.ai.schemas import GlossaryEntry, KnowledgeCandidate, KpZhResult
 from src.knowledge_validation import knowledge_score_from_counts
 
 __all__ = [
@@ -29,8 +29,10 @@ __all__ = [
     "classify_confidence",
     "ground_candidates",
     "ground_glossary",
+    "ground_kp_zh",
     "GroundedGlossary",
     "glossary_id",
+    "kp_translation_id",
     "EVIDENCE_COPY_SIMILARITY_THRESHOLD",
     "evidence_copy_similarity",
     "candidate_copy_reason",
@@ -325,6 +327,28 @@ def glossary_id(*, course_id: str, term: str) -> str:
     return "gls-" + hashlib.sha256(raw).hexdigest()[:16]
 
 
+def kp_translation_id(
+    *,
+    knowledge_id: str,
+    content_hash: str,
+    prompt_version: str,
+) -> str:
+    """Cache identity of one knowledge-point translation.
+
+    Content **and** prompt version are part of the key on purpose: editing a
+    knowledge point, or changing the translation prompt, must produce a
+    different cache entry instead of silently serving a stale explanation.
+    """
+    raw = "|".join(
+        [
+            str(knowledge_id or ""),
+            str(content_hash or ""),
+            str(prompt_version or ""),
+        ]
+    ).encode("utf-8")
+    return "kpzh-" + hashlib.sha256(raw).hexdigest()[:16]
+
+
 def _glossary_term_is_present(term: str, texts: Sequence[Any]) -> bool:
     """Check a term against Evidence with the same accent/case normalisation."""
     needle = _normalise_copy_text(term)
@@ -476,6 +500,105 @@ def ground_glossary(
     return accepted, rejected
 
 
+def ground_kp_zh(
+    result: Optional[KpZhResult],
+    *,
+    knowledge_id: str,
+    source_texts: Sequence[Any],
+    evidence_ids: Optional[Sequence[str]] = None,
+) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
+    """Ground one knowledge point's Chinese explanation against its own source.
+
+    ``translation_zh`` is an explanation layer, so it is deliberately **not**
+    compared to the Spanish text (a translation will always look different).
+    What must hold is narrower and checkable:
+
+    - the knowledge point must actually say something (empty title *and*
+      content -> refuse, rather than asking a model to invent one);
+    - every term card must be a verbatim substring of **this** knowledge
+      point, using the same accent/case-insensitive rule as the glossary;
+    - every evidence reference must belong to **this** knowledge point.
+
+    A knowledge point without evidence gets no explanation layer: an
+    unsupported translation is exactly the "Chinese text with no source"
+    failure this project refuses everywhere else.
+    """
+    rejected: list[dict[str, Any]] = []
+    texts = [str(value or "") for value in (source_texts or ())]
+    joined = "\n".join(texts)
+    refs = [str(value) for value in (evidence_ids or ()) if str(value)]
+    if result is None or not result.translation_zh.strip():
+        return None, rejected
+    if not joined.strip():
+        return None, rejected
+    if not refs:
+        return None, [
+            {
+                "reason": "knowledge point has no evidence to ground a translation",
+                "terms": [],
+            }
+        ]
+    terms: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in result.terms_zh or []:
+        term = str(getattr(entry, "term", "") or "").strip()
+        zh = str(getattr(entry, "zh", "") or "").strip()
+        card_refs = [
+            str(value)
+            for value in (
+                getattr(entry, "evidence_refs", None)
+                or getattr(entry, "evidence_ids", None)
+                or []
+            )
+            if str(value)
+        ]
+        if not term or not zh:
+            rejected.append({"term": term, "reason": "missing term or Chinese explanation"})
+            continue
+        unknown_refs = [value for value in card_refs if value not in refs]
+        if unknown_refs:
+            rejected.append(
+                {
+                    "term": term,
+                    "reason": "illegal evidence refs: %s" % ", ".join(unknown_refs[:5]),
+                }
+            )
+            continue
+        if not _glossary_term_is_present(term, texts):
+            rejected.append(
+                {"term": term, "reason": "term is not a verbatim knowledge-point substring"}
+            )
+            continue
+        normalized = _normalise_copy_text(term)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        language = str(getattr(entry, "lang", "") or "").casefold()
+        if language not in {"es", "ca"}:
+            language = "[语言待确认]"
+        terms.append(
+            {
+                "term": term[:120],
+                "lang": language,
+                "zh": zh[:20],
+                "evidence_refs": card_refs or list(refs),
+            }
+        )
+    grounded_refs = [
+        value for value in result.evidence_refs if value in refs
+    ] or list(refs)
+    return (
+        {
+            "knowledge_id": str(knowledge_id or ""),
+            "translation_zh": result.translation_zh,
+            "terms_zh": terms,
+            "evidence_refs": grounded_refs,
+            "terms_rejected": rejected,
+        },
+        rejected,
+    )
+
+
 def _normalise_title(title: str) -> str:
     return _WS_RE.sub(" ", (title or "").strip().lower())
 
@@ -531,8 +654,13 @@ def map_candidate_to_kp_payload(
       **不是** LLM 自报的 confidence。后者只以 ``confidence`` 档位
       (HIGH/MEDIUM/LOW) 与 ``metadata.ai_confidence`` 表达。
     - ``needs_verification``: review 候选恒 True (人工确认前不宣称已验证)。
-    - ``validation_status`` / ``review_status`` 保持初始值 (验证器重算、
-      人工确认), 管线绝不私自 CONFIRMED。
+    - ``review_status``: ``auto`` 候选 (confidence >= 0.90 且证据逐字命中)
+      直接落 ``confirmed`` —— TASK-81 §B: 模型自己有把握的那批不再排人工队,
+      兜底只剩证据链 + 拒绝按钮。``review`` 候选 (含冲突候选, 它们都以
+      decision="review" 落库) 仍是 ``pending``: 那正是"模型自己说不准"的
+      一批, 全放过等于把"不静默合并"的护栏删掉。
+    - ``validation_status`` 保持 ``unverified`` (验证器照常重算); **verified
+      语义与审核语义是两条轴**, 自动确认不越过验证。
     - ``metadata`` 轻量版本记录 (provider/model/prompt/pipeline/chunk),
       **不是**把整个 AI response JSON 塞进 content —— 总结类字段
       (summary/topics/...) 由 ``pipeline.py`` 经知识关系/材料记录返回,
@@ -573,12 +701,16 @@ def map_candidate_to_kp_payload(
         "needs_verification": grounded.decision != "auto",
         "validation_status": "unverified",
         "knowledge_score": knowledge_score,
-        "review_status": "pending",
+        # TASK-81 §B: 只有 auto 候选自动确认。review / 冲突候选保持 pending。
+        "review_status": "confirmed" if grounded.decision == "auto" else "pending",
         "metadata": {
             "origin": "ai-pipeline",
             "ai_type": kp_type,
             "ai_confidence": round(confidence_value, 4),
             "ai_decision": grounded.decision,
+            "review_status_source": (
+                "ai_auto_accept" if grounded.decision == "auto" else "review_queue"
+            ),
             "material_id": material_id,
             "content_language": content_language,
             "knowledge_score_source": {

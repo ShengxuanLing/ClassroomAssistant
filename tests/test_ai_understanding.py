@@ -567,8 +567,40 @@ class TestValidators:
         )
         kp = KnowledgePoint.from_dict(payload)  # 现有模型直接接受, 无 migration
         assert kp.evidence_refs == ["ev-1"]
-        assert kp.review_status == "pending"  # 管线绝不私自 CONFIRMED
         assert kp.validation_status == "unverified"
+
+    def test_only_auto_candidates_land_confirmed(self):
+        """TASK-81 §B: auto 候选自动确认, review / 冲突候选仍 pending。
+
+        两条轴不能混: 自动确认说的是"这条候选模型自己有把握", 绝不越过
+        ``validation_status`` (那是证据验证器的事), 也绝不放过"模型自己
+        说不准"的那批 —— merge.py 的"不静默合并"就靠这条撑着。
+        """
+        auto = map_candidate_to_kp_payload(
+            GroundedCandidate(
+                candidate=self._candidate(["chunk-ok"]),
+                evidence_ids=["ev-1"],
+                decision="auto",
+            ),
+            course_id="c",
+            material_id="m",
+        )
+        review = map_candidate_to_kp_payload(
+            GroundedCandidate(
+                candidate=self._candidate(["chunk-ok"]),
+                evidence_ids=["ev-1"],
+                decision="review",
+            ),
+            course_id="c",
+            material_id="m",
+        )
+        assert auto["review_status"] == "confirmed"
+        assert auto["needs_verification"] is False
+        assert auto["validation_status"] == "unverified"
+        assert auto["metadata"]["review_status_source"] == "ai_auto_accept"
+        assert review["review_status"] == "pending"
+        assert review["needs_verification"] is True
+        assert review["metadata"]["review_status_source"] == "review_queue"
 
 
 # ======================================================================
@@ -932,9 +964,18 @@ class TestWorkspaceAIText:
             assert trace["evidence"], entry
             assert trace["materials"], entry
             assert trace["knowledge_point"]["generation_mode"] == "ai_summary"
-        # Review 队列: 低置信度/冲突的人工入口 (pending, 待 confirm)。
-        pending = ws.knowledge_points(cid, review_status="pending")
-        assert len(pending) >= 1
+        # Review 队列: 低置信度/冲突的人工入口 (pending)。TASK-81 §B 之后 auto
+        # 候选已经 confirmed, 所以 pending 里**不含**它们; 确定性管线
+        # (process_material) 建的老知识点仍然是 pending, 那是另一批, 不混。
+        pending_ids = {
+            item["knowledge_id"] for item in ws.knowledge_points(cid, review_status="pending")
+        }
+        queued = {entry["knowledge_id"] for entry in report["needs_review"] + report["conflicts"]}
+        assert queued, "低置信度候选必须仍然进人工队列"
+        assert queued <= pending_ids
+        for entry in report["auto_accepted"]:
+            assert entry["knowledge_id"] not in pending_ids
+            assert ws.knowledge_point(cid, entry["knowledge_id"])["review_status"] == "confirmed"
         assert report["processing_identity"].startswith("ai-")
         assert report["pipeline_version"] == PIPELINE_VERSION
 

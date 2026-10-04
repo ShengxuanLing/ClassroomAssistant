@@ -27,14 +27,17 @@ __all__ = [
     "SUMMARY_PROMPT_VERSION",
     "SUMMARY_ZH_PROMPT_VERSION",
     "GLOSSARY_PROMPT_VERSION",
+    "KP_ZH_PROMPT_VERSION",
     "COURSE_OVERVIEW_PROMPT_VERSION",
     "IMAGE_PROMPT_VERSION",
     "AUDIO_PROMPT_VERSION",
     "ALLOWED_KNOWLEDGE_TYPES",
+    "KP_ZH_MAX_INPUT_CHARS",
     "build_chunk_extraction_prompt",
     "build_merge_prompt",
     "build_summary_prompt",
     "build_summary_zh_prompt",
+    "build_kp_zh_prompt",
     "build_glossary_prompt",
     "build_course_overview_prompt",
     "build_image_analysis_prompt",
@@ -53,7 +56,15 @@ SUMMARY_PROMPT_VERSION = PROMPT_VERSION + ":summary-v3"
 #: must still be visible in the report processing identity.
 SUMMARY_ZH_PROMPT_VERSION = PROMPT_VERSION + ":summary-zh-v1"
 GLOSSARY_PROMPT_VERSION = PROMPT_VERSION + ":glossary-v1"
+#: TASK-79: 知识点级按需中文解释。它既不进 KP 表, 也不进材料报告 —— 只落
+#: 衍生缓存文件, 因此版本号只参与那条缓存的 identity (换 prompt 自然失效)。
+KP_ZH_PROMPT_VERSION = PROMPT_VERSION + ":kp-zh-v1"
 COURSE_OVERVIEW_PROMPT_VERSION = PROMPT_VERSION + ":course-overview-v1"
+
+#: 知识点正文进入翻译提示词前的截断上限。知识点 `content` 是**模型自己写的
+#: 浓缩陈述**, 不是原始讲义; 仍然截断是为了让"一次调用 = 一次 LLM 账单"这条
+#: 成本边界保持成立, 并且顺带挡住把整页 Evidence 粘进 content 的回归。
+KP_ZH_MAX_INPUT_CHARS = 2000
 IMAGE_PROMPT_VERSION = PROMPT_VERSION + ":image-v3"
 AUDIO_PROMPT_VERSION = PROMPT_VERSION + ":audio-v3"
 
@@ -255,6 +266,72 @@ def build_summary_zh_prompt(
         + "\nMATERIAL: %s\n\nSUMMARY INPUT:\n%s\n" % (material_label or "course material", digest)
         + '\nReturn strict JSON: {"summary_zh": str, "topics_zh": [str]}. '
         'Do not wrap it in markdown or prose outside the JSON object.'
+    )
+
+
+def build_kp_zh_prompt(
+    *,
+    knowledge_id: str,
+    title: str = "",
+    content: str = "",
+    terms: Optional[Sequence[Any]] = None,
+    evidence_ids: Optional[Sequence[Any]] = None,
+    content_language: Optional[str] = None,
+) -> str:
+    """Build the on-demand, single-knowledge-point Chinese explanation prompt.
+
+    TASK-79.  The input is deliberately **small**: a knowledge point's own
+    title + condensed statement + its original terms, truncated.  It is never
+    the Evidence store, so this stage structurally cannot become a full-text
+    translation pass -- the prompt says so explicitly as well, because a model
+    asked to "translate" will happily do exactly that if invited to.
+
+    The Chinese text is an **explanation layer**.  Original terms stay
+    verbatim inside it (``capital（资本）``), which is what keeps the Chinese
+    anchored to something the student can find in the evidence.
+    """
+    payload = {
+        "knowledge_id": str(knowledge_id or ""),
+        "title": str(title or ""),
+        "content": str(content or "")[:KP_ZH_MAX_INPUT_CHARS],
+        "original_terms": [str(value) for value in (terms or []) if str(value).strip()][:20],
+        "evidence_ids": [str(value) for value in (evidence_ids or []) if str(value).strip()][:20],
+    }
+    source_note = (
+        "The knowledge point language is %s; the requested explanation language is zh."
+        % content_language
+        if content_language
+        else "The requested explanation language is zh (Chinese)."
+    )
+    return (
+        "You are a classroom-assistant translator. Explain ONE knowledge point "
+        "in Chinese for a student who reads Spanish/Catalan course material.\n"
+        "RULES (must follow exactly):\n"
+        "1. Use ONLY the facts in KNOWLEDGE POINT INPUT. Do not add outside "
+        "knowledge, new examples, numbers, formulas, or conclusions.\n"
+        "2. The Chinese is an EXPLANATION LAYER, not a verbatim translation of "
+        "a source passage. Say what the concept means and how to remember it; "
+        "never reproduce or reword the Spanish/Catalan text as a paragraph.\n"
+        "3. Keep every Spanish/Catalan technical term verbatim and add a short "
+        "Chinese explanation in parentheses, for example capital（资本）. Do not "
+        "translate person names or course names. Mark a culture-specific "
+        "concept with [文化概念] when needed.\n"
+        "4. \"translation_zh\" is at most 200 Chinese characters. One short "
+        "paragraph; a list is not allowed.\n"
+        "5. \"terms_zh\" holds at most 8 term cards. Every \"term\" MUST be "
+        "copied character-for-character from the knowledge point's own "
+        "title/content/original_terms (validator performs a "
+        "case/accent-insensitive substring check) and every \"zh\" is at most "
+        "20 Chinese characters.\n"
+        "6. \"lang\" must be exactly es or ca; if the source language is "
+        "uncertain return lang=[语言待确认]. Never guess.\n"
+        "7. \"evidence_refs\" may only contain evidence IDs listed under the "
+        "knowledge point. Never invent an evidence ID, page, or timestamp.\n"
+        + source_note
+        + "\nKNOWLEDGE POINT INPUT:\n%s\n" % json.dumps(payload, ensure_ascii=False)
+        + '\nReturn strict JSON: {"translation_zh": str, "terms_zh": '
+        '[{"term": str, "lang": str, "zh": str, "evidence_refs": [str]}]}. '
+        "No markdown or prose outside the JSON object."
     )
 
 

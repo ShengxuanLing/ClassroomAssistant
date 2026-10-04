@@ -13,11 +13,22 @@ function kpLink(courseId, knowledgeId, label) {
 }
 
 // ---- 知识解释 (Grounded explanation, Task 29) ---------------------------
+//
+// TASK-81 §C: 解释语言**由证据决定**, 不再由用户选。原来这里有一个
+// ``<select id="explain-language">``, 它的选项是界面语言 (es / ca / zh), 而
+// 后端 ``learning_view`` 只会因为"存在该语言的证据"才给解释 —— 证据是
+// es / ca, 于是选 zh 必然落到 language_not_available, 页面只显示一段
+// 说明 + 原文 (实测截图里的"选了中文还是西语")。
+//
+// 三条原则:
+// 1. 语言取**证据首选** (调用方从溯源包算出), 没有证据语言时回落到课程声明;
+// 2. 一次 fetch。改下拉就得重发一次请求, 而它改不了后端的可用性判定;
+// 3. 证据原文与溯源链**逐字不动**, 解释面板只是多画一块。
 
 async function loadExplanation(courseId, knowledgeId, language) {
   const panel = document.getElementById('explanation-panel');
   if (!panel) return;
-  const lang = language || state.lang;
+  const lang = language || 'es';
   panel.innerHTML = '<div class="card"><p class="muted">' + esc(t('common.loading')) + '</p></div>';
   let data;
   try {
@@ -31,12 +42,6 @@ async function loadExplanation(courseId, knowledgeId, language) {
     return;
   }
   const rep = data.representation;
-  const picker = '<label class="field"><span>' + esc(t('expl.request')) + '</span>' +
-    '<select id="explain-language">' +
-    UI_LANGUAGES.map((code) =>
-      '<option value="' + esc(code) + '"' + (code === lang ? ' selected' : '') + '>' +
-      esc(code) + '</option>').join('') +
-    '</select></label>';
 
   let body;
   if (data.available && rep) {
@@ -44,7 +49,7 @@ async function loadExplanation(courseId, knowledgeId, language) {
       '<div class="row-between"><h3>' + esc(rep.title || '') + '</h3>' +
       '<span class="tiny muted mono">' + esc(rep.representation_id) + '</span></div>' +
       '<p class="tiny muted">' + esc(t('expl.original')) + ' · ' +
-      esc(t('expl.request')) + ': ' + esc(rep.language) + '</p>' +
+      esc(t('expl.evidenceLangs')) + ': ' + esc(rep.language) + '</p>' +
       originalBlock(rep.explanation, null) +
       ((rep.key_points || []).length
         ? '<h3>' + esc(t('expl.keyPoints')) + '</h3><ul class="small">' +
@@ -73,7 +78,7 @@ async function loadExplanation(courseId, knowledgeId, language) {
   panel.innerHTML =
     '<div class="card"><div class="card-head"><h2>' + esc(t('expl.title')) + '</h2>' +
     '<span class="tiny muted">' + t('Task 29 · 无证据即明确报缺，绝不生成内容') + '</span></div>' +
-    picker + body +
+    body +
     '<h3>' + esc(t('common.evidence')) + '</h3>' +
     ((data.evidence || []).length
       ? data.evidence.map((ev) => (
@@ -94,14 +99,6 @@ async function loadExplanation(courseId, knowledgeId, language) {
         ? data.prerequisites.map((id) => kpLink(courseId, id)).join(', ')
         : esc(t('common.none'))) + '</dd>' +
     '</dl></div>';
-
-  const select = document.getElementById('explain-language');
-  if (select) {
-    select.addEventListener('change', () => {
-      // 只改变解释的请求语言标签; 绝不修改任何 Evidence。
-      loadExplanation(courseId, knowledgeId, select.value);
-    });
-  }
 }
 
 // ------------------------------------------------------------------ 动作

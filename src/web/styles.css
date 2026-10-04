@@ -366,6 +366,17 @@ table.data td.ellipsis {
 }
 .original .lang-tag { font-size: 11px; color: var(--text-muted); }
 
+/* TASK-79: 中文解释层。紧跟在 .original 之后 —— 视觉上它是原文的**注释**,
+   不是原文的替代品: 左边框与 .original 相反, 底色更浅, 且正文更小。 */
+.card-zh {
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 8px 12px; margin: 4px 0 6px;
+}
+.card-zh p { margin: 0 0 4px; }
+.card-zh p:last-child { margin-bottom: 0; }
+
 button, .btn {
   font: inherit; font-size: 13px; cursor: pointer;
   padding: 6px 12px; border-radius: var(--radius-sm);

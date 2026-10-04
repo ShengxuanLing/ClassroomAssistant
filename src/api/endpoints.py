@@ -605,6 +605,83 @@ def build_router(workspace: Workspace) -> Router:
             }
         )
 
+    def kp_translate(request: Request) -> ApiResponse:
+        """TASK-79: 按需为一个知识点生成中文解释 (显式 POST 才调 LLM)。
+
+        失败是 422 (知识点与证据原封不动, 可 retry), 从不是 500。
+        """
+        body = request.json_body() if request.body else {}
+        if not isinstance(body, dict):
+            raise InvalidInputError("request body must be a JSON object")
+        # TASK-80: body || query 双读, 与 create_flashcard 同口径。
+        # 原来只读 query, 而前端把 course_id 放在 POST body 里 —— query/body
+        # 分开拼, 于是用户点一次“翻译成中文”就撞一个必现的 400 (参数错 ≠
+        # 翻译失败)。双读同时覆盖旧缓存页面与只带 body 的外部调用。
+        course_id = str(body.get("course_id") or request.require_q("course_id"))
+        target_lang = str(
+            body.get("target_lang") or request.q("target_lang") or "zh"
+        ).strip()
+        force = bool(body.get("force") or False)
+        return success(
+            workspace.translate_kp(
+                course_id,
+                request.params["knowledge_id"],
+                target_lang=target_lang,
+                content_language=(
+                    str(body.get("content_language")).strip()
+                    if body.get("content_language")
+                    else request.q("content_language")
+                )
+                or None,
+                force=force,
+            )
+        )
+
+    def kp_translation_read(request: Request) -> ApiResponse:
+        """只读: 已缓存的知识点中文解释。没有缓存就 404, 绝不现场调 LLM。"""
+        course_id = request.require_q("course_id")
+        return success(
+            workspace.kp_translation(course_id, request.params["knowledge_id"])
+        )
+
+    def kp_glossary(request: Request) -> ApiResponse:
+        """只读: 从已落盘的材料 AI 报告里按 kp_id / 证据筛出的术语表 (零 LLM)。"""
+        course_id = request.require_q("course_id")
+        return success(
+            workspace.kp_glossary(course_id, request.params["knowledge_id"])
+        )
+
+    def kp_translations_backfill(request: Request) -> ApiResponse:
+        """TASK-81 §A: 一键补翻整门课的历史知识点 (幂等; 失败 422 可重试)。
+
+        与 analyze 的 ``kp_zh_auto`` 阶段共用同一份缓存身份, 因此"再点一次"
+        全部命中缓存、零 provider 调用。
+        """
+        body = request.json_body() if request.body else {}
+        if not isinstance(body, dict):
+            raise InvalidInputError("request body must be a JSON object")
+        raw_limit = body.get("limit", request.q("limit"))
+        limit: Optional[int] = None
+        if raw_limit not in (None, ""):
+            try:
+                limit = int(str(raw_limit))
+            except ValueError:
+                raise InvalidInputError("limit must be an integer") from None
+            if limit < 0:
+                raise InvalidInputError("limit must be >= 0")
+        return success(
+            workspace.backfill_kp_translations(
+                request.params["course_id"],
+                content_language=(
+                    str(body.get("content_language")).strip()
+                    if body.get("content_language")
+                    else None
+                ),
+                force=bool(body.get("force") or False),
+                limit=limit,
+            )
+        )
+
     def coverage(request: Request) -> ApiResponse:
         return success(workspace.coverage(request.require_q("course_id")))
 
@@ -624,6 +701,15 @@ def build_router(workspace: Workspace) -> Router:
     router.get("/api/knowledge/{knowledge_id}", get_knowledge)
     router.get("/api/knowledge/{knowledge_id}/evidence", knowledge_evidence)
     router.get("/api/knowledge/{knowledge_id}/trace", knowledge_trace)
+    # TASK-79: 知识点级中文层。POST 是唯一的 LLM 入口 (显式点击, 幂等缓存);
+    # 两个 GET 只读已存在的数据 —— 术语表直接读材料报告, 翻译读落盘缓存。
+    router.post("/api/knowledge/{knowledge_id}/translate", kp_translate)
+    router.get("/api/knowledge/{knowledge_id}/translate", kp_translation_read)
+    router.get("/api/knowledge/{knowledge_id}/glossary", kp_glossary)
+    # TASK-81: 一键补翻 (POST 才调 LLM; 与上面的单条翻译同一条 HTTP 口径)。
+    router.post(
+        "/api/courses/{course_id}/kp-translations/backfill", kp_translations_backfill
+    )
     router.get("/api/coverage", coverage)
     router.get("/api/gaps", gaps)
     router.get("/api/dependencies", dependencies)

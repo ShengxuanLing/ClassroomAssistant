@@ -373,6 +373,61 @@ class FakeAIProvider(AIProvider):
                 },
                 ensure_ascii=False,
             )[:max_output_chars]
+        if "KNOWLEDGE POINT INPUT:" in prompt:
+            # TASK-79: 知识点级中文解释。术语**必须**逐字取自知识点自身,
+            # 否则 ground_kp_zh 会把它们当幻觉拒收 —— 确定性 fixture 与真实
+            # 模型受同一道 grounding 门禁约束。
+            digest = prompt.rsplit("KNOWLEDGE POINT INPUT:", 1)[1]
+            digest = re.split(r"\n\s*Return strict JSON:", digest, maxsplit=1)[0]
+            try:
+                payload = json.loads(digest)
+            except (TypeError, ValueError):
+                payload = {}
+            title = str(payload.get("title") or "")
+            content = str(payload.get("content") or "")
+            refs = [str(value) for value in (payload.get("evidence_ids") or []) if value]
+            source = " ".join([title, content] + list(payload.get("original_terms") or []))
+            words: list[str] = []
+            for word in re.findall(r"[^\W\d_]{4,}", source, re.UNICODE):
+                if not any(ord(char) < 128 for char in word):
+                    continue
+                if word.casefold() in words:
+                    continue
+                words.append(word)
+                if len(words) >= 2:
+                    break
+            translations = {
+                "integración": "积分",
+                "derivada": "导数",
+                "función": "函数",
+                "capital": "资本",
+                "método": "方法",
+                "teorema": "定理",
+                "área": "面积",
+            }
+            terms = [
+                {
+                    "term": word,
+                    "lang": "es",
+                    "zh": translations.get(word.casefold(), "术语解释"),
+                    "evidence_refs": refs[:1],
+                }
+                for word in words
+            ]
+            term_pairs = "；".join(
+                "%s（%s）" % (item["term"], item["zh"]) for item in terms
+            ) or "术语（术语解释）"
+            return json.dumps(
+                {
+                    "translation_zh": (
+                        "【中文 fixture 解释 —— 未调用外部模型】%s。"
+                        % (term_pairs,)
+                    ),
+                    "terms_zh": terms,
+                    "evidence_refs": refs,
+                },
+                ensure_ascii=False,
+            )[:max_output_chars]
         if "EVIDENCE DIGEST:" in prompt:
             digest = prompt.rsplit("EVIDENCE DIGEST:", 1)[1]
             refs = []

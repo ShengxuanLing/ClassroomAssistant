@@ -8510,3 +8510,93 @@ node scripts/e2e_session_picker.js: E2E OK (29 checks)
 | `test_multi_course::test_the_top_nav_ownership_table_is_exactly_as_declared` | 新页面 `pageFlashcards()` 有一处 `markActiveNav`，但归属表（app.js 注释表 + 测试 `declared`）没登记 | 两侧同步登记为 `#/knowledge`（卡片挂在知识点分区下） |
 | `test_student_ui::test_the_empty_state_is_text_only` | `noStudentsCard()` 调用点由 2 增至 5（mistakes 重做空态 +2、flashcards 空态 +1），断言写死 3 | 断言更新为 6（1 定义 + 5 调用），并写明各调用点归属 |
 | `test_exercise_ui::test_index_html_nav_exposes_exercises` | 断言"练习入口必须是禁用的无 href span"，与本轮解禁后的真实状态**直接矛盾** | 改为断言解禁后的事实：`<a href="#/exercises">` 存在、`nav-disabled` 不存在 |
+
+
+## TASK-80 修「翻译成中文」按钮点了没反应（2026-10-03）
+
+完整报告见 `docs/task-80-fix-kp-translate-button.md`。TASK-79 的功能契约没变，坏的是链路。
+
+### 现象与根因
+
+#/courses/<id>/knowledge/<kp> 的「翻译成中文」按钮点了无反应：无 toast、无请求。AI 绿灯亮、溯源链有证据 —— 断的是按钮链路。
+
+| # | 根因 | 位置 |
+|---|---|---|
+| B1 | 按钮 `data-*` 从 `report` 取，无缓存时 `report=null` → `data-course=""` → 委托首行 `if (!courseId \|\| !knowledgeId) return` 静默吞掉点击 | `views/knowledge.js` `renderKpZhPanel` / `actionTranslateKp` |
+| B2 | POST 只带 body.course_id（`api.js` 里 query 与 body 分开拼），后端 `kp_translate` 单读 query → 必现 400 | `views/knowledge.js` / `api/endpoints.py` |
+
+为什么 TASK-79 测试全绿：HTTP 用例全写成 `POST .../translate?course_id=...`，**测试形状 ≠ 前端真实形状**，两侧接线错误都盖不住。
+
+### 处置
+
+- T1 `renderKpZhPanel(report, glossary, courseId, knowledgeId)`：按钮身份改用闭包入参（`courseId || report.course_id`），`loadKpZh` 与成功重绘处都透传。
+- T2a 前端 POST 补 `query: {course_id}`；T2b 后端 `body.get("course_id") or require_q("course_id")`（同 `create_flashcard` 口径）。两端都做。
+- 顺手拆掉失败恢复里的 `button.outerHTML = previous`：那是陈旧快照，会把 B1 变成"失败一次就永久点不动"；改为用入参重写 `data-*`。
+- 不变量：GET 仍绝不调 LLM；缓存身份 / 落盘路径 / 原文 / 证据 / FSRS / DB / prompt 全未动。
+
+### 守卫
+
+| 门禁 | 新增 |
+|---|---|
+| `tests/test_kp_translation.py` | body-only POST → 200 且 `translation_identity` 与带 query 一致；两处都没有 course_id 仍 400（双读不得把必填变可选） |
+| `scripts/ui_audit.js` | 无缓存夹具（抽掉 `/translate` 路由 → 404）下按钮 `data-*` 非空且等于当前课/KP；实调 `actionTranslateKp` 断言 POST URL 带 `course_id` 且面板重绘出中文 |
+
+沙箱补两样能力：`__requests`（记 method/body，`__fetched` 只有 URL 分不出 GET/POST）与 `document.body`（`toast()` 挂节点，之前失败路径在审计里直接抛 TypeError）。
+
+**变异自证**：回退 T1 → 审计红 1（详情里正是 `data-course=""`）；回退 T2a → 审计红 1；回退 T2b → body-only 用例红。
+
+### 基线
+
+```text
+tests/test_kp_translation.py     21 passed                  ← 19
+scripts/ui_audit.js              UI audit OK (558 checks)   ← 556
+scripts/ui_render_check.js       UI RENDER CHECK: OK (314 checks)   不变
+```
+
+### 值得记的教训
+
+TASK-79 之所以全绿，是因为**测试形状 ≠ 调用方形状**。这类缺陷只有真机能看见，而把夹具改成真实形状的成本远低于一次用户报障。
+
+---
+
+## TASK-81 自动中文 + 审核自动确认 + 删掉请求语言下拉（2026-10-03）
+
+### 症状与根因
+
+| # | 现象 | 根因 | 位置 |
+|---|---|---|---|
+| A | 每个知识点都要手点「翻译成中文」才看得到中文 | TASK-79 把中文层做成**纯按需**，自动链路只翻材料级 `summary_zh` / `glossary`；守卫 `test_translation_stage_is_not_wired_into_the_automatic_material_pipeline` 甚至断言 `build_kp_zh` 不得出现在 `service.py` | `ai/service.py` / `workspace.translate_kp` |
+| B | AI 自动落库的知识点全进「待审核」，待审核页永远清不空 | `map_candidate_to_kp_payload` 无条件写 `review_status="pending"`，无论模型对这条候选多有信心 | `ai/validators.py:699` |
+| C | 解释面板选了中文还是显示西语原文 | 下拉选项是**界面**语言 (es/ca/zh)，而后端 `learning_view` 只在「存在该语言的证据」时才给解释；证据是 es/ca，选 zh 必然 `language_not_available` | `views/students.js` `loadExplanation` |
+
+### 处置
+
+- **A1 自动逐条翻译**：`analyze_material_with_ai` 在**事务之外**、KP 已提交之后跑 `_kp_translation_stage`，对本次报告里的 auto/needs_review/conflicts 知识点逐条 `build_kp_zh`，落进与手点翻译**同一份** `kp-translations/<kp>.json`（同一 `kp_translation_id`）。stage `kp_zh_auto`：`done` / `partial (x/y ok, z skipped)` / `failed`；单条失败只记账，**绝不回滚知识点**。二刷全部命中缓存 → provider 零调用。
+- **A2 一键补翻**：`Workspace.backfill_kp_translations(course_id, force, limit)` + `POST /api/courses/{course_id}/kp-translations/backfill`（422 可 retry），知识点列表页一个按钮，旁边明写费用「已缓存的不重复花钱；每条缺失的知识点约一次模型调用」。返回值 `{total, translated, cached, skipped, failed, details}`。
+- **B 自动确认**：`map_candidate_to_kp_payload` 只对 `decision == "auto"` 写 `review_status="confirmed"`（`metadata.review_status_source` 留痕）；`review` / 冲突候选仍是 `pending` —— 那正是「模型自己说不准」的一批，全放过等于删掉 `merge.py` 的「不静默合并」护栏。`validation_status` 照旧 `unverified`：验证轴与审核轴是两条线。详情页人工卡缩为「备注 + 拒绝 / 解决冲突」，`#/reviews` 保留（只剩存疑项）。
+- **C 删下拉**：`loadExplanation(courseId, knowledgeId, language)` 去掉 `<select>` 与 change 监听，语言取 `explanationLanguage(trace)`（证据语言 → 材料声明语言 → es），一次 fetch；面板与溯源链逐字不动。`expl.request` 三语同删。
+
+### 守卫
+
+| 门禁 | 新增 / 改写 |
+|---|---|
+| `tests/test_kp_translation.py` | 分析后每条新 KP 都有 `kpzh-` 缓存；二刷零 kp-zh 调用；单条失败 → 材料仍 completed + stage `partial`，重试只补失败那条；backfill 首翻真花钱、二刷 `translated=0` 且 provider 零调用；HTTP backfill 计数与 `limit` 校验；auto 候选 `confirmed` 且拒绝流仍可用。旧守卫改写为 `test_automatic_translation_only_calls_the_pipeline_never_the_http_entry`（自动段只调 `build_kp_zh`，**绝不**回走 `translate_kp` POST 入口，否则一次 provider 抖动会把整份材料报成失败）；另加 UI 守卫：下拉消失 + 证据仍逐字渲染 |
+| `tests/test_ai_understanding.py` | `test_only_auto_candidates_land_confirmed`；auto 候选不再出现在 pending 队列里，存疑队列仍是 `needs_review + conflicts` |
+| `scripts/ui_audit.js` | 人工卡只剩拒绝/解决冲突（无 confirm / keep）、解释面板无语言下拉且只请求一次、证据原文仍在、补翻按钮带费用提示且真 POST 到补翻端点 |
+
+顺带修掉审计沙箱的一个真缺陷：`makeElement()` 缺 `remove()`，`toast()` 的自动消失定时器在审计**结束后**抛 TypeError，把一次通过的审计报成 exit 1。
+
+### 基线
+
+```text
+tests/test_kp_translation.py     28 passed                  ← 21
+python -m pytest -m "not integration"   5566 passed / 1 failed (环境) / 8 skipped
+scripts/ui_audit.js              UI audit OK (567 checks)   ← 558
+scripts/ui_render_check.js       UI RENDER CHECK: OK (314 checks)   不变
+```
+
+`tests/test_stress_semester.py::TestUiStress::test_ten_pages_render_against_a_live_server` 在本机红：它硬编码的 `CLASSROOM_NODE` 默认路径（`~/.workbuddy-ai/binaries/node/...`）在本机不存在，`subprocess` 抛 `FileNotFoundError`。用 `CLASSROOM_NODE=$(which node)` 重跑该用例 2 passed —— 属环境问题，与本次改动无关。
+
+### 值得记的教训
+
+「按需」和「自动」不是同一个开关，而是**两条路**：`translate_kp` 失败要抛 422 让用户能重试，自动段失败只能记账。两者共用一份缓存身份，所以二刷零成本；但一旦让自动段回走 `translate_kp`，「一次模型抖动 = 整份材料报失败」就回来了。

@@ -30,11 +30,13 @@ __all__ = [
     "ChunkAIResult",
     "MaterialAIResult",
     "SummaryZhResult",
+    "KpZhResult",
     "GlossaryEntry",
     "CourseOverviewResult",
     "parse_structured_response",
     "parse_material_response",
     "parse_summary_zh_response",
+    "parse_kp_zh_response",
     "parse_glossary_response",
     "parse_course_overview_response",
     "candidate_to_dict",
@@ -53,6 +55,12 @@ MAX_SUMMARY_ZH_CHARS = 6000
 MAX_GLOSSARY_TERM_CHARS = 120
 MAX_GLOSSARY_ZH_CHARS = 20
 MAX_COURSE_OVERVIEW_CHARS = 6000
+#: TASK-79 知识点级中文解释的输出预算。
+#: 200 个中文字对应 prompt 里"一句话能背下来"的要求; 硬上限是第二道保险
+#: —— 模型即使无视 prompt 里的长度要求, 也不能把一张卡片变成一整页。
+MAX_KP_ZH_CHARS = 200
+MAX_KP_ZH_TERM_CHARS = 120
+MAX_KP_ZH_TERMS = 8
 
 
 def _as_str(value: Any, default: str = "") -> str:
@@ -147,6 +155,28 @@ class SummaryZhResult:
         return {
             "summary_zh": self.summary_zh,
             "topics_zh": list(self.topics_zh),
+        }
+
+
+@dataclass
+class KpZhResult:
+    """The on-demand Chinese explanation layer of a single knowledge point.
+
+    ``terms_zh`` shares the glossary card shape on purpose: one renderer
+    serves both the material-level glossary and the knowledge-point one, and
+    a term that cannot be found verbatim in the knowledge point never
+    reaches either (see ``validators.ground_kp_zh``).
+    """
+
+    translation_zh: str = ""
+    terms_zh: list[GlossaryEntry] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "translation_zh": self.translation_zh,
+            "terms_zh": [entry.to_dict() for entry in self.terms_zh],
+            "evidence_refs": list(self.evidence_refs),
         }
 
 
@@ -392,6 +422,86 @@ def parse_summary_zh_response(
         SummaryZhResult(
             summary_zh=summary[:MAX_SUMMARY_ZH_CHARS],
             topics_zh=topic_values,
+        ),
+        None,
+    )
+
+
+def parse_kp_zh_response(
+    text: str,
+    *,
+    allowed_evidence_ids: Optional[Sequence[str]] = None,
+) -> tuple[Optional[KpZhResult], Optional[str]]:
+    """Parse the strict knowledge-point Chinese explanation response.
+
+    Shape checking only.  Whether a term really appears in the knowledge
+    point is a *semantic* question answered by ``validators.ground_kp_zh``,
+    which needs the source text; keeping the two apart means this parser
+    stays a pure function of the model's output.
+    """
+    raw = _decode_json_object(text)
+    if raw is None or "translation_zh" not in raw or "terms_zh" not in raw:
+        return None, MALFORMED_ERROR
+    translation = raw.get("translation_zh")
+    terms = raw.get("terms_zh")
+    if not isinstance(translation, str) or not isinstance(terms, (list, tuple)):
+        return None, MALFORMED_ERROR
+    translation = translation.strip()
+    if not translation:
+        return None, MALFORMED_ERROR
+    allowed = {str(value) for value in (allowed_evidence_ids or []) if str(value)}
+    entries: list[GlossaryEntry] = []
+    for item in terms[:MAX_KP_ZH_TERMS]:
+        if not isinstance(item, Mapping):
+            return None, MALFORMED_ERROR
+        term = item.get("term")
+        lang = item.get("lang")
+        zh = item.get("zh")
+        if not isinstance(term, str) or not isinstance(zh, str):
+            return None, MALFORMED_ERROR
+        term = term.strip()
+        zh = zh.strip()
+        if not term or not zh:
+            return None, MALFORMED_ERROR
+        refs = item.get("evidence_refs", item.get("evidence_ids")) or []
+        if not isinstance(refs, (list, tuple)):
+            return None, MALFORMED_ERROR
+        clean_refs: list[str] = []
+        for ref in refs:
+            if not isinstance(ref, str) or not ref.strip():
+                return None, MALFORMED_ERROR
+            value = ref.strip()
+            # The model may only echo evidence IDs this knowledge point owns.
+            if allowed and value not in allowed:
+                return None, MALFORMED_ERROR
+            if value not in clean_refs:
+                clean_refs.append(value)
+        entries.append(
+            GlossaryEntry(
+                term=term[:MAX_KP_ZH_TERM_CHARS],
+                lang=(str(lang).strip() if isinstance(lang, str) else "")[:8],
+                zh=zh[:MAX_GLOSSARY_ZH_CHARS],
+                evidence_refs=clean_refs,
+                evidence_ids=list(clean_refs),
+            )
+        )
+    top_refs = raw.get("evidence_refs") or []
+    if not isinstance(top_refs, (list, tuple)):
+        return None, MALFORMED_ERROR
+    evidence_refs: list[str] = []
+    for ref in top_refs:
+        if not isinstance(ref, str) or not ref.strip():
+            return None, MALFORMED_ERROR
+        value = ref.strip()
+        if allowed and value not in allowed:
+            return None, MALFORMED_ERROR
+        if value not in evidence_refs:
+            evidence_refs.append(value)
+    return (
+        KpZhResult(
+            translation_zh=translation[:MAX_KP_ZH_CHARS],
+            terms_zh=entries,
+            evidence_refs=evidence_refs,
         ),
         None,
     )

@@ -554,6 +554,97 @@ function noStudentsCard() {
     '<a href="#/courses">' + esc(t('nav.myCourses')) + '</a></p>';
 }
 
+// ---- 中文学习层 (材料页与知识点详情页共用, TASK-79) ------------------
+//
+// 为什么这两个渲染器住在 app.js 而不是某一个 views/*.js
+// --------------------------------------------------
+// 中文解释与术语表现在有**两处**消费者: 材料页 (``#/materials`` 的 AI
+// 面板) 与知识点详情页 (``#/courses/<id>/knowledge/<kp>`` 的中文卡), 而
+// flashcards 页复用术语表。它们的卡结构必须一致 —— 同一份中文, 在两页看到
+// 不同的表头、不同的空态文案、不同的截断口径, 用户只会以为其中一页坏了。
+//
+// 所以一份源码放 app.js (它先于所有 views/*.js 加载, 顺序无争议), 两页
+// 只传数据形状, 不各自实现表头。
+
+/**
+ * 术语表本体 (``<table>``)。数据源不同、卡壳不同, 但**每一行**都必须
+ * 逐字渲染: term 是西语/加泰语原文, 永远不做任何改写或转写。
+ */
+function renderGlossaryTable(entries) {
+  const rows = (entries || []).map((entry) => {
+    const ids = Array.isArray(entry.evidence_ids) ? entry.evidence_ids :
+      (Array.isArray(entry.evidence_refs) ? entry.evidence_refs : []);
+    return '<tr><td class="break-all">' + esc(entry.term || '') + '</td>' +
+      '<td>' + esc(entry.lang || '—') + '</td>' +
+      '<td>' + esc(entry.zh || '') + '</td>' +
+      '<td class="num">' + esc(ids.length) + '</td></tr>';
+  }).join('');
+  return '<table class="data">' + tableCaption(t('ai.glossaryTitle')) +
+    '<thead><tr><th scope="col">' +
+    esc(t('ai.glossaryTerm')) + '</th><th scope="col">' +
+    esc(t('ai.glossaryLanguage')) + '</th><th scope="col">' +
+    esc(t('ai.glossaryTranslation')) + '</th><th scope="col" class="num">' +
+    esc(t('ai.glossaryEvidence')) + '</th></tr></thead><tbody>' +
+    rows + '</tbody></table>';
+}
+
+/**
+ * 术语卡。``report`` 可以是材料报告 (``glossary`` / ``glossary_total`` /
+ * ``glossary_complete``), 也可以是知识点术语表 (``glossary`` /
+ * ``glossary_total``, 无分页 —— 后端已返回该知识点全部条目)。
+ *
+ * ``showAllTotal`` 非 0 时才画“展开全部”: 知识点页没有分页, 画一个点了
+ * 也拿不到更多东西的按钮, 就是一个骗人的控件。
+ */
+function renderGlossaryCard(report, showAllTotal) {
+  const data = report || {};
+  const entries = Array.isArray(data.glossary) ? data.glossary : [];
+  const total = Number(data.glossary_total === undefined ? entries.length : data.glossary_total);
+  const complete = data.glossary_complete === true || entries.length >= total;
+  const visible = complete ? entries : entries.slice(0, 20);
+  let body = '';
+  if (!visible.length) {
+    body = '<p class="small muted">' + esc(t('ai.noGlossary')) + '</p>';
+  } else {
+    body = renderGlossaryTable(visible);
+    if (!complete && total > entries.length) {
+      body += '<p class="tiny muted">' + esc(t('ai.glossaryTruncated')) + '</p>' +
+        '<button type="button" class="small" data-action="show-all-glossary"' +
+        ' data-total="' + esc(String(total)) + '">' + esc(t('ai.showAll')) + '</button>';
+    }
+  }
+  if (showAllTotal && total) {
+    body += '<p class="tiny muted">' + esc(t('kpZh.termsCount')) + ' ' +
+      esc(String(total)) + '</p>';
+  }
+  return '<div class="card"><div class="card-head"><h2>' +
+    esc(t('ai.glossaryTitle')) + '</h2><span class="small muted">' +
+    esc(String(total)) + '</span></div>' + body + '</div>';
+}
+
+/**
+ * 中文解释层的**整句解释**卡。
+ *
+ * 这是“中文仅为解释层”的落地面: 它永远画在原文之后或之内, 并带一条
+ * 固定声明 —— 原文才是真相, 中文是帮助理解的第二层。
+ */
+function renderTranslationZhCard(report, opts) {
+  const data = report || {};
+  const options = opts || {};
+  const text = String(data.translation_zh || '');
+  const body = text
+    ? '<p class="small">' + esc(text) + '</p>'
+    : '<p class="small muted">' + esc(t('kpZh.empty')) + '</p>';
+  const actions = options.button
+    ? '<div class="actions">' + options.button + '</div>'
+    : '';
+  return '<div class="card"><div class="card-head"><h2>' +
+    esc(t('kpZh.title')) + '</h2>' +
+    (options.meta ? '<span class="tiny muted">' + esc(options.meta) + '</span>' : '') +
+    '</div>' + body + actions +
+    '<p class="tiny muted">' + esc(t('kpZh.disclaimer')) + '</p></div>';
+}
+
 function sourceLocation(source) {
   if (!source) return '—';
   const parts = [];
@@ -1392,7 +1483,15 @@ document.addEventListener('click', (event) => {
   else if (action === 'review-reject') actionReview(courseId, knowledgeId, 'reject', target);
   else if (action === 'review-keep') actionReview(courseId, knowledgeId, 'keep', target);
   else if (action === 'review-resolve') actionReview(courseId, knowledgeId, 'resolve', target);
-  else if (action === 'create-flashcard') {
+  else if (action === 'kp-translate') {
+    // TASK-79: 按需翻译。幂等 (后端命中缓存不再调 LLM), 失败可重试, 且
+    // 无论成败都不改原文与证据 —— 所以这里不做任何本地回滚。
+    actionTranslateKp(courseId, knowledgeId, target);
+  } else if (action === 'kp-backfill') {
+    // TASK-81 §A2: 批量补翻。同样的幂等口径, 只是把范围从一条换成整门课;
+    // 任务坞占位, 页面不等它。
+    actionBackfillKpTranslations(courseId, target);
+  } else if (action === 'create-flashcard') {
     actionCreateFlashcard(courseId, knowledgeId, target);
   } else if (action === 'review-flashcard') {
     actionReviewFlashcard(

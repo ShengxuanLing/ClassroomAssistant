@@ -289,6 +289,9 @@ function aiAutoLine(ai) {
   return '<span class="tiny muted">' + esc(t('ai.notAnalyzed')) + '</span>';
 }
 
+// 中文总结与术语表的渲染器已移到 app.js (TASK-79): 材料页与知识点详情页
+// 共用同一份卡结构, 避免两处各自漂移出不同的表头与空态文案。
+
 function renderAiSummaryZh(report) {
   const summary = String(report.summary_zh || '');
   const topics = Array.isArray(report.topics_zh) ? report.topics_zh : [];
@@ -305,41 +308,6 @@ function renderAiSummaryZh(report) {
   }
   return '<div class="card"><div class="card-head"><h2>' +
     esc(t('ai.summaryZhTitle')) + '</h2></div>' + body + '</div>';
-}
-
-function renderAiGlossary(report) {
-  const entries = Array.isArray(report.glossary) ? report.glossary : [];
-  const total = Number(report.glossary_total === undefined ? entries.length : report.glossary_total);
-  const complete = report.glossary_complete === true || entries.length >= total;
-  const visible = complete ? entries : entries.slice(0, 20);
-  let body = '';
-  if (!visible.length) {
-    body = '<p class="small muted">' + esc(t('ai.noGlossary')) + '</p>';
-  } else {
-    const rows = visible.map((entry) => {
-      const ids = Array.isArray(entry.evidence_ids) ? entry.evidence_ids :
-        (Array.isArray(entry.evidence_refs) ? entry.evidence_refs : []);
-      return '<tr><td class="break-all">' + esc(entry.term || '') + '</td>' +
-        '<td>' + esc(entry.lang || '—') + '</td>' +
-        '<td>' + esc(entry.zh || '') + '</td>' +
-        '<td class="num">' + esc(ids.length) + '</td></tr>';
-    }).join('');
-    body = '<table class="data">' + tableCaption(t('ai.glossaryTitle')) +
-      '<thead><tr><th scope="col">' +
-      esc(t('ai.glossaryTerm')) + '</th><th scope="col">' +
-      esc(t('ai.glossaryLanguage')) + '</th><th scope="col">' +
-      esc(t('ai.glossaryTranslation')) + '</th><th scope="col" class="num">' +
-      esc(t('ai.glossaryEvidence')) + '</th></tr></thead><tbody>' +
-      rows + '</tbody></table>';
-    if (!complete && total > entries.length) {
-      body += '<p class="tiny muted">' + esc(t('ai.glossaryTruncated')) + '</p>' +
-        '<button type="button" class="small" data-action="show-all-glossary"' +
-        ' data-total="' + esc(String(total)) + '">' + esc(t('ai.showAll')) + '</button>';
-    }
-  }
-  return '<div class="card"><div class="card-head"><h2>' +
-    esc(t('ai.glossaryTitle')) + '</h2><span class="small muted">' +
-    esc(String(total)) + '</span></div>' + body + '</div>';
 }
 
 async function actionShowAllGlossary(button, courseId, materialId) {
@@ -419,7 +387,7 @@ function renderAiReport(report) {
     ' · prompt ' + esc(report.prompt_version || '') + '</p></div>';
   // Derived layers are separate cards so a missing translation/glossary never
   // hides the original-language report above.
-  return html + renderAiSummaryZh(report) + renderAiGlossary(report);
+  return html + renderAiSummaryZh(report) + renderGlossaryCard(report);
 }
 
 async function loadAiSummaryIntoPanel(courseId, materialId) {
