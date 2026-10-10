@@ -7,6 +7,7 @@ import pytest
 
 from src.models import Flashcard
 from src.scheduling.fsrs import (
+    DeterministicFSRSBackend,
     FSRSScheduler,
     Rating,
     ReviewUpdate,
@@ -32,7 +33,8 @@ def _card(**overrides):
 
 
 def test_new_card_defaults_are_close_to_sm2_not_an_anki_interval():
-    scheduler = FSRSScheduler(clock=lambda: NOW)
+    scheduler = FSRSScheduler(
+        clock=lambda: NOW, backend=DeterministicFSRSBackend())
     good = scheduler.review(_card(), Rating.GOOD, reviewed_at=NOW)
     hard = scheduler.review(_card(), Rating.HARD, reviewed_at=NOW)
     easy = scheduler.review(_card(), Rating.EASY, reviewed_at=NOW)

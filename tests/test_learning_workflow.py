@@ -1158,9 +1158,10 @@ class TestResume:
         """真子进程启动 -> 读同一个数据目录, 结果必须一致。"""
         data_dir = str(tmp_path / "data")
         cid, sid, kp_id, _ = _seed_dir(data_dir)
+        repo_root = str(Path(__file__).resolve().parents[1])
         script = (
             "import json, sys\n"
-            "sys.path.insert(0, r'D:/Project/Clases')\n"
+            f"sys.path.insert(0, r'{repo_root}')\n"
             "from src.application.workspace import Workspace\n"
             f"ws = Workspace(r'{data_dir}')\n"
             f"row = ws.learning_workflow_start('{cid}', '{sid}')\n"
@@ -1175,7 +1176,7 @@ class TestResume:
             capture_output=True,
             text=True,
             timeout=120,
-            cwd="D:/Project/Clases",
+            cwd=repo_root,
         )
         assert proc.returncode == 0, proc.stderr[-2000:]
         payload = json.loads(proc.stdout.strip().splitlines()[-1])

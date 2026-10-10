@@ -24,7 +24,7 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const PYTHON = path.join(ROOT, 'Python', 'pythoncore-3.14-64', 'python.exe');
+const PYTHON = process.env.CLASSROOM_PYTHON || process.env.PYTHON || 'python';
 const DATA_DIR = path.join(ROOT, 'temp', '_e2e_session_picker_data');
 const PORT = 8766;
 const BASE = 'http://127.0.0.1:' + PORT;

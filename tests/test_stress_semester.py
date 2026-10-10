@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,10 +65,6 @@ from src.application.workspace import Workspace
 from src.backup import BackupService
 
 ROOT = Path(__file__).resolve().parents[1]
-NODE = os.environ.get(
-    "CLASSROOM_NODE",
-    r"C:/Users/Rafae/.workbuddy-ai/binaries/node/versions/22.22.2-2/node.exe",
-)
 UI_STRESS = ROOT / "scripts" / "ui_stress_check.js"
 
 FIXED_TIME = "2026-09-18T09:00:00+00:00"
@@ -127,6 +124,19 @@ TAG_RE = re.compile(r"\((c\d+s\d+m\d+)\)")
 def _student(semester: dict[str, Any], course_id: str, index: int) -> str:
     """这门课第 ``index`` 号合成学生的学号。"""
     return "%s-%03d" % (semester["student_prefix"][course_id], index)
+
+
+def _node_runtime() -> str:
+    candidate = os.environ.get("CLASSROOM_NODE")
+    if candidate and Path(candidate).exists():
+        return candidate
+    for probe in (
+        shutil.which("node"),
+        r"C:/Program Files/nodejs/node.exe",
+    ):
+        if probe and Path(probe).exists():
+            return probe
+    pytest.skip("node runtime not available for UI stress harness")
 
 
 def _note(directory: Path, tag: str, topic_a: int, topic_b: int) -> str:
@@ -1476,7 +1486,7 @@ class TestUiStress:
                 encoding="utf-8",
             )
             proc = subprocess.run(
-                [NODE, str(UI_STRESS), str(config)],
+                [_node_runtime(), str(UI_STRESS), str(config)],
                 capture_output=True,
                 text=True,
                 timeout=300,

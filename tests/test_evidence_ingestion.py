@@ -607,8 +607,20 @@ class TestProvenance:
                 assert ev.source_reference.paragraph is not None
 
     def test_audio_timestamps_preserved(self):
+        from src.asr_provider import MockASRProvider
+
         store = EvidenceStore()
-        svc = EvidenceIngestionService(store)
+        svc = EvidenceIngestionService(
+            store,
+            asr_provider=MockASRProvider(
+                segments=[
+                    {"start": 0.4, "end": 10.0, "text": "uno", "confidence": 0.9},
+                    {"start": 10.0, "end": 20.0, "text": "dos", "confidence": 0.9},
+                    {"start": 20.0, "end": 35.4, "text": "tres", "confidence": 0.9},
+                ],
+                language="Spanish",
+            ),
+        )
         m = Material(
             material_id="a1",
             filename="long_silence_5s.wav",
