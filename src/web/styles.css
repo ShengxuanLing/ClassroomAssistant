@@ -343,6 +343,27 @@ table.data th {
 }
 table.data tbody tr:hover { background: var(--surface-2); }
 table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* 表格单元格里的 .pill 必须能折行。
+ *
+ * .pill 默认 white-space: nowrap (它对"短状态标签"是对的: COMPLETED / 待审核
+ * 不该被拆成两行)。但单元格里也会放**长文本 pill** —— 例如材料页把服务端
+ * 返回的原始诊断串 (``StorageError: ... no such savepoint: sp_2``, 最多 300
+ * 字符) 直接塞进 ``<span class="pill pill-bad">``。
+ *
+ * nowrap 的后果不是"溢出一点点", 而是**整张表塌掉**: 自动表格布局里, 一列的
+ * min-content 等于它最长不可断内容的宽度, 而 nowrap 让 min-content == max-content
+ * ⇒ 那一列独吞整张表 (2026-10-08 实测: 5 列里"状态"占 913px, 其余 4 列各只剩
+ * 31px —— 全是内边距, 表头"文件/类型/状态/课堂"被竖排成单字, 操作列的按钮被挤
+ * 出卡片外)。
+ *
+ * 与 .terms-cell .pill 同一条规则、同一个理由 (那边是 original_terms 装了整句
+ * 材料标题)。区别只在于这里是**所有**数据表: 任何一列都不该因为"某个 pill 很长"
+ * 而毁掉整张表的列宽。 */
+table.data td .pill {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
 /* 窄格里单行截断 + 省略号 (全文走 title 浮层)。max-width:0 是 fixed-layout
    下让 ellipsis 真正生效的关键 —— 没它 td 会按内容撑开, 不触发截断。 */
 table.data td.ellipsis {
@@ -530,14 +551,19 @@ label.field input, label.field select, label.field textarea { width: 100%; }
 }
 .hidden { display: none; }
 
-/* 材料表的补充说明块 (D1 警告 + D4 零证据提示)。
+/* 材料表的补充说明块 (D1 警告 + D4 零证据提示 + 摄取错误码 + AI 失败诊断)。
  *
  * 结构: 说明**不再**塞进 "状态" 格, 而是自成一个 `tr.material-note`
- * (colspan=3) 挂在对应材料行的下面。原因: 这张表是 table-layout: fixed,
+ * (colspan) 挂在对应材料行的下面。原因: 概览卡那张表是 table-layout: fixed,
  * 状态列被钉死在 160px, 而这段说明约 150 字符 —— 在 160px 里要折 5~8 行,
  * 把整行撑成一根细长条。占满卡宽后只折 1~2 行。
- * 材料页 / 课程页用的是非 fixed 表格 (列宽自动分配), 不受此影响, 那边仍
- * 沿用原来的行内写法。*/
+ *
+ * 2026-10-08 起**材料页也走同一条路** (colspan=5)。那张表是自动布局, 原本
+ * 以为"状态列会自己变宽"所以免疫; 但 `analysis.error_message` 是**没有长度
+ * 上界**的服务端诊断串, 它把"状态"列的 max-content 撑到吃掉整张表 ——
+ * 实测 1030px 的表里状态列占 647px, 其余四列只剩 66~82px (文件名被折成
+ * "clase-"/"03.mp3")。自动布局不免疫, 它只是把伤害从"状态列太窄"换成了
+ * "别的列太窄"。现在两处都只把短标签留在状态格里。*/
 .material-detail {
   margin-top: 5px;
   font-size: 12px;
@@ -663,6 +689,13 @@ table.data tbody tr.material-note:hover > td { background: var(--surface-2); }
 }
 
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* 无障碍可见的表格标题。``tableCaption()`` 渲染的是 ``<caption>``, 它在
+   视觉上重复表头, 所以只给读屏器留高度, 不抢视觉。 */
+.caption {
+  caption-side: top; text-align: left; padding: 0 0 6px;
+  font-size: 13px; color: var(--text-muted);
+}
 
 .toast {
   position: fixed; right: 18px; bottom: 18px; z-index: 60;
@@ -813,3 +846,65 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
 
 .learn-next { border-left: 3px solid var(--accent); padding-left: 10px; margin-top: 10px; }
 .learn-next p { margin: 0 0 6px; }
+
+/* ---- TASK-7~13: 课程知识地图 ---------------------------------------------
+ *
+ * 三栏: 左工具条 / 中画布 / 右详情面板。
+ * 画布高度用 clamp 而不是固定像素 —— 在 13" 笔记本上固定 720px 会让整页
+ * 出现第二条滚动条, 而在 27" 屏上又浪费一半空间。
+ */
+
+.km-toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin: 12px 0;
+}
+.km-toolbar input[type="search"] { min-width: 220px; flex: 1 1 220px; }
+
+.km-tab {
+  border: 1px solid var(--border-strong); background: var(--surface);
+  color: var(--text); border-radius: var(--radius-sm, 6px);
+  padding: 6px 14px; cursor: pointer;
+}
+.km-tab.is-active {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  font-weight: 600;
+}
+
+.km-banner {
+  border-left: 3px solid var(--warn); background: var(--warn-soft);
+  color: var(--text); padding: 8px 12px; border-radius: 0 6px 6px 0;
+  font-size: 13px;
+}
+
+.km-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px;
+  align-items: start;
+}
+/* 画布那一列: 不给它 min-width:0, 长节点标题就会把 grid 列擑宽, 详情面板
+   被挤出视口。 */
+.km-main { min-width: 0; }
+@media (max-width: 980px) {
+  /* 窄屏下详情面板落到画布下方, 而不是把画布挤成一条缝。 */
+  .km-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+.km-stage {
+  position: relative;
+  height: clamp(420px, 68vh, 820px);
+  border: 1px solid var(--border); border-radius: var(--radius-sm, 6px);
+  background: var(--bg); overflow: hidden;
+  /* 拖动时明确告诉用户"正在平移", 否则鼠标移出边界就抓不回来了。 */
+  cursor: grab; touch-action: none;
+}
+.km-stage.is-panning { cursor: grabbing; }
+.km-stage svg { display: block; width: 100%; height: 100%; }
+
+.km-node { cursor: pointer; }
+.km-node:hover rect { stroke: var(--accent); }
+.km-node:focus { outline: none; }
+.km-node:focus rect { stroke: var(--accent); stroke-width: 2.5; }
+.km-node.is-focus rect { filter: drop-shadow(0 0 4px var(--accent-soft)); }
+
+.km-node-title {
+  font-size: 13px; font-weight: 600; fill: var(--text);
+}
