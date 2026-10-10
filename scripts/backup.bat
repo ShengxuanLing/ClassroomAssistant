@@ -15,7 +15,7 @@ cd /d "%~dp0.."
 if "%~1"=="restore" (
   set "TARGET=%~2"
   if "%TARGET%"=="" set "TARGET=classroom-data-restored"
-  "%PYTHON%" -c "import glob,os; from src.backup import restore_backup; z=sorted(glob.glob(os.path.join('classroom-data','back*','*.zip')), key=os.path.getmtime)[-1]; o=restore_backup(z, '!TARGET!'); print('restored from:', z); print('restored to:', o)" %*
+  "%PYTHON%" -c "import glob,os; from src.backup import restore_backup; z=sorted(glob.glob(os.path.join('classroom-data','backups','backup-*.zip')))[-1]; o=restore_backup(z, '!TARGET!'); print('restored from:', z); print('restored to:', o)" %*
   goto :eof
 )
 if "%~1"=="list" (
