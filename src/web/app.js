@@ -1569,6 +1569,11 @@ async function route() {
     else if (parts[0] === 'courses' && parts.length === 4 && parts[2] === 'knowledge') {
       await pageKnowledgeDetail(parts[1], parts[3]);
     }
+
+    // ---- TASK-KM-PREMIUM-EXECUTION: Knowledge Map Premium 探索页 ----
+    else if (parts[0] === 'courses' && parts.length === 3 && parts[2] === 'knowledge-map') {
+      await pageKnowledgeMap(parts[1]);
+    }
     // 练习页的学生段是**可选**的 (``#/courses/<c>/exercises/<e>`` 与
     // ``#/courses/<c>/exercises/<e>/<sid>`` 都在用), 所以这条接受 4 与 5。
     else if (parts[0] === 'courses' && (parts.length === 4 || parts.length === 5) &&
@@ -1602,3 +1607,4 @@ window.addEventListener('DOMContentLoaded', () => {
   restoreTaskDock();
   route();
 });
+

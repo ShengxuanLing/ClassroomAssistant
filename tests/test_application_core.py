@@ -29,6 +29,30 @@ from src.models import Course, Material
 # ----------------------------------------------------------------------
 
 
+def test_workspace_learning_flush_annotations_are_resolvable():
+    from typing import Iterable, Optional, get_type_hints
+
+    from src.application.workspace import Workspace
+
+    hints = get_type_hints(Workspace._flush_learning)
+    for name in ("student_ids", "exercise_ids", "answer_ids"):
+        assert hints[name] == Optional[Iterable[str]]
+
+
+def test_processing_structure_annotations_match_domain_type():
+    from typing import Optional, get_type_hints
+
+    from src.application.processing_service import ClassroomProcessingService
+    from src.knowledge_structure import KnowledgeStructure
+
+    assert get_type_hints(ClassroomProcessingService.structure.fget)["return"] == (
+        Optional[KnowledgeStructure]
+    )
+    assert get_type_hints(ClassroomProcessingService.restore_structure)["structure"] == (
+        KnowledgeStructure
+    )
+
+
 def test_create_course_returns_deterministic_id():
     cs = CourseService()
     c1 = cs.create_course("Algebra", code="ALG")

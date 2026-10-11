@@ -1329,6 +1329,33 @@ class TestI18nTables:
                     expanded.update(prefix + s for s in suffixes)
         return expanded, prefixes
 
+    @pytest.mark.parametrize(
+        ("table_name", "lang"),
+        [("I18N", "zh"), ("I18N", "es"), ("I18N", "ca"),
+         ("TRANSLATIONS", "es"), ("TRANSLATIONS", "ca")],
+    )
+    def test_translation_tables_have_no_duplicate_keys(self, table_name, lang):
+        source = read_asset("app.js")
+        start = source.index(f"const {table_name} = {{")
+        end = source.index("\n};", start)
+        block = source[start:end]
+        s = block.index(f"  {lang}: {{")
+        e = block.index("\n  },", s)
+        body = block[s:e]
+        if table_name == "I18N":
+            keys = re.findall(r"'([A-Za-z0-9_.]+)'\s*:", body)
+        else:
+            keys = [
+                match.group(1).replace("\\'", "'").replace("\\\\", "\\")
+                for match in re.finditer(r"^\s*'((?:[^'\\]|\\.)*)'\s*:", body, re.M)
+            ]
+        assert keys, f"{table_name}.{lang} 未解析出任何键"
+        unique_keys = set(keys)
+        duplicates = sorted(key for key in unique_keys if keys.count(key) > 1)
+        assert len(keys) == len(unique_keys), (
+            f"{table_name}.{lang} 有重复键: {duplicates}"
+        )
+
     def test_all_three_tables_have_identical_keys(self):
         _, tables = self._tables()
         assert tables["zh"] == tables["es"] == tables["ca"]

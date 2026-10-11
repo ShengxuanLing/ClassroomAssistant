@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Optional, cast
 
 from src.application.data_dirs import (
     atomic_write_bytes,
@@ -23,10 +23,7 @@ from src.application.data_dirs import (
 )
 from src.application.errors import (
     ERROR_CODES,
-    ApplicationError,
     InvalidInputError,
-    NotFoundError,
-    UnsupportedError,
 )
 from src.application.workspace import Workspace
 from src.api.responses import ApiResponse, failure, success
@@ -112,7 +109,8 @@ def build_router(workspace: Workspace) -> Router:
         body = request.json_body()
         before = {c["course_id"] for c in workspace.list_courses()}
         dto = workspace.create_course(
-            name=body.get("name"),
+            # CourseService validates the raw value; do not stringify missing input.
+            name=cast(str, body.get("name")),
             code=body.get("code", "") or "",
             language=body.get("language"),
             metadata=body.get("metadata"),
@@ -311,24 +309,23 @@ def build_router(workspace: Workspace) -> Router:
                 language=language,
                 filename=safe_name,
             )
+            if record["processing_status"] == "FAILED":
+                rejection = str(record.get("error") or "INVALID_INPUT")
+                code = _REJECTION_CODES.get(rejection, ERROR_CODES.INVALID_INPUT.value)
+                status = 415 if rejection == "UNSUPPORTED_EXTENSION" else None
+                return failure(
+                    code,
+                    f"material rejected: {rejection}",
+                    status=status,
+                    detail={"error": rejection, "filename": record["filename"]},
+                )
+            return success(record, status=200 if record.get("duplicate") else 201)
         finally:
             # 暂存副本绝不保留 (受管副本已由工作流原子复制)。
             try:
                 os.remove(staged)
             except OSError:
                 pass
-
-        if record["processing_status"] == "FAILED":
-            rejection = str(record.get("error") or "INVALID_INPUT")
-            code = _REJECTION_CODES.get(rejection, ERROR_CODES.INVALID_INPUT.value)
-            status = 415 if rejection == "UNSUPPORTED_EXTENSION" else None
-            return failure(
-                code,
-                f"material rejected: {rejection}",
-                status=status,
-                detail={"error": rejection, "filename": record["filename"]},
-            )
-        return success(record, status=200 if record.get("duplicate") else 201)
 
     def get_material(request: Request) -> ApiResponse:
         course_id = request.require_q("course_id")
@@ -477,7 +474,7 @@ def build_router(workspace: Workspace) -> Router:
         session_id = request.params["session_id"]
         # Get course_id from the session
         session = workspace.get_session(session_id)
-        course_id = session.get("course_id") or request.q("course_id")
+        course_id = cast(str, session.get("course_id") or request.q("course_id"))
         from src.application.classroom_view import TimelineFilter, resolve_timeline
 
         filter_params = request.q("filter")
@@ -953,7 +950,7 @@ def build_router(workspace: Workspace) -> Router:
             )
         }
         dto = workspace.create_exercise(
-            course_id, str(exercise_type), str(prompt), list(kp_ids), **extra
+            course_id, str(exercise_type), str(prompt), list(body["knowledge_point_ids"]), **extra
         )
         return success(dto, status=201 if dto["exercise_id"] not in before else 200)
 
@@ -1026,7 +1023,7 @@ def build_router(workspace: Workspace) -> Router:
         if body.get("max_options") is not None:
             kwargs["max_options"] = int(body["max_options"])
         if distractor_pool is not None:
-            kwargs["distractor_pool"] = tuple(str(d) for d in distractor_pool)
+            kwargs["distractor_pool"] = tuple(str(d) for d in body["distractor_pool"])
         if body.get("generator_version"):
             kwargs["generator_version"] = str(body["generator_version"])
         return GenerationConfig(**kwargs)
@@ -1071,12 +1068,12 @@ def build_router(workspace: Workspace) -> Router:
         limit = body.get("limit")
         result = workspace.generate_exercises(
             course_id,
-            knowledge_point_ids=list(kp_ids) if kp_ids else None,
+            knowledge_point_ids=list(body["knowledge_point_ids"]) if kp_ids else None,
             config=_generation_config(
                 {k: v for k, v in body.items()
                  if k not in ("course_id", "knowledge_point_ids", "limit")}
             ),
-            limit=int(limit) if limit is not None else None,
+            limit=int(body["limit"]) if limit is not None else None,
         )
         return success(result)
 

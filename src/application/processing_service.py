@@ -46,6 +46,7 @@ from src.application.material_workflow import (
     RETRYABLE_ERROR_CODES,
 )
 from src.application.runtime import Clock, utc_now_iso
+from src.knowledge_structure import KnowledgeStructure
 
 __all__ = [
     "JOB_QUEUED",
@@ -224,7 +225,7 @@ class ClassroomProcessingService:
         self._clock: Clock = clock or utc_now_iso
         self._max_attempts = max_attempts
         self._jobs: dict[str, ProcessingJob] = {}
-        self._structure: Optional[Any] = None
+        self._structure: Optional[KnowledgeStructure] = None
 
     # ------------------------------------------------------------------
     # 只读属性
@@ -239,11 +240,11 @@ class ClassroomProcessingService:
         return self._store
 
     @property
-    def structure(self) -> Optional[Any]:
+    def structure(self) -> Optional[KnowledgeStructure]:
         """最近一次知识装配产出的 KnowledgeStructure (可能为 None)。"""
         return self._structure
 
-    def restore_structure(self, structure: Any) -> None:
+    def restore_structure(self, structure: KnowledgeStructure) -> None:
         """从持久化状态恢复装配结果 (Task 50)。
 
         恢复的是**领域对象本身** (由 ``KnowledgeStructure.from_dict`` 重建),

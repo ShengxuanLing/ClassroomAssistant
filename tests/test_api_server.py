@@ -356,6 +356,13 @@ class TestCourses:
         assert status == 400
         assert payload["error"]["code"] == "INVALID_INPUT"
 
+    @pytest.mark.parametrize("name", [None, "", "   ", 123, False, [], {}])
+    def test_create_with_invalid_name_is_400(self, client, name):
+        status, payload = client.post("/api/courses", {"name": name})
+        assert status == 400
+        assert payload["error"]["code"] == "INVALID_INPUT"
+        assert client.get("/api/courses")[1]["data"]["courses"] == []
+
     def test_create_with_conflicting_fields_is_409(self, client):
         client.post("/api/courses", {"name": "Calculo", "code": "C1"})
         status, payload = client.post(

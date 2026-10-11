@@ -23,8 +23,8 @@ import json
 import os
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from typing import Any, Iterator, Mapping, Optional, Sequence
+from dataclasses import dataclass
+from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, cast
 
 from src.application.classroom_view import ClassroomWorkspaceView
 from src.application.course_review_view import CourseReviewView
@@ -40,11 +40,9 @@ from src.application.data_dirs import (
     safe_join,
 )
 from src.application.errors import (
-    ConflictError,
     InvalidInputError,
     NotFoundError,
     StorageError,
-    UnsupportedError,
 )
 from src.application.knowledge_service import KnowledgeService, ReviewService
 from src.application.learning_service import LearningService
@@ -1367,7 +1365,7 @@ class Workspace:
         raw = ai.get("knowledge_points_total")
         if raw is not None:
             try:
-                return max(0, int(raw))
+                return max(0, int(ai["knowledge_points_total"]))
             except (TypeError, ValueError):
                 pass
         values: list[Any] = [
@@ -1733,7 +1731,7 @@ class Workspace:
         *,
         validation_status: Optional[str] = None,
         review_status: Optional[str] = None,
-        conflict: Optional[bool] = None,
+        conflict: bool | str | None = None,
         language: Optional[str] = None,
         search: Optional[str] = None,
     ) -> list[dict[str, Any]]:
@@ -3469,6 +3467,7 @@ class Workspace:
             material_id = source.get("material_id")
             material: Optional[dict[str, Any]] = None
             if material_id:
+                material_id = cast(str, material_id)
                 if material_id not in material_cache:
                     try:
                         material_cache[material_id] = ctx.workflow.get_material(material_id)
@@ -3560,7 +3559,7 @@ class Workspace:
         selected: Optional[str] = None
         if course_id is not None and str(course_id).strip():
             selected = str(course_id).strip()
-            ctx = self.context(selected)  # 不存在时抛 NotFoundError
+            self.context(cast(str, selected))  # 不存在时抛 NotFoundError
         elif courses:
             selected = courses[0]["course_id"]
 
@@ -3617,9 +3616,11 @@ class Workspace:
     # 视图本身不落库 —— 它只读, 且不调用任何 ``_flush_*``。
 
     def _classroom_view(self) -> ClassroomWorkspaceView:
-        if self._classroom is None:
-            self._classroom = ClassroomWorkspaceView(self)
-        return self._classroom
+        view = self._classroom
+        if view is None:
+            view = ClassroomWorkspaceView(self)
+            self._classroom = view
+        return view
 
     def course_workspace(self, course_id: str) -> dict[str, Any]:
         """Task 56.1: 一门课的工作台 (课程信息 / 课堂 / 覆盖 / 待审核 / 最近材料)。"""
