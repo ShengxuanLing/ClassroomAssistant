@@ -2847,6 +2847,67 @@ class Workspace:
         return self.context(course_id).knowledge_service.get_course_knowledge(course_id)
 
     # ------------------------------------------------------------------
+    # Knowledge Map Premium (TASK-KM-PREMIUM-EXECUTION): 单一读入口。
+    #
+    # 只读投影, 不写库、不创建 Topic / Relation / Membership。
+    # 空数据语义: topics / memberships / relations / conflicts 为空时
+    # 返回**空数组**, 绝不返回 null 或省略键 —— 前端按"暂无关联证据"
+    # 展示, 而不是按"数据缺失"报错。
+
+    def knowledge_map(self, course_id: str) -> dict[str, Any]:
+        ctx = self.context(course_id)
+        kps = ctx.knowledge_service.get_knowledge_points(course_id=course_id)
+        materials = self.list_materials(course_id)
+        summary = ctx.knowledge_service.get_course_knowledge(course_id)
+        deps = ctx.knowledge_service.get_dependencies(course_id)
+        conflicts = ctx.knowledge_service.get_conflicts(course_id)
+
+        # 每个知识点的 evidence_refs 直接取自 KP 记录, 不再逐个 trace:
+        # 画布需要的是"这个点有多少来源", 而不是每条证据的正文。
+        evidence_counts: dict[str, int] = {}
+        for kp in kps:
+            evidence_counts[str(kp.get("knowledge_id"))] = len(
+                kp.get("evidence_refs") or []
+            )
+
+        # 材料 -> 它支撑哪些知识点 (反向索引)。这是 UI-only 分组的唯一
+        # 合法依据; 它来自 evidence.source.material_id, 不是编造的。
+        material_to_kps: dict[str, list[str]] = {}
+        for kp in kps:
+            kid = str(kp.get("knowledge_id"))
+            for ref in kp.get("evidence_refs") or []:
+                mid = ""
+                if isinstance(ref, dict):
+                    mid = str(ref.get("material_id") or "")
+                else:
+                    mid = str(ref)
+                if mid:
+                    material_to_kps.setdefault(mid, [])
+                    if kid not in material_to_kps[mid]:
+                        material_to_kps[mid].append(kid)
+
+        return {
+            "course_id": course_id,
+            "knowledge_points": kps,
+            "materials": materials,
+            "evidence_counts": evidence_counts,
+            "material_to_knowledge": material_to_kps,
+            "topics": [],
+            "knowledge_memberships": [],
+            "relations": deps.get("outgoing", []) if isinstance(deps, dict) else [],
+            "conflicts": conflicts or [],
+            "stats": {
+                "knowledge_point_count": len(kps),
+                "material_count": len(materials),
+                "evidence_count": sum(evidence_counts.values()),
+                "topic_count": 0,
+                "relation_count": len(deps.get("outgoing", [])) if isinstance(deps, dict) else 0,
+                "conflict_count": len(conflicts or []),
+            },
+            "summary": summary,
+        }
+
+    # ------------------------------------------------------------------
     # Course Review Center (Task 62, 只读投影)
     # ------------------------------------------------------------------
     #

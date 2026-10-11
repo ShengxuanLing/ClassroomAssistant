@@ -717,6 +717,24 @@ def build_router(workspace: Workspace) -> Router:
     router.get("/api/course-knowledge", course_knowledge)
 
     # ------------------------------------------------------------------
+    # Knowledge Map Premium (TASK-KM-PREMIUM-EXECUTION): 单一读入口。
+    #
+    # 为什么需要它: 现有 /knowledge / course-knowledge / trace / materials /
+    # sessions / dependencies / conflicts 各自独立, 前端要拼 6~7 次请求
+    # 才能画出一个可探索的知识画布。这里提供一份**只读投影**, 把
+    # 知识点 + 材料 + Evidence + 关系 + 冲突 + 统计一次返回, 且**不伪造**
+    # 任何不存在的数据 (topics / memberships / relations 为空就返回空数组)。
+    #
+    # 语义边界: 本端点**不创建** Topic / parent-child / Relation; 它只是把
+    # 已存在的事实打包。前端的 UI-only 分组 (按材料 / 按来源) 必须与这份
+    # 返回值明确区分, 不得写回业务层。
+
+    def knowledge_map(request: Request) -> ApiResponse:
+        return success(workspace.knowledge_map(request.params["course_id"]))
+
+    router.get("/api/courses/{course_id}/knowledge-map", knowledge_map)
+
+    # ------------------------------------------------------------------
     # flashcards (evidence-grounded memory cards)
     # ------------------------------------------------------------------
 
