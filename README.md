@@ -53,6 +53,42 @@ pip install -r requirements.txt
 
 首次调用真实 ASR 时，模型会从 Hugging Face 下载到 `~/.cache/huggingface`。
 
+## 可选：开启 AI 语义分析
+
+**不配也能用。** 默认关闭，关了就走本地确定性链路；配了之后，处理材料时会自动
+提炼摘要 / 主题 / 知识点。任何 OpenAI 兼容的服务都行（OpenAI、DeepSeek、Kimi、
+自建网关……），三步：
+
+**1. 复制模板。** 把 `scripts\ai-env.bat.example` 复制一份，改名成 `ai-env.bat`，
+放在同一个 `scripts\` 目录下。
+
+**2. 填上你自己的四行。** 用记事本打开 `scripts\ai-env.bat`，把尖括号占位符整个换掉：
+
+```bat
+set "CLASSROOM_AI_ENABLED=true"
+set "CLASSROOM_AI_API_KEY=你的key"
+set "CLASSROOM_AI_BASE_URL=https://你的网关地址/v1"
+set "CLASSROOM_AI_MODEL=你的模型名"
+```
+
+- 值**不要**带尖括号 —— 模板里的 `<YOUR_API_KEY>` 只是占位提示，要整个替换。
+- `BASE_URL` **必须是 `https://`**，写成 `http://` 启动时会直接报错。
+- 文件里**别加中文注释**：`cmd.exe` 按 ANSI 码页解析批处理，UTF-8 中文可能让脚本执行出错。
+
+**3. 正常启动。** 双击 `scripts\start.bat` 即可，它会自动加载这个文件，不用手工设环境变量。
+
+确认生效：
+
+```bash
+python -m src.application.cli --check     # 输出里应有 ai_enabled = True / ai_mode = 'real'
+```
+
+`scripts\ai-env.bat` 已在 `.gitignore` 里，**不会被提交**，key 不会泄露。改完需要
+**重启**才生效（环境变量只在进程启动时读一次）。
+
+进阶：也可以在仓库根目录建 `.env` 写同样的键（优先级更高）；视觉模型、超时、
+JSON 模式等全部可调项见 [docs/configuration.md](docs/configuration.md) §8。
+
 ## 怎么启动
 
 Windows 下双击即可：
