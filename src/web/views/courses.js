@@ -1150,14 +1150,14 @@ async function pageSession(courseId, sessionId) {
       : emptyState(t('还没有处理任务。上传材料后点击"处理"。'))) +
     '</div>' +
 
-    evidenceCard(t('session.transcript'), data.transcript, t('session.noTranscript'), materials) +
-    evidenceCard(t('session.ocr'), data.ocr, t('session.noOcr'), materials) +
-    evidenceCard(t('session.documents'), data.documents, t('session.noDocuments'), materials) +
+    evidenceCard(t('session.transcript'), data.transcript, t('session.noTranscript')) +
+    evidenceCard(t('session.ocr'), data.ocr, t('session.noOcr')) +
+    evidenceCard(t('session.documents'), data.documents, t('session.noDocuments')) +
 
     '<div class="card"><div class="card-head"><h2>' + t('session.evidence') + ' (' +
     esc((data.evidence || []).length) + ')</h2></div>' +
     ((data.evidence || []).length
-      ? evidenceList(data.evidence, materials)
+      ? evidenceList(data.evidence)
       : emptyState(t('session.noEvidence'))) +
     '</div>' +
 

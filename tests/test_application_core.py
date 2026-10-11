@@ -13,7 +13,6 @@ from __future__ import annotations
 import pytest
 
 from src.application import (
-    AppService,
     CourseService,
     InvalidInputError,
     NotFoundError,
@@ -21,7 +20,6 @@ from src.application import (
     map_application_error,
 )
 from src.application.errors import ApplicationError, ERROR_CODES
-from src.models import Course, Material
 
 
 # ----------------------------------------------------------------------

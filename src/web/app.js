@@ -146,7 +146,7 @@ function zeroEvidenceHint(material) {
   const status = String(record.status || record.processing_status || '').toUpperCase();
   if (status !== 'COMPLETED' && status !== 'SUCCEEDED') return '';
   if (evidenceCountOf(record) !== 0) return '';
-  let detail = '';
+  let detail;
   switch (record.warning) {
     case 'NO_TEXT_EXTRACTED': detail = t('warn.empty.NO_TEXT_EXTRACTED'); break;
     case 'NO_TEXT_DETECTED': detail = t('warn.empty.NO_TEXT_DETECTED'); break;
@@ -602,7 +602,7 @@ function renderGlossaryCard(report, showAllTotal) {
   const total = Number(data.glossary_total === undefined ? entries.length : data.glossary_total);
   const complete = data.glossary_complete === true || entries.length >= total;
   const visible = complete ? entries : entries.slice(0, 20);
-  let body = '';
+  let body;
   if (!visible.length) {
     body = '<p class="small muted">' + esc(t('ai.noGlossary')) + '</p>';
   } else {
@@ -849,7 +849,7 @@ function courseIdentity(course) {
  * ``material`` 为 null 时**必须**显式报 "Traceability broken" —— 断链不能
  * 被渲染成"没有来源"。
  */
-function evidenceList(items, materials) {
+function evidenceList(items) {
   return '<ul class="small">' + (items || []).map((item) => {
     const loc = sourceLocation(item.source);
     return '<li>' + originalBlock(item.content, item.language) +
@@ -864,11 +864,11 @@ function evidenceList(items, materials) {
 }
 
 /** 证据分区卡片 (Transcript / OCR / Documents)。 */
-function evidenceCard(title, items, emptyText, materials) {
+function evidenceCard(title, items, emptyText) {
   const list = items || [];
   return '<div class="card"><div class="card-head"><h2>' + esc(title) + ' (' +
     esc(list.length) + ')</h2></div>' +
-    (list.length ? evidenceList(list, materials) : emptyState(emptyText)) + '</div>';
+    (list.length ? evidenceList(list) : emptyState(emptyText)) + '</div>';
 }
 
 /** 只翻译带 data-i18n 的界面文案, 绝不触碰任何原文内容。 */

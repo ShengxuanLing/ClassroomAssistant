@@ -34,14 +34,12 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from src.application.errors import (
-    ConflictError,
     InvalidInputError,
     NotFoundError,
 )
 from src.application.material_workflow import (
     COMPLETED as MATERIAL_COMPLETED,
     DEFAULT_MAX_ATTEMPTS,
-    FAILED as MATERIAL_FAILED,
     MaterialWorkflowService,
     RETRYABLE_ERROR_CODES,
 )
