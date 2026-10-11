@@ -32,6 +32,44 @@ pip install -r requirements.txt
 并把 `asr_mode` / `ocr_mode` 标成 `"mock"`、在界面上挂显式横幅。**Mock 的输出不是
 转录或识别结果**，只用来验证流程。
 
+### 可选：开启 AI 语义分析（默认关闭）
+
+不开也能跑通完整流程 —— 默认关闭，处理只产出证据（确定性链路，不出网）。开启后，
+处理材料时会**额外**自动提炼摘要 / 主题 / 知识点并落库（细节见 §5）。
+
+任何 OpenAI 兼容的服务都行（OpenAI、DeepSeek、Kimi、自建网关……）。三步：
+
+**1.** 复制模板：把 `scripts\ai-env.bat.example` 复制一份，改名成 `ai-env.bat`，
+放在同一个 `scripts\` 目录下。
+
+**2.** 用记事本打开 `scripts\ai-env.bat`，把四处尖括号占位符整个替换掉：
+
+```bat
+set "CLASSROOM_AI_ENABLED=true"
+set "CLASSROOM_AI_API_KEY=你的key"
+set "CLASSROOM_AI_BASE_URL=https://你的网关地址/v1"
+set "CLASSROOM_AI_MODEL=你的模型名"
+```
+
+- 值**不要**带尖括号（`<YOUR_API_KEY>` 只是占位提示，要整个替换）。
+- `BASE_URL` **必须 `https://`**，写成 `http://` 启动时直接报 `ConfigurationError`。
+- 文件里**别加中文注释**：`cmd.exe` 按 ANSI 码页解析批处理，UTF-8 中文可能让脚本执行出错。
+
+**3.** 照下面的 §2 正常启动即可，`start.bat` 会自动加载这个文件，不用手工设环境变量。
+
+确认生效：
+
+```bash
+python -m src.application.cli --check     # 输出里应有 ai_enabled = True / ai_mode = 'real'
+```
+
+`scripts\ai-env.bat` 已在 `.gitignore` 里，**不会被提交**，key 不会泄露。改完需要
+**重启**才生效（环境变量只在进程启动时读一次）。
+
+进阶：也可以在仓库根目录建 `.env` 写同样的键（优先级更高：进程环境 > `.env` >
+`scripts\ai-env.bat`）；视觉模型、超时、JSON 模式等全部可调项见
+[configuration.md](configuration.md) §8。
+
 ## 2. 启动
 
 ```text
@@ -124,7 +162,11 @@ curl -X POST http://127.0.0.1:8765/api/sessions/<session_id>/process
 （`POST /api/materials/{id}/retry`）。重试只会对**可重试**的失败生效；
 解析失败（文件本身坏了）是非可重试的，重试会被明确拒绝而不是无限重试。
 
-处理产出的是**证据**，不是知识点。查看某个材料的证据：
+处理产出的是**证据**。默认（AI 关闭）知识点要你自己组装；若开启了 §1 的
+「可选：开启 AI 语义分析」，处理会**额外**自动提炼摘要 / 主题 / 知识点并落库 ——
+高置信度自动加入，低置信度与冲突项进待审核队列（§7），失败不污染材料与证据。
+
+查看某个材料的证据：
 
 ```bash
 curl "http://127.0.0.1:8765/api/materials/<material_id>/evidence?course_id=<course_id>"
