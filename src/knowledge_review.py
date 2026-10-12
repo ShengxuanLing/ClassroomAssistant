@@ -121,6 +121,12 @@ class ReviewRecord:
             "decision": self.decision.value,
             "selected_evidence_ids": list(self.selected_evidence_ids),
             "note": self.note,
+            # 2026-10-12: 指纹必须随记录持久化 —— 它是"这一轮决定是在哪个
+            # 上下文做出的"的唯一标记。丢失它, 重启后代次标记消失,
+            # ``get_review_candidates`` 的"新证据 -> 重开新一轮"判据
+            # (``latest_fp and latest_fp != current_fp``) 在新进程里永远走
+            # sticky 分支, 跨重启的重开机制整个不可达 (实测)。
+            "evidence_fingerprint": self.evidence_fingerprint,
         }
 
     @classmethod
@@ -131,6 +137,9 @@ class ReviewRecord:
             decision=data.get("decision", ReviewDecision.KEEP_UNVERIFIED.value),
             selected_evidence_ids=tuple(data.get("selected_evidence_ids", ())),
             note=data.get("note"),
+            # 旧库行没有该键 -> "" (与持久化前的行为一致: 只粘滞不重开),
+            # 新写入的行带真实指纹, 无需迁移。
+            evidence_fingerprint=str(data.get("evidence_fingerprint") or ""),
         )
 
 

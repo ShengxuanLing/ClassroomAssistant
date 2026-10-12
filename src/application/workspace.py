@@ -69,6 +69,7 @@ from src.application.runtime import Clock, utc_now_iso
 from src.application.student_today_view import StudentTodayView
 from src.evidence_ingestion import EvidenceIngestionService
 from src.evidence_store import EvidenceStore
+from src.knowledge_graph import build_knowledge_graph
 from src.knowledge_organization import (
     KnowledgeOrganizationService,
     KnowledgeRelationType,
@@ -2081,8 +2082,14 @@ class Workspace:
         pipeline: Any,
         content_language: Optional[str] = None,
         force: bool = False,
-        timeout_seconds: int = 60,
+        timeout_seconds: Optional[int] = None,
     ) -> dict[str, Any]:
+        # TASK-82: 与 AIAnalysisService.analyze 同一口径 —— 未显式传入时读
+        # ``load_ai_config().timeout_seconds``, 显式参数可覆盖。
+        if timeout_seconds is None:
+            from src.application.ai.config import load_ai_config
+
+            timeout_seconds = load_ai_config().timeout_seconds
         """一条知识点 -> 一条有据可查的中文解释, 写进同一份缓存。
 
         **永不抛异常**: 返回 ``{"knowledge_id", "status", "reason"}``, status
@@ -2943,6 +2950,12 @@ class Workspace:
             "evidence_counts": evidence_counts,
             "material_to_knowledge": material_to_kps,
             "unresolved_evidence_ids": sorted(unresolved_evidence_ids),
+            # 图谱投影 (只读、确定性): 节点/边/未归类概念/未匹配术语。
+            # 关系数据一直存在于知识点正文的 "关联: …" 行里, 这里做的是
+            # EDC 的 Canonicalize 那一步 —— 把自由文本术语解析成图上的边。
+            # 解析不到的不造边, 被 >=2 个知识点引用的物化成 concept 节点
+            # (绝不写进 knowledge_points)。见 src/knowledge_graph.py。
+            "graph": build_knowledge_graph(kps, materials, material_to_kps),
             "topics": [],
             "knowledge_memberships": [],
             "relations": deps.get("outgoing", []) if isinstance(deps, dict) else [],
@@ -3035,7 +3048,15 @@ class Workspace:
     # ------------------------------------------------------------------
 
     def review_candidates(self, course_id: str) -> list[dict[str, Any]]:
-        return self.context(course_id).knowledge_service.get_review_candidates(course_id)
+        """待审队列 —— 走**持有审阅记录**的 ``ReviewService``。
+
+        2026-10-12: 原实现在 ``KnowledgeService`` 侧建了一个不带
+        ``review_records`` 的一次性视图, 于是"新证据指纹不匹配 -> 重开新一轮"
+        的判据 (records[-1].fingerprint) 永远拿不到记录, 指纹重开在队列端点
+        上不可达。审阅记录的持久容器只在 ``ReviewService`` 里, 队列与历史
+        必须同源。
+        """
+        return self.context(course_id).review_service.get_review_candidates(course_id)
 
     def review_history(self, course_id: str, knowledge_id: str) -> list[dict[str, Any]]:
         return self.context(course_id).review_service.get_review_history(knowledge_id)
@@ -3870,11 +3891,49 @@ class Workspace:
         structure = ctx.processing.structure
         if structure is None:
             return
+        self._reconcile_review_status(ctx, structure)
         p.save_knowledge_structure(structure, course_id=course_id)
         # 评审历史属于审核域, 不在知识结构的写入路径上 —— 单独落盘。
         p.save_review_records(
             ctx.review_service.review_records, course_id=course_id
         )
+
+    @staticmethod
+    def _reconcile_review_status(ctx: "CourseContext", structure) -> None:
+        """落盘前把审核当前状态从权威副本同步进持久化载体。
+
+        权威与载体
+        -----------------------------------------------------------------
+        - **权威**: 组织服务注册的 KP 对象 (``org_service._kp_by_id``)。
+          HTTP 读 (``KnowledgeService``) 与审核写 (``ReviewService`` 经
+          ``_kp_view_for_review`` 投影的正是这些对象) 都操作这一份。
+        - **载体**: ``processing.structure``。``_flush_knowledge`` 只写它,
+          重启只从它恢复 —— 本方法存在的全部意义就是让载体永远追平权威。
+
+        为什么必须对账 (2026-10-12 实测缺陷)
+        -----------------------------------------------------------------
+        同一 ``knowledge_id`` 可以存在**两个不同对象**: AI 落库路径
+        ``workflow.register_knowledge_point`` 给组织层建一份,
+        ``_mirror_to_structure`` 又 ``from_dict`` 另建一份进结构。审核决定
+        只改组织层那份, 于是修复前的 flush 把结构里的陈旧 ``pending`` 原样
+        写回 —— 审阅历史照常落盘, 当前状态却在重启后回退 (临时库 + Fake
+        provider + 真实 HTTP confirm + 新进程复现, 见
+        ``tests/test_review_restart_state.py``)。同形状的既往踩坑记录见
+        ``docs/status.md``「写入必须两边都改」。
+
+        只同步 ``review_status`` 一个字段: 它是"权威=组织层"这一裁决的适用
+        范围; 其余字段仍以结构为准 (装配管线是它们的权威), 不顺手"裁决"两
+        副本的其它差异 —— 那超出审核持久化的边界。字段级、幂等、无 SQL,
+        不新增故障点 (仍在同一个 ``_atomic`` 事务里)。
+        """
+        org_kps = ctx.org_service._kp_by_id
+        for kp_id, kp in structure.knowledge_points.items():
+            authoritative = org_kps.get(kp_id)
+            if authoritative is None:
+                continue
+            status = getattr(authoritative, "review_status", None)
+            if status and status != kp.review_status:
+                kp.review_status = status
 
     def _flush_organization(self, course_id: str) -> None:
         """主题 / 归属 / 关系图 (课程隔离)。"""

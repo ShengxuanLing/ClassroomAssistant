@@ -115,6 +115,7 @@ class Runtime:
     ocr_mode: str
     llm_mode: str = "mock"
     ai_mode: str = "disabled"
+    ai_timeout_seconds: int = 60
     notes: tuple[str, ...] = ()
 
     # -- 便于测试用 ``with build_runtime(...) as runtime:`` ----------------
@@ -210,7 +211,7 @@ def _build_summarizer(
     return provider, "real"
 
 
-def _build_ai_provider(notes: list[str]) -> tuple[Any, str]:
+def _build_ai_provider(notes: list[str]) -> tuple[Any, str, Any]:
     """按 ``CLASSROOM_AI_*`` 环境装配 AI 语义理解提供方 (TASK-77 §16)。
 
     返回 ``(provider, ai_mode)``, 其中 ``ai_mode`` 为 ``disabled`` /
@@ -233,7 +234,7 @@ def _build_ai_provider(notes: list[str]) -> tuple[Any, str]:
 
     config = load_ai_config()
     if not config.enabled:
-        return None, "disabled"
+        return None, "disabled", config
     if config.has_credentials:
         from src.application.ai.provider import OpenAICompatibleAIProvider
 
@@ -248,13 +249,13 @@ def _build_ai_provider(notes: list[str]) -> tuple[Any, str]:
             json_mode=config.json_mode,
             allow_image_bytes=config.allow_image_bytes,
         )
-        return provider, "real"
+        return provider, "real", config
     notes.append(
         "CLASSROOM_AI_ENABLED=true but no API key is configured: "
         "using the deterministic FakeAIProvider, so knowledge points are "
         "NOT from a real model"
     )
-    return FakeAIProvider(), "fake"
+    return FakeAIProvider(), "fake", config
 
 
 def build_runtime(
@@ -299,7 +300,7 @@ def build_runtime(
     asr_provider, asr_mode = _build_asr_provider(config, notes)
     ocr_engine, ocr_mode = _build_ocr_engine(config, notes)
     summarizer, resolved_llm_mode = _build_summarizer(config, llm_mode, notes)
-    ai_provider, ai_mode = _build_ai_provider(notes)
+    ai_provider, ai_mode, ai_config = _build_ai_provider(notes)
 
     database = open_database(config.database_path, clock=resolved_clock)
     backup = BackupService(
@@ -354,6 +355,7 @@ def build_runtime(
         ocr_mode=ocr_mode,
         llm_mode=resolved_llm_mode,
         ai_mode=ai_mode,
+        ai_timeout_seconds=ai_config.timeout_seconds,
         notes=tuple(notes),
     )
 
@@ -384,6 +386,7 @@ def describe_runtime(runtime: Runtime) -> dict[str, Any]:
         "llm_model": getattr(runtime.workspace.summarizer, "model", None) or "mock-extractive",
         "ai_mode": runtime.ai_mode,
         "ai_enabled": bool(runtime.workspace.ai_enabled),
+        "ai_timeout_seconds": runtime.ai_timeout_seconds,
         "whisper_model": runtime.config.whisper_model,
         "whisper_device": runtime.config.whisper_device,
         "host": runtime.config.host,

@@ -1,3 +1,15 @@
+## TASK-82 — 接线 AI 超时配置，并让生效配置可见
+
+- **依据**：D1（本项目头号 bug 家族：能力存在但未接线）
+- **改动**
+  - src/application/ai/service.py::AIAnalysisService.analyze：	imeout_seconds 改为从 load_ai_config().timeout_seconds 取值（保留显式参数覆盖）。
+  - src/application/workspace.py::_translate_kp_once 与 _kp_translation_stage：同上。
+  - src/application/bootstrap.py：把 i.timeout_seconds 放进 /api/health 的 data.ai（与 sr_mode / ocr_mode 同一自曝原则）。
+- **验收**
+  - 断言：i_config.timeout_seconds = 120 时，nalyze 实际传下去的是 120（用假 provider 记录入参）。
+  - 断言：/api/health 的 data.ai.timeout_seconds == 120。
+  - **变异**：把硬编码 60 改回去 → 上述两条必须红。
+- **规模** S ｜ **风险** 低
 # Project Status
 
 ## Task 1 completed
@@ -8600,3 +8612,120 @@ scripts/ui_render_check.js       UI RENDER CHECK: OK (314 checks)   不变
 ### 值得记的教训
 
 「按需」和「自动」不是同一个开关，而是**两条路**：`translate_kp` 失败要抛 422 让用户能重试，自动段失败只能记账。两者共用一份缓存身份，所以二刷零成本；但一旦让自动段回走 `translate_kp`，「一次模型抖动 = 整份材料报失败」就回来了。
+
+---
+
+## TASK-105 顶栏「知识点」入口改为「知识地图」（2026-10-12）
+
+### 依据
+
+用户：「把知识地图放在更方便进入的位置 —— 把知识点这个入口直接改成知识地图，
+反正在那个页面也可以切换显示方式。」
+
+这个判断成立，但前提要更正一处：**换入口不能顺手把入口背后的能力丢掉**。旧
+`#/knowledge` 平铺页有三项知识地图页没有的能力（一键补翻 + 费用提示、记忆卡片入口、
+每行「生成卡片」），所以本任务 = 换渲染体 + 换文案 + **把三项能力搬过去**。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `src/web/index.html` | 顶栏那一项文本 `知识点` → `知识地图`；**href 与 data-i18n key 一字未动**（仍是 `#/knowledge` / `nav.knowledge`） |
+| `src/web/i18n.js` | `nav.knowledge` 三语同批：zh `知识地图` / es `Mapa de conocimiento` / ca `Mapa de coneixement`；同时删掉旧平铺页专用的 3 条整句译文 × es/ca（见「额外发现」1） |
+| `src/web/views/knowledge.js` | ① 新增 `kmOpenCourse(courseId)`：取数 + 渲染，**不写顶栏高亮**（归属由调用方声明）② `pageKnowledge` / `pageKnowledgeMap` 变薄壳 ③ `kmPaint()` 页头后插入补翻 actions、副标题追加记忆卡片链接 ④ `kmRenderList()` 行模板加「生成卡片」⑤ 详情页面包屑 `t('知识点')` → `t('km.title')` |
+| `tests/test_student_ui.py` | `COURSE_LABEL_PAGES` 移除 `pageKnowledge`，并**新增等价守卫** `test_the_knowledge_map_heading_goes_through_the_shared_helper`（盯住 `kmPaint` 里的 `courseLabel(KM_STATE.courseId)`）；`esc(courseLabel(courseId))` 阈值 8 → **7**（实测） |
+| `tests/test_web_ui.py` | `UI_PATH_FRAGMENTS` 移除 `/course-knowledge`（前端已无消费者），`CONTRACT` **新增** `GET /api/courses/{course_id}/knowledge-map` —— 后端端点保留并仍有可达性断言 |
+| `scripts/ui_render_check.js` | 主 `ROUTES` 加 knowledge-map 夹具；切课表 `#/knowledge` 那一行改为「请求 + 状态」专用块；`useCourse` 给两门课补夹具 |
+| `scripts/ui_audit.js` | 新增 TASK-105 组（三语文案 / index.html 的 href+key / 落地即知识地图页 / 列表视图逐行卡片按钮 / 两处空态引导入口）；`largeRoutes` 的知识地图夹具跟着 1000 条一起长；大数据量用例改「切列表视图再数」 |
+
+### 为什么 href 不动
+
+`#/knowledge` 是**全局路由**、知识地图是**课程级页面**，但旧 `pageKnowledge()` 本来就有
+`await requireCourse()` —— 把它的结果喂给共享的 `kmOpenCourse()` 即可。
+
+好处是改动面被压到最小：全站 6 个指向 `#/knowledge` 的入口**自动改道**，
+`index.html` 的 href、`test_web_ui.py::test_shell_navigation_*`、
+`test_web_ui_invariants.py::test_every_static_nav_link_is_routable`、
+`test_multi_course.py` 的归属表、`ui_render_check.js` 的 `TOPNAV` 桩全部不用动。
+
+### 验收（实测数字）
+
+```text
+grep -c 'href="#/knowledge"' src/web/index.html     1
+pageKnowledge / pageKnowledgeMap 内 markActiveNav   各 1 次 ('#/knowledge' / '')
+中文顶栏第 6 项                                     知识地图  (es/ca: Mapa de conocimiento / Mapa de coneixement)
+定向 5 文件 (web_ui / web_ui_invariants / student_ui / multi_course / knowledge_map)
+                                                    296 passed / 1 failed (环境)
+i18n 两文件 (test_exercise_ui / test_learning_view)  236 passed
+scripts/ui_render_check.js                          UI RENDER CHECK: OK (316 checks)   ← 314
+scripts/ui_audit.js                                 UI audit OK (629 checks)           ← 613
+```
+
+唯一那条 failed 是本机长期存在的**环境性**失败：`tests/test_student_ui.py::`
+`TestTheLiveSessionPickerEndToEnd::test_the_live_script_passes` —— `scripts/e2e_session_picker.js`
+硬编码的 `Python/pythoncore-3.14-64/python.exe` 不存在（`spawn ENOENT`）。与本次改动无关（任务书 §8.1 已预告）。
+
+### 变异测试（4 条全部精准命中）
+
+| 变异 | 结果 |
+|---|---|
+| `pageKnowledge` 的 `markActiveNav('#/knowledge')` → `''` | `test_the_top_nav_ownership_table_is_exactly_as_declared` **红** |
+| `kmOpenCourse` 的 `kmLoad(courseId)` → `kmLoad('')` | `ui_render_check` **红 8 条**（308/316），含新增的 `#/knowledge …` 全组 |
+| `kmPaint()` 删掉补翻 actions 块 | `ui_audit` **红 2 条**：`the knowledge list offers a one-click Chinese backfill` / `…states its per-point cost` |
+| `index.html` 的 href → `#/knowledge-map` | `test_every_static_nav_link_is_routable` **红** |
+
+### 真机验证（127.0.0.1:8765，真实数据 5 门课 / 467 知识点）
+
+- 顶栏第 6 项 = `知识地图`、`href=#/knowledge`、**高亮在本页**；落地页 `h1=知识地图`、4 个视图按钮可见、
+  默认 `graph`（`aria-pressed=true`）；补翻按钮 + 费用提示、记忆卡片链接都在；旧平铺表不再出现。
+- 列表视图：13 行 / 13 个「生成卡片」按钮（`data-course` + `data-knowledge` 齐备）；换到
+  Gestió de Projectes（61 KP）点其中一个 → **卡片真的建出来**（`GET /api/flashcards` 返回 1 张，
+  `front: "Gobernanza y comunicación"`）。
+- 补翻按钮：点击确实 `POST /api/courses/<id>/kp-translations/backfill`，任务坞出现
+  「完成补翻中文解释 · … 本次新翻: 3 / 3 · 已缓存 0 · 跳过 0 · 失败 0」+ `toast-ok` 报同一计数。
+  **注**：为**不花用户的模型预算**，该请求在浏览器内被拦截后返回固定响应，只验证 UI 契约；
+  真实 provider 路径与「二刷 `translated=0`」的幂等由 `tests/test_kp_translation.py` 覆盖。
+- 计划书点名的那个坑（局部重绘把按钮节点换掉）：请求在飞时切到列表视图 → 旧节点确实脱离文档，
+  **新节点不是 disabled**，结果仍以 toast 报出 —— 用户不会拿到一个死按钮。
+- 三语：切 es → 入口 `Mapa de conocimiento`；切 ca → `Mapa de coneixement`，两次页面内 **CJK 泄漏 0**。
+- 入口逐条点击：详情页面包屑 `知识地图` ✓、概览（单课程 scope）「知识健康度」卡的 `知识点 →` ✓、
+  课堂页「全部 →」 ✓ —— 三处点完都是 `#/knowledge` 且顶栏高亮。另外两处
+  （`#/flashcards` / `#/exercises` 空态）真机上因「该课程有内容 / 没有学生」碰不到，
+  改为在 `ui_audit` 里**把两个空态各渲染一遍**并断言入口在（新增 2 条 check）。
+- 课程页深链 `#/courses/<c>/knowledge-map` 仍可用，顶栏**无高亮**（符合归属表）。
+- 网络面板：`/api/courses/<id>/knowledge-map` 每次 **200**，没有新增失败请求。控制台里的
+  `/api/health` 503（`status: degraded`、`ocr: mock`）与两个 404（KP 无缓存译文 / 课程级 AI 总览
+  缓存未命中）都是既有行为，见任务书 §1.1。
+
+### 额外发现（任务书没列、但必须同步）
+
+1. **`tests/test_exercise_ui.py::TestI18nTables::test_translation_tables_have_no_orphan_entries`**
+   是一条**反向**守卫（译文表里不得留下已被丢弃的 key），任务书 §6 没列它。`pageKnowledge`
+   薄壳化后三条旧平铺页专用译文成了孤儿 ⇒ 该测试变红。按守卫的意图**删掉**这 3 条 × es/ca
+   （不是放宽守卫）：`' · 关系 '`、`' 个 · 主题 '`、`'该课程还没有知识点。上传材料并处理后会生成。'`。
+2. **`tests/test_web_ui.py::TestUiApiContract`** —— `UI_PATH_FRAGMENTS` 里列着 `/course-knowledge`，
+   而这份清单的语义是「前端真的在调的路径」。前端不再调它 ⇒ 移除该片段，并把新页面真正调的
+   `/api/courses/{course_id}/knowledge-map` 加进 `CONTRACT`（`/api/course-knowledge` 的端点与
+   可达性断言原样保留 —— 端点是活的，只是暂时没有消费者）。
+3. **`scripts/ui_audit.js` 的大数据量用例** —— `largeRoutes()` 只给 `/api/knowledge` 配了 1000 条，
+   知识地图夹具还是默认 4 条；而新页面默认视图是 canvas，DOM 里没有知识点标题，
+   `(html(knowledge).match(/kp-\d+/g) || []).length >= 1000` 会直接变 0。修法：夹具跟着 kpCount
+   一起长 + **切到列表视图再数**（与旧平铺表同一语义，不是降级成状态断言）。
+4. **切课表那一行的假红** —— 旧写法用 `TITLE-GP` / `TITLE-GEO` 文本 marker，而知识地图默认图谱
+   视图把标题画在 canvas 上、DOM 里没有文本。按计划书推荐做法（B）给这一页单独写了「请求 + 状态」
+   块（14 条 check），`switchStaysOn()` 本身不动（`#/reviews` / `#/materials` 仍在复用）。
+   旧那一行本来贡献 10 条 check，专用块写到 14 条，`ui_render_check` 的 check 数才回到 314 以上（316）。
+5. `src/web/i18n.js` 的行尾原本是 **CRLF**（与 `.gitattributes` 的 `eol=lf` 不符）。本轮改动后它是
+   LF —— 与 `.gitattributes` 一致；`git diff` 只显示真实内容变化（LF 规范化发生在提交层）。
+
+### 规模 / 风险
+
+- **规模 S**：主战场 1 个前端文件；2 处文案；5 个守卫/审计脚本同步（比计划书列的 4 处多一处）。
+- **风险 低**：无新路由、无新文件、无 i18n 新 key、无后端/数据改动、`href` 未变。回滚就是
+  `git revert`（纯前端）。
+- **未做**（明确记下来，免得下一个人以为漏了）：
+  - `dashboard.js` 的 `知识点 →` 与 `courses.js` 的 `全部 →` **文案保持不动** —— 用户只要求改
+    「入口」，这两处语义仍读得通（任务书 §4.5 处置表 + §7-4）。
+  - 默认视图仍是 `graph`（用户说「反正在那个页面也可以切换显示方式」）。
+  - 真机验证新建的 1 张记忆卡片留在本地库里（`POST /api/flashcards` 无删除端点）：它是本次
+    验收的产物，内容是真实知识点，不影响任何断言。

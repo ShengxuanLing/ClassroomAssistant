@@ -46,6 +46,7 @@ WEB_SOURCE_ORDER = (
     "views/learn.js",
     "views/review.js",
     "views/knowledge.js",
+    "views/knowledge-graph.js",
     "views/flashcards.js",
     "views/materials.js",
     "views/courses.js",

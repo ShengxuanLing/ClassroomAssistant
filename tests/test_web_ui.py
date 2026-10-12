@@ -1027,9 +1027,14 @@ class TestUiApiContract:
     """
 
     #: app.js 中真实出现的路径片段 (从 `api('...')` 字面量提取)。
+    #:
+    #: 2026-10-12 (TASK-105): `/course-knowledge` 从本清单移除 —— 顶栏
+    #: 「知识地图」入口不再渲染旧的平铺表, 前端也就不再调它。后端端点仍然
+    #: 活着 (它的可达性断言在 CONTRACT 里原样保留), 只是暂时没有消费者;
+    #: 同时把知识地图页真正调的投影端点加进 CONTRACT。
     UI_PATH_FRAGMENTS = (
         "/health", "/dashboard", "/courses", "/sessions", "/materials",
-        "/processing", "/knowledge", "/course-knowledge", "/reviews", "/students",
+        "/processing", "/knowledge", "/reviews", "/students",
         # Task 68: 多课程工作台 (总览 / 课程选择 / 单课摘要)。
         "/my-courses", "/course-selection",
     )
@@ -1056,6 +1061,9 @@ class TestUiApiContract:
         ("GET", "/api/knowledge/{knowledge_id}/evidence", True, {200}),
         ("GET", "/api/knowledge/{knowledge_id}/trace", True, {200}),
         ("GET", "/api/course-knowledge", True, {200}),
+        # TASK-105: 知识地图投影 —— 顶栏「知识地图」入口落地页调的就是它
+        # (course_id 走路径段, 所以不需要 query 参数)。
+        ("GET", "/api/courses/{course_id}/knowledge-map", False, {200}),
         ("GET", "/api/reviews", True, {200}),
         ("GET", "/api/reviews/{knowledge_id}", True, {200}),
         ("POST", "/api/reviews/{knowledge_id}/keep-unverified", True, {200}),

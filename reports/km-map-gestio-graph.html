@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识地图（真实图谱 PoC）</title>
+<style>
+  :root{--bg:#101219;--panel:#171a23;--panel2:#1e2230;--line:#2b3145;--fg:#e7eaf3;
+    --muted:#8c95ac;--accent:#6f9bff;--warn:#f2c14b;--bad:#ff6b6b}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font:13px/1.5 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  #app{display:flex;flex-direction:column;height:100%}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header .sub{color:var(--muted);font-size:12px}
+  .badge{border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--muted);font-size:11px}
+  .badge.poc{border-color:#7a5cff;color:#b9a6ff}
+  main{position:relative;flex:1;display:flex;min-height:0}
+  #stage{position:relative;flex:1;min-width:0}
+  canvas{display:block;width:100%;height:100%;cursor:grab}
+  canvas.dragging{cursor:grabbing}
+  aside{width:330px;border-left:1px solid var(--line);background:var(--panel);overflow:auto;
+    padding:12px;flex:none}
+  aside h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 8px}
+  aside h2:first-child{margin-top:0}
+  .stat{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dashed #232839}
+  .stat b{font-weight:600}
+  .stat span{color:var(--muted)}
+  label.row{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;user-select:none}
+  label.row input{accent-color:var(--accent)}
+  .sw{width:10px;height:10px;border-radius:3px;flex:none}
+  .sw.dash{background:transparent;border:1.5px dashed var(--muted)}
+  .toolbar{position:absolute;top:10px;left:10px;display:flex;gap:8px;align-items:center;
+    background:rgba(23,26,35,.92);border:1px solid var(--line);border-radius:10px;padding:7px 9px;
+    backdrop-filter:blur(6px);flex-wrap:wrap;max-width:calc(100% - 20px)}
+  .toolbar input[type=search]{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    border-radius:7px;padding:5px 8px;width:190px;outline:none}
+  .toolbar input[type=search]:focus{border-color:var(--accent)}
+  button{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:7px;
+    padding:5px 10px;cursor:pointer;font-size:12px}
+  button:hover{border-color:var(--accent)}
+  button.on{border-color:var(--accent);color:#cfe0ff}
+  .hint{position:absolute;bottom:10px;left:10px;color:var(--muted);font-size:11px;
+    background:rgba(16,18,25,.88);border:1px solid var(--line);border-radius:8px;padding:6px 9px;
+    max-width:min(720px,calc(100% - 20px))}
+  #tip{position:absolute;pointer-events:none;background:#0b0d13;border:1px solid var(--line);
+    border-radius:8px;padding:7px 9px;font-size:12px;max-width:360px;display:none;z-index:5}
+  #tip .t{font-weight:600;margin-bottom:3px}
+  #tip .m{color:var(--muted);font-size:11px}
+  .legend .item{display:flex;align-items:center;gap:8px;font-size:12px}
+  ul.plain{list-style:none;margin:0;padding:0}
+  ul.plain li{padding:3px 0;border-bottom:1px dashed #232839;color:var(--muted);font-size:11.5px;
+    display:flex;justify-content:space-between;gap:8px}
+  #detail .t{font-weight:600;margin-bottom:6px}
+  #detail .kv{display:flex;gap:6px;font-size:12px;padding:2px 0}
+  #detail .kv span:first-child{color:var(--muted);min-width:64px}
+  .pill{display:inline-block;border-radius:999px;padding:1px 8px;font-size:11px;border:1px solid var(--line)}
+  .pill.ok{border-color:#2f6b4f;color:#5fd39a}
+  .pill.warn{border-color:#6b5a2f;color:var(--warn)}
+  .pill.bad{border-color:#6b2f2f;color:var(--bad)}
+  .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--muted);background:var(--bg);z-index:9}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>知识地图 <span class="badge poc">真实图谱 PoC</span></h1>
+    <span class="sub" id="courseLabel"></span>
+    <span class="badge" id="hdrStats"></span>
+  </header>
+  <main>
+    <div id="stage">
+      <canvas id="cv"></canvas>
+      <div class="toolbar">
+        <input type="search" id="q" placeholder="搜索知识点（重音不敏感）…">
+        <button id="btnFit">适应窗口</button>
+        <button id="btnLinked">只看有关联的点</button>
+        <button id="btnConcepts" class="on">显示未归类概念</button>
+        <button id="btnLabels">显示标签</button>
+      </div>
+      <div class="hint" id="hint"></div>
+      <div id="tip"></div>
+      <div class="loading" id="loading">正在计算布局…</div>
+    </div>
+    <aside>
+      <h2>图规模</h2><div id="stats"></div>
+      <h2>材料</h2><div id="filters" class="legend"></div>
+      <label class="row"><input type="checkbox" id="cbLinked">只看有关联的点</label>
+      <label class="row"><input type="checkbox" id="cbConcepts" checked>显示未归类概念（虚线）</label>
+      <label class="row"><input type="checkbox" id="cbDim" checked>弱化孤立点</label>
+      <h2>选中</h2><div id="detail" style="color:var(--muted)">点击任意节点查看详情</div>
+      <h2>未匹配到知识点的关联术语 <span id="unresCount"></span></h2>
+      <div style="color:var(--muted);font-size:11px;margin-bottom:6px">
+        被 ≥2 个知识点引用者已物化为「未归类概念」节点（虚线）；其余仅列出。</div>
+      <ul class="plain" id="unres"></ul>
+    </aside>
+  </main>
+</div>
+<script>
+const DATA = {"courseId": "course-32dde014868219be", "label": "Gestió de Projectes", "materials": [{"id": "mat-5441e3e176abde8932be3856", "name": "ThreeHorizonsTemplate.pdf"}, {"id": "mat-f7f2766792b36d25582a86f7", "name": "1. Group Work.pdf"}], "nodes": [{"i": 0, "id": "aikp-06d64f6880f7bf61", "t": "Gobernanza y comunicación", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 1, "id": "aikp-0d409c5b5848e98f", "t": "Reglas de evaluación: Nota mínima", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 2, "id": "aikp-10c78979ffbc01f1", "t": "Option 2: Metropolitan Focus", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 2, "e": 1, "k": "kp"}, {"i": 3, "id": "aikp-2912af21d4743867", "t": "Instructor Contact and Identity", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 4, "id": "aikp-2a678a695b87510c", "t": "Gestión de stakeholders y gobernanza", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 5, "id": "aikp-2aa8778126471ff5", "t": "Dashboard de gestión de biblioteca de las cosas", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 6, "id": "aikp-2bcd4e5b234fd2e3", "t": "Formato de entrega: Presentación oral", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 7, "id": "aikp-2dbd96603082bc67", "t": "Proyecto Biblioteca de las cosas del CircuLab", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 8, "id": "aikp-33267eb8952729b3", "t": "Componentes de la propuesta final", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 9, "id": "aikp-354c863b3e431510", "t": "Dashboard con Barcelona Open Data", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 10, "id": "aikp-372c381daeb8b478", "t": "Regla de uso de Inteligencia Artificial", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 11, "id": "aikp-3b8b4ee4a6737dca", "t": "Estudio de residuos de café en UAB", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 12, "id": "aikp-446be60c71030d21", "t": "Objetivos teóricos de gestión urbana", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 4, "e": 1, "k": "kp"}, {"i": 13, "id": "aikp-47aa94482deb0be7", "t": "UAB Campus as Living Laboratory", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 14, "id": "aikp-4a9ffda082ffe15f", "t": "Prototipo o demostrador", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 15, "id": "aikp-4ac2a6fa447dc3e6", "t": "Formatos de entrega final", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 16, "id": "aikp-527713bc09a1cc8a", "t": "Dashboard de carsharing con IA", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 17, "id": "aikp-5331c285ec78cd66", "t": "Prototipo o demostrador", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 2, "e": 1, "k": "kp"}, {"i": 18, "id": "aikp-557bc4a0708a33ed", "t": "Formato de entrega: Prototipo", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 19, "id": "aikp-6ebd6617a0c9225b", "t": "Definición del reto y proyecto", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 20, "id": "aikp-82162bb1f1cc0425", "t": "Two Territorial Scales for Groups", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 21, "id": "aikp-822412e1ae487e71", "t": "UAB Campus Project Sectors", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 22, "id": "aikp-83a8d05caad1466b", "t": "Análisis de costes y riesgos", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 23, "id": "aikp-85357c4db89adb6a", "t": "Herramientas prácticas de gestión", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 24, "id": "aikp-871a9381357c46e8", "t": "Group Work Modalities", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 25, "id": "aikp-8c18607609a723b9", "t": "Coherencia de la propuesta", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 26, "id": "aikp-90543c232b9de672", "t": "Formato de entrega: Propuesta escrita", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 27, "id": "aikp-95b4e9532647d6b7", "t": "Conexión con límites planetarios y economía", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 28, "id": "aikp-992b1f018b7e736b", "t": "Example Sectors for Campus", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 29, "id": "aikp-9c324f507a4d98a3", "t": "Objetivo de proyecto estratégico", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 30, "id": "aikp-a1487c17598fbc9c", "t": "Evaluación de huerto urbano", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 31, "id": "aikp-a4fa01a5367f7496", "t": "Example Sectors for Metropolitan", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 2, "e": 1, "k": "kp"}, {"i": 32, "id": "aikp-a6d83ac4ce3feae2", "t": "Análisis de costes, riesgos e impacto", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 33, "id": "aikp-aac58e791fa2b7d1", "t": "Gestión de proyectos como competencia", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 34, "id": "aikp-abc329470f1d6b29", "t": "Nota mínima de evaluación", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 35, "id": "aikp-adcf24c6960104d5", "t": "Herramientas de gestión de proyectos", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 36, "id": "aikp-b11805d8b498450b", "t": "Criterio de coherencia de la propuesta", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 37, "id": "aikp-b8b449900bb57338", "t": "Dashboard de carsharing no-code", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 38, "id": "aikp-bcbd6cf1afce65d6", "t": "Objetivo general del trabajo en grupo", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 39, "id": "aikp-c1c7970564043d23", "t": "Instructor Academic Qualifications", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 40, "id": "aikp-c2ef89a01bf1473a", "t": "Aprovechamiento de residuos de café", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 2, "e": 1, "k": "kp"}, {"i": 41, "id": "aikp-c32eefbbe835ab83", "t": "Definición del reto y contexto", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 2, "e": 1, "k": "kp"}, {"i": 42, "id": "aikp-c8eb0c291fbb30a7", "t": "Diseño y plan de gestión", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 43, "id": "aikp-cffd9431af1a18ba", "t": "Group Work Session Date", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 44, "id": "aikp-d2e5cf736ab252e8", "t": "Entrega final del proyecto", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 45, "id": "aikp-d729368d3a386cb6", "t": "Barcelona Metropolitan Scale", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 46, "id": "aikp-da5e56cb8d058efe", "t": "Uso de Inteligencia Artificial", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 47, "id": "aikp-db93bb43e4767e8b", "t": "Option 1: UAB Campus Focus", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 3, "e": 1, "k": "kp"}, {"i": 48, "id": "aikp-dc8f855374be7939", "t": "Pregunta del objetivo de proyecto", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 49, "id": "aikp-e2c4d1b7a91986cf", "t": "Propuesta abierta de ideas grupales", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 50, "id": "aikp-e38a6447c162bdf5", "t": "Course Context", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 51, "id": "aikp-e5d433cef5f83f2c", "t": "Group Work Assignment Details", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 52, "id": "aikp-e924572e8bcacaa9", "t": "Dashboard con Barcelona Open Data", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 53, "id": "aikp-ea2f324a2b4fb5af", "t": "Evaluación de huerto urbano en UAB", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 0, "e": 1, "k": "kp"}, {"i": 54, "id": "aikp-faf114c0be71b463", "t": "Metropolitan Project Sectors", "m": 1, "s": "supported", "r": "pending", "g": "ai", "d": 1, "e": 1, "k": "kp"}, {"i": 55, "id": "kp-14c8a69d53330375", "t": "MODALIDADES: DOS ESCALAS TERRITORIALES", "m": 1, "s": "supported", "r": "pending", "g": "det", "d": 0, "e": 1, "k": "kp"}, {"i": 56, "id": "kp-17d9e6730ff9851b", "t": "OBJETIVOS DEL TRABAJO EN GRUPO", "m": 1, "s": "supported", "r": "pending", "g": "det", "d": 0, "e": 1, "k": "kp"}, {"i": 57, "id": "kp-6f08ef74bb6a0131", "t": "GESTIÓN DE PROYECTOS", "m": 1, "s": "supported", "r": "pending", "g": "det", "d": 0, "e": 1, "k": "kp"}, {"i": 58, "id": "kp-7de39684ca65a617", "t": "PRESENTACIÓN FINAL Y EVALUACIÓN", "m": 1, "s": "supported", "r": "pending", "g": "det", "d": 0, "e": 1, "k": "kp"}, {"i": 59, "id": "kp-87cbf3c71f34effa", "t": "EJEMPLOS DE PROYECTO", "m": 1, "s": "supported", "r": "pending", "g": "det", "d": 0, "e": 1, "k": "kp"}, {"i": 60, "id": "kp-cd6dc558772464bd", "t": "PASOS PRINCIPALES DEL PROYECTO FINAL", "m": 1, "s": "supported", "r": "pending", "g": "det", "d": 0, "e": 1, "k": "kp"}, {"i": 61, "id": "concept:componente de la entrega final", "t": "Componente de la entrega final", "m": 1, "s": "unclassified", "r": "", "g": "concept", "d": 3, "e": 0, "k": "concept"}, {"i": 62, "id": "concept:idea de proyecto", "t": "Idea de proyecto", "m": 1, "s": "unclassified", "r": "", "g": "concept", "d": 2, "e": 0, "k": "concept"}, {"i": 63, "id": "concept:objetivos practicos", "t": "Objetivos prácticos", "m": 1, "s": "unclassified", "r": "", "g": "concept", "d": 2, "e": 0, "k": "concept"}, {"i": 64, "id": "concept:sostenibilidad", "t": "Sostenibilidad", "m": 1, "s": "unclassified", "r": "", "g": "concept", "d": 2, "e": 0, "k": "concept"}], "edges": [["aikp-47aa94482deb0be7", "aikp-db93bb43e4767e8b"], ["aikp-527713bc09a1cc8a", "aikp-da5e56cb8d058efe"], ["aikp-4a9ffda082ffe15f", "aikp-5331c285ec78cd66"], ["aikp-6ebd6617a0c9225b", "aikp-c8eb0c291fbb30a7"], ["aikp-871a9381357c46e8", "aikp-db93bb43e4767e8b"], ["aikp-446be60c71030d21", "aikp-95b4e9532647d6b7"], ["aikp-992b1f018b7e736b", "aikp-db93bb43e4767e8b"], ["aikp-10c78979ffbc01f1", "aikp-a4fa01a5367f7496"], ["aikp-446be60c71030d21", "aikp-aac58e791fa2b7d1"], ["aikp-446be60c71030d21", "aikp-c2ef89a01bf1473a"], ["aikp-446be60c71030d21", "aikp-c32eefbbe835ab83"], ["aikp-33267eb8952729b3", "aikp-d2e5cf736ab252e8"], ["aikp-10c78979ffbc01f1", "aikp-d729368d3a386cb6"], ["aikp-a4fa01a5367f7496", "aikp-faf114c0be71b463"], ["aikp-2bcd4e5b234fd2e3", "concept:componente de la entrega final"], ["aikp-557bc4a0708a33ed", "concept:componente de la entrega final"], ["aikp-90543c232b9de672", "concept:componente de la entrega final"], ["aikp-5331c285ec78cd66", "concept:idea de proyecto"], ["aikp-c32eefbbe835ab83", "concept:idea de proyecto"], ["aikp-adcf24c6960104d5", "concept:objetivos practicos"], ["aikp-bcbd6cf1afce65d6", "concept:objetivos practicos"], ["aikp-a1487c17598fbc9c", "concept:sostenibilidad"], ["aikp-c2ef89a01bf1473a", "concept:sostenibilidad"]], "stats": {"kp": 61, "materials": 2, "edges": 23, "concepts": 4, "concept_edges": 9, "term_instances": 73, "linked": 27, "isolated": 34, "cross": 0, "components": 42, "biggest_component": 10, "unresolved_unique": 40}, "unresolved": [["Componente de la entrega final", 3], ["Idea de proyecto", 2], ["Sostenibilidad", 2], ["Objetivos prácticos", 2], ["Criterios de calificación", 1], ["Urban Sustainability", 1], ["Metropolitan Planning", 1], ["course staff", 1], ["Supports Step 2: Estructura organizativa", 1], ["CircuLab", 1], ["Gestión de inventario", 1], ["Relacionado con la gestión de inventario digital en campus", 1], ["Open Data", 1], ["Visualización de datos", 1], ["Restricción metodológica", 1], ["Relacionado con economía circular y upcycling", 1], ["Concrete output of Step 1: Idea de proyecto", 1], ["Requisitos de presentación", 1], ["No-code", 1], ["OPCIÓN 1", 1], ["OPCIÓN 2", 1], ["Option 2 - Barcelona y Área Metropolitana", 1], ["Criterio de evaluación", 1], ["Planificación urbana", 1], ["Integrates with Step 2: Plan de gestión", 1], ["Requisito de calidad del proyecto", 1], ["Relacionado con desarrollo sin código y automatización con IA", 1], ["Objetivos teóricos", 1], ["instructor background", 1], ["Depends on Step 1: Reto e idea de proyecto", 1], ["administrative detail", 1], ["sostenibilidad urbana", 1], ["Política de evaluación", 1], ["Sustainable Campus Development", 1], ["Living Laboratory", 1], ["Futuros urbanos justos", 1], ["Ciudades circulares y regenerativas", 1], ["course identification", 1], ["Relacionado con visualización de datos urbanos", 1], ["Incluye análisis técnico y económico de infraestructuras verdes", 1]]};
+const MAT_COLORS = ["#5b8cff", "#ff9a5b", "#3ecf8e", "#c98bff", "#f2c14b"];
+const STATUS_LABEL = {supported:"已支撑", unverified:"未校验", conflicted:"冲突", unclassified:"未归类概念"};
+const GEN_LABEL = {ai:"AI 总结", det:"版面提取", concept:"未归类概念（原文明示，非知识点）"};
+
+function lcg(seed){ let s = seed >>> 0; return function(){ s = (Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; }; }
+
+const nodes = DATA.nodes, edges = DATA.edges, mats = DATA.materials;
+const N = nodes.length, W = 1200, H = 820;
+const isConcept = nodes.map(n => n.k === "concept");
+const idIndex = new Map(); nodes.forEach((n,i)=>idIndex.set(n.id,i));
+const adjIdx = new Map();
+edges.forEach(([a,b])=>{
+  const ia = idIndex.get(a), ib = idIndex.get(b);
+  if (ia===undefined||ib===undefined) return;
+  if(!adjIdx.has(ia)) adjIdx.set(ia,[]); if(!adjIdx.has(ib)) adjIdx.set(ib,[]);
+  adjIdx.get(ia).push(ib); adjIdx.get(ib).push(ia);
+});
+
+// ---------- layout: per-material lobes (fixed centroids) + per-lobe force ----------
+const rand = lcg(20261012);
+const pos = new Float64Array(N*2), vel = new Float64Array(N*2);
+const lobes = {};
+mats.forEach((m,i)=>{ lobes[i] = { cx: 0, cy: 0, n: 0 }; });
+nodes.forEach((n,i)=>{ const l = lobes[n.m >= 0 ? n.m : 0]; if(l){ l.n++; } });
+const lk = Object.keys(lobes).map(Number);
+const LOBE_R = Math.min(W,H) * 0.30;
+lk.forEach((k, gi) => {
+  const a = (gi / Math.max(1,lk.length)) * Math.PI*2 - Math.PI/2;
+  lobes[k].cx = W/2 + Math.cos(a)*LOBE_R;
+  lobes[k].cy = H/2 + Math.sin(a)*LOBE_R;
+});
+nodes.forEach((n,i)=>{
+  const l = lobes[n.m >= 0 ? n.m : 0] || {cx:W/2, cy:H/2};
+  const a = rand()*Math.PI*2, r = 20 + rand()*Math.min(120, 16*Math.sqrt(Math.max(1,l.n)));
+  pos[i*2] = l.cx + Math.cos(a)*r; pos[i*2+1] = l.cy + Math.sin(a)*r;
+});
+const ITER = N > 260 ? 300 : 460;
+for (let it=0; it<ITER; it++){
+  const k = Math.sqrt((W*H)/Math.max(1,N)) * 0.5;
+  const temp = 34*(1-it/ITER) + 1.5;
+  const CELL = 70, grid = new Map();
+  for (let i=0;i<N;i++){
+    const gx = Math.floor(pos[i*2]/CELL), gy = Math.floor(pos[i*2+1]/CELL), key = gx+","+gy;
+    if(!grid.has(key)) grid.set(key,[]); grid.get(key).push(i);
+  }
+  for (let i=0;i<N;i++){
+    const gx = Math.floor(pos[i*2]/CELL), gy = Math.floor(pos[i*2+1]/CELL);
+    for (let dx=-1;dx<=1;dx++) for (let dy=-1;dy<=1;dy++){
+      const cell = grid.get((gx+dx)+","+(gy+dy)); if(!cell) continue;
+      for (const j of cell){
+        if (j<=i) continue;
+        let vx = pos[i*2]-pos[j*2], vy = pos[i*2+1]-pos[j*2+1];
+        let d2 = vx*vx+vy*vy; if (d2 < 1e-6){ vx=0.1; vy=0.1; d2=0.02; }
+        const d = Math.sqrt(d2), f = (k*k)/d2;
+        vx/=d; vy/=d;
+        vel[i*2]+=vx*f; vel[i*2+1]+=vy*f; vel[j*2]-=vx*f; vel[j*2+1]-=vy*f;
+      }
+    }
+  }
+  edges.forEach(([a,b])=>{
+    const ia = idIndex.get(a), ib = idIndex.get(b);
+    if (ia===undefined||ib===undefined) return;
+    let vx = pos[ib*2]-pos[ia*2], vy = pos[ib*2+1]-pos[ia*2+1];
+    const d = Math.max(1e-3, Math.sqrt(vx*vx+vy*vy));
+    const f = (d*d)/k * (isConcept[ia]||isConcept[ib] ? 0.12 : 0.30);
+    vx/=d; vy/=d;
+    vel[ia*2]+=vx*f; vel[ia*2+1]+=vy*f; vel[ib*2]-=vx*f; vel[ib*2+1]-=vy*f;
+  });
+  for (let i=0;i<N;i++){
+    const l = lobes[nodes[i].m >= 0 ? nodes[i].m : 0] || {cx:W/2,cy:H/2};
+    // strong lobe gravity keeps materials as distinct lobes; weak global centering
+    vel[i*2]   += (l.cx - pos[i*2])   * 0.030 + (W/2 - pos[i*2])   * 0.0015;
+    vel[i*2+1] += (l.cy - pos[i*2+1]) * 0.030 + (H/2 - pos[i*2+1]) * 0.0015;
+    const m = Math.hypot(vel[i*2], vel[i*2+1]);
+    if (m > temp){ vel[i*2]=vel[i*2]/m*temp; vel[i*2+1]=vel[i*2+1]/m*temp; }
+    pos[i*2]+=vel[i*2]; pos[i*2+1]+=vel[i*2+1];
+    vel[i*2]*=0.85; vel[i*2+1]*=0.85;
+  }
+}
+
+// ---------- canvas ----------
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let dpr = window.devicePixelRatio || 1;
+const view = { x:0, y:0, k:1 };
+let hover=-1, selected=-1, showLabels=false, onlyLinked=false, showConcepts=true, dimIsolated=true;
+const matOn = new Set(mats.map((_,i)=>i));
+let query = "";
+const tip = document.getElementById("tip");
+
+function visible(i){
+  const n = nodes[i];
+  if (n.m >= 0 && !matOn.has(n.m)) return false;
+  if (!showConcepts && isConcept[i]) return false;
+  if (onlyLinked && n.d === 0) return false;
+  return true;
+}
+function resize(){
+  dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, Math.floor(cv.clientWidth*dpr));
+  cv.height = Math.max(1, Math.floor(cv.clientHeight*dpr));
+  draw();
+}
+window.addEventListener("resize", resize);
+function fit(){
+  let minx=1e9,maxx=-1e9,miny=1e9,maxy=-1e9;
+  for (let i=0;i<N;i++){ if(!visible(i)) continue;
+    minx=Math.min(minx,pos[i*2]); maxx=Math.max(maxx,pos[i*2]);
+    miny=Math.min(miny,pos[i*2+1]); maxy=Math.max(maxy,pos[i*2+1]); }
+  if (minx > maxx) return;
+  const pad=50, cw=cv.width/dpr, ch=cv.height/dpr;
+  view.k = Math.min(cw/(maxx-minx+pad*2), ch/(maxy-miny+pad*2));
+  view.x = cw/2 - (minx+maxx)/2*view.k;
+  view.y = ch/2 - (miny+maxy)/2*view.k;
+  draw();
+}
+function draw(){
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const cw = cv.width/dpr, ch = cv.height/dpr;
+  ctx.fillStyle="#101219"; ctx.fillRect(0,0,cw,ch);
+  ctx.save(); ctx.translate(view.x, view.y); ctx.scale(view.k, view.k);
+
+  const focusSet = new Set();
+  const f = hover >= 0 ? hover : selected;
+  if (f >= 0){ focusSet.add(f); (adjIdx.get(f)||[]).forEach(j=>focusSet.add(j)); }
+  const hasFocus = focusSet.size > 0;
+
+  ctx.lineWidth = 1/view.k;
+  edges.forEach(([a,b])=>{
+    const ia = idIndex.get(a), ib = idIndex.get(b);
+    if (ia===undefined||ib===undefined) return;
+    if (!visible(ia)||!visible(ib)) return;
+    const inFocus = hasFocus && focusSet.has(ia) && focusSet.has(ib);
+    const conceptEdge = isConcept[ia]||isConcept[ib];
+    ctx.strokeStyle = inFocus ? "rgba(122,162,255,.95)"
+      : (hasFocus ? "rgba(255,255,255,.04)"
+        : conceptEdge ? "rgba(140,149,172,.16)" : "rgba(255,255,255,.13)");
+    ctx.beginPath(); ctx.moveTo(pos[ia*2],pos[ia*2+1]); ctx.lineTo(pos[ib*2],pos[ib*2+1]); ctx.stroke();
+  });
+
+  for (let i=0;i<N;i++){
+    if (!visible(i)) continue;
+    const n = nodes[i], x = pos[i*2], y = pos[i*2+1];
+    const dim = (hasFocus && !focusSet.has(i)) || (dimIsolated && n.d===0 && !hasFocus);
+    ctx.globalAlpha = dim ? 0.20 : 1;
+    const color = n.m >= 0 ? MAT_COLORS[n.m % MAT_COLORS.length] : "#8c95ac";
+    if (isConcept[i]){
+      const r = 4.2/view.k;
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.setLineDash([3/view.k, 2.4/view.k]); ctx.lineWidth = 1.3/view.k;
+      ctx.strokeStyle = "#9aa3b8"; ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(154,163,184,.14)"; ctx.fill();
+    } else {
+      const r = (3 + Math.min(9,n.d)*0.8) / Math.sqrt(view.k);
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle = color; ctx.fill();
+      if (n.s === "conflicted"){ ctx.lineWidth=1.7/view.k; ctx.strokeStyle="#ff6b6b"; ctx.stroke(); }
+      else if (n.r === "pending"){ ctx.lineWidth=1.2/view.k; ctx.strokeStyle="#f2c14b"; ctx.stroke(); }
+    }
+    if (i === selected){ ctx.lineWidth=2/view.k; ctx.strokeStyle="#fff"; ctx.stroke(); }
+    if (query && n.t.toLowerCase().indexOf(query) >= 0){
+      ctx.lineWidth=2.2/view.k; ctx.strokeStyle="#7affc9"; ctx.stroke();
+    }
+    if (showLabels || i===hover || i===selected){
+      ctx.font = (11/view.k)+"px 'Segoe UI',sans-serif"; ctx.fillStyle="#dfe4f2";
+      ctx.fillText(n.t.slice(0,40), x + 6/view.k, y + 3.5/view.k);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // lobe labels
+  ctx.font = (13/view.k)+"px 'Segoe UI',sans-serif";
+  mats.forEach((m,i)=>{
+    const l = lobes[i]; if (!l || !l.n || !matOn.has(i)) return;
+    ctx.fillStyle = MAT_COLORS[i % MAT_COLORS.length];
+    ctx.globalAlpha = 0.85;
+    ctx.fillText(m.name || m.id, l.cx - 60, l.cy - 118);
+    ctx.globalAlpha = 1;
+  });
+  ctx.restore();
+}
+function pick(mx,my){
+  const x=(mx-view.x)/view.k, y=(my-view.y)/view.k;
+  let best=-1, bestD=12/view.k;
+  for (let i=0;i<N;i++){
+    if(!visible(i)) continue;
+    const d=Math.hypot(pos[i*2]-x, pos[i*2+1]-y);
+    if (d<bestD){ bestD=d; best=i; }
+  }
+  return best;
+}
+let dragging=false;
+cv.addEventListener("mousemove",(e)=>{
+  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  if (dragging){ view.x+=e.movementX; view.y+=e.movementY; draw(); return; }
+  const i=pick(mx,my);
+  if (i!==hover){ hover=i; draw(); }
+  if (i>=0){
+    const n=nodes[i];
+    tip.style.display="block";
+    tip.style.left=Math.min(mx+14, rect.width-380)+"px"; tip.style.top=(my+14)+"px";
+    tip.innerHTML='<div class="t">'+esc(n.t)+'</div><div class="m">'+
+      (isConcept[i] ? '未归类概念（原文明示，非知识点）· 被 '+n.d+' 个知识点引用'
+        : esc((mats[n.m]||{}).name||"未知材料")+' · 关联 '+n.d+' · 证据 '+n.e+' · '+
+          esc(GEN_LABEL[n.g]||n.g)+' · '+esc(STATUS_LABEL[n.s]||n.s))+'</div>';
+  } else tip.style.display="none";
+});
+cv.addEventListener("mousedown",()=>{ dragging=true; cv.classList.add("dragging"); });
+window.addEventListener("mouseup",()=>{ dragging=false; cv.classList.remove("dragging"); });
+cv.addEventListener("wheel",(e)=>{
+  e.preventDefault();
+  const rect=cv.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const f = e.deltaY<0 ? 1.12 : 1/1.12;
+  view.x = mx-(mx-view.x)*f; view.y = my-(my-view.y)*f; view.k*=f; draw();
+},{passive:false});
+cv.addEventListener("click",(e)=>{
+  const rect=cv.getBoundingClientRect();
+  selected = pick(e.clientX-rect.left, e.clientY-rect.top); draw(); renderDetail();
+});
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function renderStats(){
+  const s = DATA.stats;
+  document.getElementById("courseLabel").textContent = DATA.label+" · "+DATA.courseId;
+  document.getElementById("hdrStats").textContent =
+    s.kp+" 知识点 · "+s.edges+" 条边 · "+s.concepts+" 个未归类概念 · "+s.linked+" 个有关联 · "+s.isolated+" 个孤立";
+  const rows=[["知识点",s.kp],["材料",s.materials],["未归类概念节点",s.concepts],
+    ["关系边（含概念边）",s.edges],["其中概念边",s.concept_edges],
+    ["跨材料边",s.cross],["有关联的点",s.linked],["孤立点",s.isolated],
+    ["最大连通块",s.biggest_component],["未匹配术语",s.unresolved_unique]];
+  document.getElementById("stats").innerHTML = rows.map(r=>
+    '<div class="stat"><span>'+r[0]+'</span><b>'+r[1]+'</b></div>').join("");
+  document.getElementById("hint").innerHTML =
+    "实心点 = 知识点（颜色=材料，大小=关联数，红圈=冲突，黄圈=待审）；虚线点 = 未归类概念（原文明示的术语，被 ≥2 个知识点引用）；"+
+    "边 = AI 的「关联」术语归一化匹配后连成 —— <b>匹配不到的不画边</b>。滚轮缩放 · 拖拽平移 · 点击看详情。";
+}
+function renderFilters(){
+  document.getElementById("filters").innerHTML = mats.map((m,i)=>
+    '<label class="row"><input type="checkbox" data-m="'+i+'" checked>'+
+    '<span class="sw" style="background:'+MAT_COLORS[i%MAT_COLORS.length]+'"></span>'+
+    esc(m.name||m.id)+'</label>').join("") +
+    '<div class="item"><span class="sw dash"></span>未归类概念</div>';
+  document.querySelectorAll("#filters input").forEach(cb=>cb.addEventListener("change",()=>{
+    const i=Number(cb.dataset.m);
+    if (cb.checked) matOn.add(i); else matOn.delete(i);
+    draw();
+  }));
+}
+function renderDetail(){
+  const el=document.getElementById("detail");
+  if (selected<0){ el.textContent="点击任意节点查看详情"; el.style.color="var(--muted)"; return; }
+  const n=nodes[selected]; el.style.color="var(--fg)";
+  const nb=(adjIdx.get(selected)||[]).map(j=>
+    '<li><span>'+esc(nodes[j].t.slice(0,34))+'</span><span>'+
+    (isConcept[j]?"概念":esc(((mats[nodes[j].m]||{}).name||"").slice(0,16)))+'</span></li>').join("");
+  el.innerHTML =
+    '<div class="t">'+esc(n.t)+'</div>'+
+    (isConcept[selected]
+      ? '<div class="kv"><span>类型</span><span class="pill warn">未归类概念</span></div>'+
+        '<div class="kv"><span>引用它的点</span><span>'+n.d+' 个</span></div>'
+      : '<div class="kv"><span>材料</span><span>'+esc((mats[n.m]||{}).name||"—")+'</span></div>'+
+        '<div class="kv"><span>生成方式</span><span>'+esc(GEN_LABEL[n.g]||n.g)+'</span></div>'+
+        '<div class="kv"><span>校验</span><span class="pill '+
+          (n.s==="supported"?"ok":n.s==="conflicted"?"bad":"warn")+'">'+esc(STATUS_LABEL[n.s]||n.s)+'</span></div>'+
+        '<div class="kv"><span>审核</span><span>'+esc(n.r||"—")+'</span></div>'+
+        '<div class="kv"><span>证据</span><span>'+n.e+' 条</span></div>'+
+        '<div class="kv"><span>关联</span><span>'+n.d+' 个</span></div>'+
+        '<div class="kv"><span>ID</span><span style="font-size:11px">'+esc(n.id)+'</span></div>') +
+    (nb ? '<div style="margin-top:8px;color:var(--muted);font-size:11px">相连的节点</div><ul class="plain">'+nb+'</ul>' : '');
+}
+function renderUnresolved(){
+  document.getElementById("unresCount").textContent="("+DATA.stats.unresolved_unique+")";
+  document.getElementById("unres").innerHTML = DATA.unresolved.slice(0,60).map(([t,c])=>
+    '<li><span>'+esc(t.slice(0,34))+'</span><span>×'+c+'</span></li>').join("");
+}
+document.getElementById("btnFit").addEventListener("click", fit);
+document.getElementById("btnLabels").addEventListener("click",(e)=>{
+  showLabels=!showLabels; e.target.classList.toggle("on", showLabels); draw();
+});
+function setLinked(v){
+  onlyLinked=v;
+  document.getElementById("cbLinked").checked=v;
+  document.getElementById("btnLinked").classList.toggle("on", v);
+  if (v) fit(); else draw();
+}
+document.getElementById("btnLinked").addEventListener("click",()=>setLinked(!onlyLinked));
+document.getElementById("cbLinked").addEventListener("change",(e)=>setLinked(e.target.checked));
+document.getElementById("cbConcepts").addEventListener("change",(e)=>{ showConcepts=e.target.checked; draw(); });
+document.getElementById("btnConcepts").addEventListener("click",(e)=>{
+  showConcepts=!showConcepts; e.target.classList.toggle("on", showConcepts);
+  document.getElementById("cbConcepts").checked=showConcepts; draw();
+});
+document.getElementById("cbDim").addEventListener("change",(e)=>{ dimIsolated=e.target.checked; draw(); });
+document.getElementById("q").addEventListener("input",(e)=>{
+  query=e.target.value.trim().toLowerCase();
+  if (query){
+    const i = nodes.findIndex(n=>n.t.toLowerCase().indexOf(query)>=0);
+    if (i>=0){
+      view.x=cv.width/dpr/2 - pos[i*2]*view.k; view.y=cv.height/dpr/2 - pos[i*2+1]*view.k;
+      selected=i; renderDetail();
+    }
+  }
+  draw();
+});
+
+renderStats(); renderFilters(); renderUnresolved();
+document.getElementById("loading").style.display="none";
+resize(); setLinked(true);
+</script>
+</body>
+</html>

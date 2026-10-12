@@ -1055,7 +1055,14 @@ class KnowledgeOrganizationService:
                 self._structure_by_kp.setdefault(kp.knowledge_id, knowledge_structure)
 
     def register_knowledge_point(self, knowledge_point: KnowledgePoint) -> None:
-        """Register a single KP as a reference point (idempotent)."""
+        """Register a single KP as a reference point (idempotent).
+
+        人工审核决定是粘性的 (与 ``KnowledgeReviewService`` 的领域铁律同源):
+        同 id **重新登记** (AI 重复分析的 payload 重放、API 编辑重登记) 不得把
+        已决定的 ``review_status`` 打回 ``pending``, 也不得用 payload 覆盖人的
+        决定 —— 决定只能由 ReviewService 的显式决策改变。首次登记 (无既有)
+        与 ``pending -> decided`` 的正常首次落库不受影响。
+        """
         if not isinstance(knowledge_point, KnowledgePoint):
             raise OrganizationValidationError(
                 OrganizationErrorCode.INVALID_INPUT,
@@ -1068,6 +1075,16 @@ class KnowledgeOrganizationService:
             )
         with self._lock:
             self._kp_ids_cache = None
+            existing = self._kp_by_id.get(knowledge_point.knowledge_id)
+            if existing is not None and existing is not knowledge_point:
+                old_status = str(
+                    getattr(existing, "review_status", "pending") or "pending"
+                )
+                new_status = str(
+                    getattr(knowledge_point, "review_status", "pending") or "pending"
+                )
+                if old_status != "pending" and new_status != old_status:
+                    knowledge_point.review_status = old_status
             self._kp_by_id[knowledge_point.knowledge_id] = knowledge_point
 
     def register_session(self, session: ClassSession) -> None:

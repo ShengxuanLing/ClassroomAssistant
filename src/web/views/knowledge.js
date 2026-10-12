@@ -110,46 +110,19 @@ async function actionBackfillKpTranslations(courseId, button) {
   }
 }
 
+// 2026-10-12 (TASK-105): 顶栏那一项的文字改成「知识地图」, 它指向的路由
+// (`#/knowledge`) 与 href **一字未动** —— 只把**渲染体**从旧平铺表换成知识
+// 地图页 (图谱/探索/列表/材料 四个视图, 默认图谱)。
+//
+// 旧平铺页独有的三项能力都搬进了知识地图页, 不是丢掉:
+//   ① 一键补翻 + 费用提示 → kmPaint() 的 actions 块
+//   ② 记忆卡片入口        → kmPaint() 页头副标题末尾
+//   ③ 每行「生成卡片」      → kmRenderList() 的行模板
+// 顶栏高亮仍归 `#/knowledge` 分区, 归属声明在这里; 取数与渲染交给共享的
+// kmOpenCourse (它自己不写高亮, 见其注释)。
 async function pageKnowledge() {
   markActiveNav('#/knowledge');
-  const courseId = await requireCourse();
-  const points = (await api('/knowledge', { query: { course_id: courseId } })).knowledge_points || [];
-  const summary = await api('/course-knowledge', { query: { course_id: courseId } });
-
-  setView(
-    '<div class="page-head"><h1>' + t('知识点') + '</h1>' +
-    '<p class="subtitle">' + t('课程 ') + '<strong>' + esc(courseLabel(courseId)) + '</strong>' + t(' · 共 ') +
-    esc(points.length) + t(' 个 · 主题 ') + esc(summary.topic_count || 0) +
-    t(' · 关系 ') + esc(summary.relation_count || 0) + ' · <a href="#/flashcards">' +
-    esc(t('fc.title')) + '</a></p></div>' +
-    // TASK-81 §A2: 费用是明写的 —— 已缓存的不重复花钱, 但缺失的那部分每条
-    // 一次模型调用, 所以按钮旁边必须把"约一次调用 / 条"写在脸上。
-    '<div class="actions"><button data-action="kp-backfill" data-course="' +
-    esc(courseId) + '">' + esc(t('kpZh.backfill')) + '</button>' +
-    '<span class="tiny muted">' + esc(t('kpZh.backfillHint')) + '</span></div>' +
-    '<div class="card">' +
-    (points.length
-      ? '<table class="data compact fixed">' + tableCaption(t('知识点')) + '<colgroup><col style="width:36%"><col style="width:200px">' +
-        '<col style="width:60px"><col></colgroup>' +
-        '<thead><tr><th scope="col">' + t('标题') + '</th><th scope="col">' + t('状态') + '</th>' +
-        '<th scope="col" class="num">' + t('证据') + '</th><th scope="col">' + t('原文术语') + '</th></tr></thead><tbody>' +
-        points.map((kp) => (
-            '<tr><td class="kp-title"><a href="#/courses/' + encodeURIComponent(courseId) +
-            '/knowledge/' + encodeURIComponent(kp.knowledge_id) + '">' +
-            esc(kp.title || kp.knowledge_id) + '</a>' + knowledgeModeBadge(kp) +
-            ((kp.evidence_refs || []).length
-              ? ' <button class="small" data-action="create-flashcard" data-course="' +
-                esc(courseId) + '" data-knowledge="' + esc(kp.knowledge_id) + '">' +
-                esc(t('fc.create')) + '</button>'
-              : ' <span class="tiny muted">' + esc(t('fc.noEvidence')) + '</span>') +
-            '<br><span class="tiny muted mono break-all">' + esc(kp.knowledge_id) + '</span></td>' +
-            '<td class="nowrap">' + pill(kp.validation_status) + ' ' + pill(kp.review_status) + '</td>' +
-            '<td class="num">' + esc((kp.evidence_refs || []).length) + '</td>' +
-            '<td class="small terms-cell">' + renderTerms(kp.original_terms) + '</td></tr>'
-          )).join('') + '</tbody></table>'
-      : emptyState(t('该课程还没有知识点。上传材料并处理后会生成。'))) +
-    '</div>'
-  );
+  await kmOpenCourse(await requireCourse());
 }
 
 // ---- 材料列表 ------------------------------------------------------------
@@ -239,7 +212,7 @@ async function pageKnowledgeDetail(courseId, knowledgeId) {
   setView(
     '<div class="page-head"><div class="crumbs">' +
     '<a href="#/">' + t('概览') + '</a> / <a href="#/courses/' + encodeURIComponent(courseId) + '">' + t('课程') + '</a> / ' +
-    '<a href="#/knowledge">' + t('知识点') + '</a>' + t(' / 详情') + '</div>' +
+    '<a href="#/knowledge">' + t('km.title') + '</a>' + t(' / 详情') + '</div>' +
     '<h1>' + esc(kp.title || kp.knowledge_id) + '</h1>' +
     '<p class="subtitle"><span class="mono tiny">' + esc(kp.knowledge_id) + '</span></p></div>' +
 
@@ -511,10 +484,11 @@ const KM_STATE = {
   orphans: [],       // 无证据的知识点
   conflicts: [],
   stats: {},
+  graph: null,       // 图谱投影 (nodes/edges/concepts), 见 views/knowledge-graph.js
   courseId: '',
   query: '',
   activeMaterial: 'all',
-  view: 'explore',   // explore | list | materials
+  view: 'graph',     // graph | explore | list | materials
   loaded: false,
 };
 
@@ -536,6 +510,9 @@ function kmBuildViewModel(payload) {
   KM_STATE.materials = Array.isArray(data.materials) ? data.materials.slice() : [];
   KM_STATE.conflicts = Array.isArray(data.conflicts) ? data.conflicts.slice() : [];
   KM_STATE.stats = data.stats || {};
+  // 图谱投影 (后端 src/knowledge_graph.py): 节点/边/未归类概念/未匹配术语。
+  // 缺字段时置 null —— 图谱视图会给出明确空态, 而不是画一张假图。
+  KM_STATE.graph = data.graph && Array.isArray(data.graph.nodes) ? data.graph : null;
 
   const reverse = data.material_to_knowledge || {};
   const clusters = {};
@@ -557,7 +534,9 @@ async function kmLoad(courseId) {
   KM_STATE.courseId = courseId || '';
   KM_STATE.query = '';
   KM_STATE.activeMaterial = 'all';
-  KM_STATE.view = 'explore';
+  // 默认进图谱: 这一页叫"知识地图", 首屏就该是图 (2026-10-12 用户实测反馈:
+  // 之前默认是"按材料分组的卡片", 名字叫地图、形态是列表)。
+  KM_STATE.view = 'graph';
   KM_STATE.loaded = false;
   const payload = await api('/courses/' + encodeURIComponent(courseId) + '/knowledge-map');
   kmBuildViewModel(payload);
@@ -646,6 +625,7 @@ function kmConflictBanner() {
 // 搜索框是**受控输入**: 每次 input 只改 view model 再局部重绘, 不打 API。
 // 视图切换按钮用 aria-pressed 表达"当前是哪个视图", 不靠 class 名单独承载状态。
 function kmToolbar() {  const viewButtons = [
+    '<button type="button" class="km-view-btn" data-action="km-set-view" data-view="graph" aria-pressed="' + (KM_STATE.view === 'graph' ? 'true' : 'false') + '">' + esc(t('km.view.graph')) + '</button>',
     '<button type="button" class="km-view-btn" data-action="km-set-view" data-view="explore" aria-pressed="' + (KM_STATE.view === 'explore' ? 'true' : 'false') + '">' + esc(t('km.view.explore')) + '</button>',
     '<button type="button" class="km-view-btn" data-action="km-set-view" data-view="list" aria-pressed="' + (KM_STATE.view === 'list' ? 'true' : 'false') + '">' + esc(t('km.view.list')) + '</button>',
     '<button type="button" class="km-view-btn" data-action="km-set-view" data-view="materials" aria-pressed="' + (KM_STATE.view === 'materials' ? 'true' : 'false') + '">' + esc(t('km.view.materials')) + '</button>',
@@ -807,7 +787,15 @@ function kmRenderList() {
       return '<tr>' +
         '<td class="kp-title"><a href="#/courses/' + encodeURIComponent(KM_STATE.courseId) +
         '/knowledge/' + encodeURIComponent(kid) + '">' + esc(kp.title || kid) + '</a>' +
-        knowledgeModeBadge(kp) + '<br><span class="tiny muted mono break-all">' + esc(kid) + '</span></td>' +
+        knowledgeModeBadge(kp) +
+        // TASK-105: 旧平铺页每行的「生成卡片」入口, 原样搬进列表视图的行
+        // (有证据才给按钮, 没证据给灰字 —— 与旧页同一判据)。
+        ((kp.evidence_refs || []).length
+          ? ' <button class="small" data-action="create-flashcard" data-course="' +
+            esc(KM_STATE.courseId) + '" data-knowledge="' + esc(kid) + '">' +
+            esc(t('fc.create')) + '</button>'
+          : ' <span class="tiny muted">' + esc(t('fc.noEvidence')) + '</span>') +
+        '<br><span class="tiny muted mono break-all">' + esc(kid) + '</span></td>' +
         '<td class="nowrap">' + pill(kp.validation_status) + ' ' + pill(kp.review_status) + '</td>' +
         '<td class="num">' + esc(evCount) + '</td>' +
         '<td class="small break-all">' +
@@ -865,6 +853,25 @@ function kmRenderMaterials() {
 //     因为这是"读不到数据", 用户能做的只有重试或换课程。
 //   渲染期异常 → 也走 renderError, 但先 showBanner 提示重试。
 
+// 打开某门课程的知识地图页。**不写顶栏高亮** —— 归属由调用方声明:
+//   pageKnowledge    → '#/knowledge' (顶栏有这一项; 2026-10-12 TASK-105 起它渲染本页)
+//   pageKnowledgeMap → ''            (课程内深链, 顶栏没有对应分区)
+// 两个调用方各自恰好写一次 markActiveNav(), 与 app.js 的顶栏归属表一致。
+// 不抽成共享函数的话, 顶栏高亮会被本函数里的清空声明覆盖掉。
+async function kmOpenCourse(courseId) {
+  setRouteCourse(courseId);
+  showBanner('');
+  showLoading();
+  try {
+    await kmLoad(courseId);
+  } catch (err) {
+    if (err instanceof ApiError) renderError(err);
+    else renderError(new ApiError({ code: 'INTERNAL_ERROR', message: String((err && err.message) || err) }));
+    return;
+  }
+  kmPaint();
+}
+
 async function pageKnowledgeMap(courseId) {
   const id = courseId;
   if (!id) {
@@ -872,17 +879,7 @@ async function pageKnowledgeMap(courseId) {
     return;
   }
   markActiveNav('');
-  setRouteCourse(id);
-  showBanner('');
-  showLoading();
-  try {
-    await kmLoad(id);
-  } catch (err) {
-    if (err instanceof ApiError) renderError(err);
-    else renderError(new ApiError({ code: 'INTERNAL_ERROR', message: String((err && err.message) || err) }));
-    return;
-  }
-  kmPaint();
+  await kmOpenCourse(id);
 }
 
 // kmPaint: 只重绘 #view 的内容区, 不触碰 chrome (顶栏 / 侧栏)。
@@ -892,33 +889,69 @@ function kmPaint() {
     setView('<div class="card"><p class="muted">' + esc(t('common.loading')) + '</p></div>');
     return;
   }
-  const body = KM_STATE.view === 'list' ? kmRenderList()
-    : KM_STATE.view === 'materials' ? kmRenderMaterials()
-      : kmRenderExplore();
+  const body = KM_STATE.view === 'graph' ? kmRenderGraph()
+    : KM_STATE.view === 'list' ? kmRenderList()
+      : KM_STATE.view === 'materials' ? kmRenderMaterials()
+        : kmRenderExplore();
   setView(
     '<div class="page-head">' +
     '<div class="crumbs"><a href="#/courses/' + encodeURIComponent(KM_STATE.courseId) + '">' +
     esc(t('km.backToCourse')) + '</a></div>' +
     '<h1>' + esc(t('km.title')) + '</h1>' +
-    '<p class="subtitle">' + esc(t('km.subtitle', { course: courseLabel(KM_STATE.courseId) })) + '</p>' +
+    // 记忆卡片入口: 旧平铺页把它放在副标题末尾, TASK-105 原样搬过来。
+    // km.subtitle 的文案本身不改 (它被审计的插值用例盯着), 只在其后追加一个
+    // 独立链接。
+    '<p class="subtitle">' + esc(t('km.subtitle', { course: courseLabel(KM_STATE.courseId) })) +
+    ' · <a href="#/flashcards">' + esc(t('fc.title')) + '</a></p>' +
     '</div>' +
+    // TASK-81 §A2 / TASK-105: 一键补翻 —— 旧平铺页的独有入口, 换渲染体时
+    // 必须一起搬 (否则是静默删功能)。费用提示与旧页逐字相同。
+    // 注意: 搜索/切视图/换筛选都会局部重绘本页, 这个按钮节点随之被替换;
+    // 处理函数 finally 里对**已脱离文档的**旧节点恢复 disabled —— 无副作用
+    // (不报错、不闪烁), 对用户不可见, 不需要额外代码。
+    '<div class="actions"><button data-action="kp-backfill" data-course="' +
+    esc(KM_STATE.courseId) + '">' + esc(t('kpZh.backfill')) + '</button>' +
+    '<span class="tiny muted">' + esc(t('kpZh.backfillHint')) + '</span></div>' +
     kmConflictBanner() +
     kmStatsBar() +
     kmToolbar() +
     '<div id="km-body">' + body + '</div>' +
-    '<div class="card km-legend">' +
+    kmLegend() +
+    '</div>'
+  );
+  // 图谱画在 canvas 上: HTML 注入 DOM 之后才能量尺寸、跑布局、绑事件。
+  if (KM_STATE.view === 'graph') kmGraphMount();
+}
+
+// 图例随视图变: 图谱视图解释节点/边/概念, 其它视图解释"按来源分组"。
+// (旧文案 "暂无知识关系" 在图谱视图里是错的 —— 图上有边。)
+function kmLegend() {
+  if (KM_STATE.view === 'graph') {
+    return '<div class="card km-legend">' +
+      '<h2>' + esc(t('km.legendTitle')) + '</h2>' +
+      '<p class="small">' + esc(t('km.graph.legendKp')) + '</p>' +
+      '<p class="small">' + esc(t('km.graph.legendConcept')) + '</p>' +
+      '<p class="small">' + esc(t('km.graph.legendEdge')) + '</p>' +
+      '</div>';
+  }
+  return '<div class="card km-legend">' +
     '<h2>' + esc(t('km.legendTitle')) + '</h2>' +
     '<p class="small">' + esc(t('km.legendGrouping')) + '</p>' +
     '<p class="small">' + esc(t('km.legendNoRelations')) + '</p>' +
     '<p class="small">' + esc(t('km.legendClick')) + '</p>' +
-    '</div>'
-  );
+    '</div>';
 }
 
 // ---- 事件 (委托到 window 上, 不依赖渲染完成时机) ------------------------
 
 function kmHandleSearch(event) {
   KM_STATE.query = String(event.target.value || '');
+  // 图谱视图: 只重绘 canvas (不重建 DOM) —— 否则每敲一个字都重挂 canvas,
+  // 输入框会掉焦点。搜索在图谱里表现为"命中节点加高亮圈"。
+  if (KM_STATE.view === 'graph' && typeof kmGraphSearchChanged === 'function') {
+    kmGraphSearchChanged();
+    return;
+  }
   kmPaint();
 }
 
@@ -928,7 +961,8 @@ function kmHandleFilter(event) {
 }
 
 function kmSetView(view) {
-  const next = ['explore', 'list', 'materials'].indexOf(view) >= 0 ? view : 'explore';
+  const allowed = ['graph', 'explore', 'list', 'materials'];
+  const next = allowed.indexOf(view) >= 0 ? view : 'graph';
   KM_STATE.view = next;
   kmPaint();
 }
@@ -945,6 +979,11 @@ function kmAction(action, node) {
   }
   if (action === 'km-set-view') {
     kmSetView(node.getAttribute('data-view'));
+    return;
+  }
+  // 图谱自己的控件 (适应窗口 / 只看有关联 / 概念 / 标签) —— 只重绘 canvas。
+  if (action.indexOf('km-graph-') === 0 && typeof kmGraphAction === 'function') {
+    kmGraphAction(action, node);
   }
 }
 

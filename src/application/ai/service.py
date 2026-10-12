@@ -108,8 +108,15 @@ class AIAnalysisService:
         material_id: str,
         content_language: Optional[str] = None,
         provider: Optional[AIProvider] = None,
-        timeout_seconds: int = 60,
+        timeout_seconds: Optional[int] = None,
     ) -> AIAnalysisReport:
+        # TASK-82: 超时不再是硬编码 60s —— 未显式传入时读
+        # `load_ai_config().timeout_seconds` (env `CLASSROOM_AI_TIMEOUT_SECONDS`),
+        # 但显式参数仍然可以覆盖 (测试 / 调用方按需收紧)。
+        if timeout_seconds is None:
+            from src.application.ai.config import load_ai_config
+
+            timeout_seconds = load_ai_config().timeout_seconds
         """执行一次材料 AI 分析并落库, 返回完整报告。"""
         started = time.monotonic()
         _ = started

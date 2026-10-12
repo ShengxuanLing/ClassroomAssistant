@@ -79,6 +79,7 @@ const WEB_FILES = [
   'views/learn.js',
   'views/review.js',
   'views/knowledge.js',
+  'views/knowledge-graph.js',
   'views/flashcards.js',
   'views/materials.js',
   'views/courses.js',
@@ -620,6 +621,38 @@ function knowledgeMap(overrides) {
       knowledge_memberships: [],
       relations: [],
       conflicts: [],
+      // 图谱投影 (2026-10-12, 与后端 src/knowledge_graph.py 同形状):
+      // 2 条 KP 边 + 1 个被 kp-2/kp-3 引用的概念节点。概念节点**绝不**计入
+      // 知识点数 —— 统计条仍然是 4 (断言钉住)。
+      graph: {
+        nodes: [
+          { id: 'kp-1', kind: 'kp', label: 'Rango de una funcion', material_id: 'material-1', degree: 1, generation: 'ai_summary', status: 'supported' },
+          { id: 'kp-2', kind: 'kp', label: 'Dominio de una funcion', material_id: 'material-1', degree: 2, generation: 'ai_summary', status: 'supported' },
+          { id: 'kp-3', kind: 'kp', label: 'Rango de salida', material_id: 'material-2', degree: 1, generation: 'ai_summary', status: 'supported' },
+          { id: 'kp-orphan', kind: 'kp', label: 'Idea sin evidencia', material_id: 'material-1', degree: 0, generation: 'ai_summary', status: 'unverified' },
+          { id: 'concept-0123456789abcdef', kind: 'concept', label: 'termino sin punto', material_id: '', degree: 2, generation: 'concept', status: 'unclassified' },
+        ],
+        edges: [
+          { source: 'concept-0123456789abcdef', target: 'kp-2', kind: 'concept' },
+          { source: 'concept-0123456789abcdef', target: 'kp-3', kind: 'concept' },
+          { source: 'kp-1', target: 'kp-2', kind: 'kp' },
+        ],
+        concepts: [
+          { id: 'concept-0123456789abcdef', label: 'termino sin punto', refs: ['kp-2', 'kp-3'] },
+        ],
+        unresolved_terms: [{ term: 'termino sin punto', count: 2 }],
+        stats: {
+          knowledge_point_count: 4,
+          material_count: 2,
+          edge_count: 3,
+          concept_edge_count: 2,
+          concept_count: 1,
+          linked_knowledge_point_count: 3,
+          isolated_knowledge_point_count: 1,
+          relation_instance_count: 4,
+          unresolved_term_count: 1,
+        },
+      },
       stats: {
         knowledge_point_count: 4,
         material_count: 2,
@@ -1618,6 +1651,16 @@ function emptyRoutes() {
     materials: [],
     evidence_counts: {},
     material_to_knowledge: {},
+    // 空课程没有可画的关系: 图谱必须走明确空态, 不是空白 canvas。
+    graph: {
+      nodes: [], edges: [], concepts: [], unresolved_terms: [],
+      stats: {
+        knowledge_point_count: 0, material_count: 0, edge_count: 0,
+        concept_edge_count: 0, concept_count: 0, linked_knowledge_point_count: 0,
+        isolated_knowledge_point_count: 0, relation_instance_count: 0,
+        unresolved_term_count: 0,
+      },
+    },
     stats: {
       knowledge_point_count: 0, material_count: 0, evidence_count: 0,
       evidence_ref_count: 0, topic_count: 0, relation_count: 0, conflict_count: 0,
@@ -1703,6 +1746,16 @@ function largeRoutes(kpCount, studentCount, exerciseCount) {
   base.exercises = exercises;
   table['/api/dashboard'] = base;
   table['/api/knowledge'] = { knowledge_points: points };
+  // TASK-105: `#/knowledge` 现在渲染知识地图页 —— 它按课程取知识地图投影。
+  // 这里必须跟着 kpCount 一起长, 否则"大数据量"用例测的是一份 4 条的旧夹具。
+  {
+    const counts = {};
+    points.forEach((kp) => { counts[kp.knowledge_id] = 1; });
+    table['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap({
+      knowledge_points: points,
+      evidence_counts: counts,
+    });
+  }
   table['/api/students'] = { students: students };
   // pageExercises 会先取第一个学生再取该学生的练习 —— 所以路由要挂在
   // **第一个**学生身上, 否则脚本会拿到 404 而不是被测的页面。
@@ -2163,11 +2216,17 @@ async function audit() {
     const table = largeRoutes(kpCount, studentCount, exerciseCount);
     const started = Date.now();
     const knowledge = await renderPage(pageByName('knowledge'), table, 'zh');
+    // TASK-105: `#/knowledge` 现在是知识地图页, 默认视图是**图谱 (canvas)** ——
+    // 知识点标题不落在 DOM 里, 直接数会得 0。切到**列表视图**再数, 语义与
+    // 旧平铺表一致 (不是降级成状态断言)。
+    knowledge.kmSetView('list');
     const exercises = await renderPage(pageByName('exercises'), table, 'zh');
     const dashboardPage = await renderPage(pageByName('dashboard'), table, 'zh');
     const elapsed = Date.now() - started;
 
-    check('large knowledge base renders every point', (html(knowledge).match(/kp-\d+/g) || []).length >= kpCount);
+    check('large knowledge base renders every point',
+      (html(knowledge).match(/kp-\d+/g) || []).length >= kpCount,
+      String((html(knowledge).match(/kp-\d+/g) || []).length));
     check('the implicit-student exercise page renders with many students',
       html(exercises).includes('student-0'));
     check(
@@ -3887,6 +3946,73 @@ async function audit() {
       backfillPosts.length === 1 &&
       backfillPosts[0].url.indexOf('/api/courses/' + COURSE_ID) >= 0,
       JSON.stringify(list.__requests.filter((r) => r.method === 'POST')));
+
+    // ---- TASK-105: 顶栏「知识地图」入口 (R1/R2/R3/R5) --------------------
+    //
+    // 入口的 href **一字未改** (仍是 #/knowledge) —— 变的是显示文本与落点:
+    // 渲染体从平铺表换成知识地图页。这条钉住入口这一层: 三语文案齐备且 es/ca
+    // 不混中文, index.html 那一项的 href / data-i18n key 没漂, 且点进去看到的
+    // 确实是知识地图页 (四个视图按钮在, 图谱是默认视图)。
+    const en = await loadApp(routes(), 'zh');
+    const tables = vm.runInContext('I18N', en);
+    for (const [lang, expected] of [
+      ['zh', '知识地图'], ['es', 'Mapa de conocimiento'], ['ca', 'Mapa de coneixement'],
+    ]) {
+      check('the top-nav knowledge entry is renamed in ' + lang,
+        tables[lang]['nav.knowledge'] === expected, String(tables[lang]['nav.knowledge']));
+    }
+    // zh 本来就该是中文; es / ca 混入 CJK 才是漏译 (值被原样抄了中文)。
+    for (const lang of ['es', 'ca']) {
+      check('the renamed entry has no Chinese leak in ' + lang,
+        !CJK.test(tables[lang]['nav.knowledge'] || ''), String(tables[lang]['nav.knowledge']));
+    }
+    const navItem = INDEX_HTML.split('\n')
+      .filter((line) => line.indexOf('data-i18n="nav.knowledge"') >= 0)[0] || '';
+    check('the shell nav entry keeps its href and i18n key',
+      navItem.indexOf('href="#/knowledge"') >= 0, navItem);
+    const kmEntry = await renderPage(pageByName('knowledge'), routes(), 'zh');
+    const kmEntryOut = html(kmEntry);
+    check('the knowledge entry lands on the knowledge map page',
+      kmEntryOut.indexOf('data-action="km-set-view"') >= 0, kmEntryOut.slice(0, 300));
+    check('the knowledge entry exposes all four knowledge-map views',
+      ['graph', 'explore', 'list', 'materials'].every(
+        (v) => kmEntryOut.indexOf('data-view="' + v + '"') >= 0), kmEntryOut.slice(0, 400));
+    check('the knowledge entry opens on the graph view',
+      kmEntryOut.indexOf('data-view="graph" aria-pressed="true"') >= 0,
+      kmEntryOut.slice(0, 400));
+    check('the knowledge entry keeps the per-row flashcard affordance',
+      vm.runInContext("kmSetView('list');", kmEntry) === undefined &&
+      html(kmEntry).indexOf('data-action="create-flashcard"') >= 0,
+      html(kmEntry).slice(0, 400));
+
+    // 两处**空态引导**也指向这个入口 (href 仍是 `#/knowledge`, 文案用同一个
+    // 被改名的 key)。它们只在"有学生但没内容"时才画, 真机上不一定碰得到,
+    // 所以在这里把两个空态**真的渲染一遍**并断言入口还在 —— 换渲染体不能把
+    // 这两个入口带走。
+    {
+      const noCards = routes();
+      noCards['/api/flashcards'] = { flashcards: [] };
+      const fc = await renderPage(pageByName('flashcards'), noCards, 'zh');
+      const fcOut = html(fc);
+      check('the flashcards empty state still links to the knowledge entry',
+        fcOut.indexOf(t_zh(fc, 'fc.emptyGuide')) >= 0 &&
+        fcOut.indexOf('href="#/knowledge"') >= 0, fcOut.slice(0, 400));
+
+      const noExercises = routes();
+      noExercises['/api/students/' + STUDENT_ID + '/exercises'] = {
+        course_id: COURSE_ID,
+        student_id: STUDENT_ID,
+        exercises: [],
+        total: 0,
+        answered: 0,
+        unanswered: 0,
+      };
+      const ex = await renderPage(pageByName('exercises'), noExercises, 'zh');
+      const exOut = html(ex);
+      check('the exercises empty state still links to the knowledge entry',
+        exOut.indexOf(t_zh(ex, 'ex.emptyGuide')) >= 0 &&
+        exOut.indexOf('href="#/knowledge"') >= 0, exOut.slice(0, 400));
+    }
   }
 
   // ---- TASK-79: 记忆卡片降级为“背题入口” (FSRS 打分未动) ---------------
@@ -3945,6 +4071,10 @@ async function audit() {
   {
     const table = routes();
     const sandbox = await renderPage(pageByName('knowledgeMap'), table, 'zh');
+    // 2026-10-12: 知识地图的**默认视图**改成了图谱 (canvas)。下面这一节
+    // 断言的是"探索"视图 (卡片 / 材料分簇 / 搜索收窄) 的形状, 所以先显式
+    // 切到 explore —— 否则默认视图一变, 整节断言全部误报。
+    vm.runInContext("kmSetView('explore');", sandbox);
     const out = html(sandbox);
     const evLabel = t_zh(sandbox, 'km.statEvidence');
     const refLabel = t_zh(sandbox, 'km.statEvidenceRefs');
@@ -4013,10 +4143,24 @@ async function audit() {
       matOut.indexOf('clase-03.mp3') >= 0 &&
       matOut.indexOf(t_zh(sandbox, 'km.supports')) >= 0, matOut.slice(0, 500));
     vm.runInContext("kmSetView('bogus');", sandbox);
-    check('km falls back to explore on an unknown view',
-      html(sandbox).indexOf('km-cluster') >= 0);
+    check('km falls back to the graph view on an unknown view',
+      html(sandbox).indexOf('km-graph') >= 0);
     check('km view switches do not refetch',
       sandbox.__fetched.length === viewFetched, sandbox.__fetched.join(' '));
+
+    // 图谱视图 (2026-10-12 新增): 默认视图, canvas + 图谱投影驱动。
+    // 口径铁律: 概念节点**绝不**进知识点计数; 没有 graph 字段时不画假图。
+    const gv = await renderPage(pageByName('knowledgeMap'), routes(), 'zh');
+    const gvOut = html(gv);
+    check('km graph view is the default and renders a canvas',
+      gvOut.indexOf('km-graph-canvas') >= 0, gvOut.slice(0, 500));
+    check('km graph view counts only knowledge points, never concepts',
+      gvOut.indexOf('<b>4</b>' + t_zh(gv, 'km.statKnowledge')) >= 0, gvOut.slice(0, 500));
+    check('km graph view renders no bare translation keys',
+      gvOut.indexOf('km.') === -1, gvOut.slice(0, 500));
+    const gEmpty = await renderPage(pageByName('knowledgeMap'), emptyRoutes(), 'zh');
+    check('km graph view states an explicit empty state without a graph payload',
+      html(gEmpty).indexOf(t_zh(gEmpty, 'km.graph.empty')) >= 0, html(gEmpty).slice(0, 500));
 
     // 未知分组键 (旧后端曾发证据 ID): 不隐藏, 明确标注。
     const ghost = routes();
@@ -4024,6 +4168,7 @@ async function audit() {
       material_to_knowledge: { 'ghost-mat-9': ['kp-1'] },
     });
     const gs = await renderPage(pageByName('knowledgeMap'), ghost, 'zh');
+    vm.runInContext("kmSetView('explore');", gs);
     const gout = html(gs);
     check('km labels an unregistered cluster instead of hiding it',
       gout.indexOf('ghost-mat-9') >= 0 &&
@@ -4045,6 +4190,7 @@ async function audit() {
 
     // 空课程: 明确文案, 不是空白页。
     const es2 = await renderPage(pageByName('knowledgeMap'), emptyRoutes(), 'zh');
+    vm.runInContext("kmSetView('explore');", es2);
     check('km empty course states it explicitly',
       html(es2).indexOf(t_zh(es2, 'km.courseEmpty')) >= 0);
 
@@ -4060,6 +4206,7 @@ async function audit() {
       },
     });
     const xs = await renderPage(pageByName('knowledgeMap'), xss, 'zh');
+    vm.runInContext("kmSetView('explore');", xs);
     const xout = html(xs);
     check('km escapes point titles',
       xout.indexOf('&lt;script&gt;') >= 0 &&
@@ -4107,6 +4254,7 @@ async function audit() {
         },
       });
       const ss = await renderPage(pageByName('knowledgeMap'), big, 'zh');
+      vm.runInContext("kmSetView('explore');", ss);
       const sout = html(ss);
       check('km renders 300 points without dropping rows',
         (sout.match(/class="km-kp-row"/g) || []).length === 300, String((sout.match(/class="km-kp-row"/g) || []).length));

@@ -59,6 +59,7 @@ Task 42 已经把 ``src/persistence`` 建好了 (14 个仓储, 385 条测试), T
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
 from functools import partial
 from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequence
@@ -173,6 +174,9 @@ class WorkspacePersistence:
         self._fault_injector: Optional[FaultInjector] = fault_injector
         # 本次业务操作内已经成功落盘的次数 (``_write`` 递增, ``atomic`` 归零)。
         self._write_ordinal = 0
+        # 业务操作事务串行锁 (见 :meth:`atomic` 的"并发"一节): ``Database``
+        # 的事务记账是实例级的, 共享实例不得跨线程并发事务。
+        self._tx_lock = threading.RLock()
         # 回滚诊断: 只留最近若干条, 但计数是完整的 (见 rollback_diagnostics)。
         self._rollback_count = 0
         self._recent_rollbacks: list[dict[str, Any]] = []
@@ -277,20 +281,37 @@ class WorkspacePersistence:
         两者的交汇点就是"重启" —— 重启后内存从数据库重建, 于是自动回到那个
         一致的过去。这条性质由 ``tests/test_persistence_transactions.py``
         用真实重启验收。
+
+        并发 (2026-10-12)
+        ------------------------------------------------------------------
+        ``Database`` 的事务记账 (``_depth``) 与 ``_write_ordinal`` 都是
+        **实例级**的 —— 见 ``tests/test_concurrent_writes.py`` 头注: 一个
+        实例不得跨线程并发事务, 否则 savepoint 编号互踩 (实测: 并发确认报
+        ``no such savepoint: sp_1``)。而 API 服务器是
+        ``ThreadingHTTPServer``, 所有请求线程共享**同一个** Workspace ->
+        同一个 ``WorkspacePersistence``。因此在本方法 (业务操作的事务入口)
+        用进程内 ``RLock`` 把"一次业务操作 = 一个事务"串行化:
+
+        - ``_depth`` / ``_write_ordinal`` 记账永不交错;
+        - 内存态 (组织服务 KP 对象、审核视图) 不被两个请求穿插修改 ——
+          否则状态与历史可能来自两次不同的决定;
+        - 同线程嵌套 ``_atomic`` 由 RLock 重入语义放行, 行为不变;
+        - 多进程协调仍由 SQLite WAL + ``busy_timeout`` 负责, 不变。
         """
-        previous = self._write_ordinal
-        self._write_ordinal = 0
-        try:
-            with self._repos.transaction():
-                yield
-        except BaseException as exc:  # noqa: BLE001 - 一律回滚并如实上报
-            self._record_rollback(exc)
-            mapped = self._as_application_error(exc)
-            if mapped is exc:
-                raise
-            raise mapped from exc
-        finally:
-            self._write_ordinal = previous
+        with self._tx_lock:
+            previous = self._write_ordinal
+            self._write_ordinal = 0
+            try:
+                with self._repos.transaction():
+                    yield
+            except BaseException as exc:  # noqa: BLE001 - 一律回滚并如实上报
+                self._record_rollback(exc)
+                mapped = self._as_application_error(exc)
+                if mapped is exc:
+                    raise
+                raise mapped from exc
+            finally:
+                self._write_ordinal = previous
 
     def _write(self, point: str, action: Callable[[], Any]) -> Any:
         """执行一次落盘, 并在**成功之后**给出注入点。

@@ -63,11 +63,14 @@ FIXED_TIME = "2026-01-01T00:00:00+00:00"
 #: 学生列表 / 详情页面已删除, 不再属于课程标题清单。
 #: 2026-09-22 (任务书 §3): 概览默认是全部课程聚合页, 单课程标题随 scope 筛选
 #: 视图移到了 pageDashboardCourseBody (渲染体与取数分离的同一处拆分)。
+#: 2026-10-12 (TASK-105): ``pageKnowledge`` 已薄壳化 —— 它不再自己渲染课程标题,
+#: 而是把 ``requireCourse()`` 的结果交给共享的 ``kmOpenCourse()`` 去开知识地图页。
+#: 课程标题从那页的 ``kmPaint()`` 经 ``courseLabel(KM_STATE.courseId)`` 产出,
+#: 由 ``test_the_knowledge_map_heading_goes_through_the_shared_helper`` 单独盯住。
 COURSE_LABEL_PAGES = (
     "function pageDashboardCourseBody(",
     "async function pageLearn(",
     "async function pageReview(",
-    "async function pageKnowledge(",
     "async function pageMaterials(",
     "async function pageReviews(",
     "async function pageSession(",
@@ -416,7 +419,7 @@ class TestCourseNameIsShownInsteadOfItsId:
             assert course_id_text_offenders(shape) == [], shape
 
     def test_every_course_heading_goes_through_the_shared_helper(self):
-        """8 处标题 / 面包屑全部走 ``courseLabel()``, 没有一处漏掉。"""
+        """7 处标题 / 面包屑全部走 ``courseLabel()``, 没有一处漏掉。"""
         source = read_asset("app.js")
         for header in COURSE_LABEL_PAGES:
             body = function_body(source, header)
@@ -424,17 +427,35 @@ class TestCourseNameIsShownInsteadOfItsId:
                 f"{header} 仍然直接渲染 course_id"
             )
 
+    def test_the_knowledge_map_heading_goes_through_the_shared_helper(self):
+        """知识地图页的课程标题同样只能经 ``courseLabel()`` 产出。
+
+        2026-10-12 (TASK-105): ``#/knowledge`` 从平铺表换成知识地图页后,
+        ``pageKnowledge`` 里已经没有标题可查了 —— 它只是一层薄壳。
+        所以这条**不是**把上面那条收缩一下: 上面那条丢了 ``pageKnowledge``
+        就少盯一处, 换渲染体不能变成降低覆盖。这里补的是知识地图页自己那份:
+        ``kmPaint()`` 的副标题带 ``courseLabel(KM_STATE.courseId)``。
+        """
+        source = strip_js_comments(read_asset("views/knowledge.js"))
+        body = function_body(source, "function kmPaint()")
+        assert "courseLabel(KM_STATE.courseId)" in body, (
+            "kmPaint 仍然直接渲染 course_id"
+        )
+
     def test_the_helper_is_defined_exactly_once(self):
         """显示名只能有一个来源 —— 抄第二遍迟早会漂移。
 
         下限是**实测值**: 2026-09-21 删掉课程复习中心页 (``pageCourseReview``)、
-        本次删掉学生列表 / 详情页后, 课程标题清单剩 8 项。这条是
-        ``test_every_course_heading_goes_through_the_shared_helper`` 之外的冗余网 ——
-        那个测试只覆盖清单里的页面, 这条盯的是"总数没有悄悄变少"。
+        之后删掉学生列表 / 详情页 —— 课程标题清单剩 7 项。2026-10-12 (TASK-105)
+        ``pageKnowledge`` 薄壳化后进 ``#/knowledge`` 就是知识地图页, 它的标题
+        从 ``kmPaint()`` 出 —— 清单因此再少一项, 阈值由 8 实测降为 7, 覆盖由
+        ``test_the_knowledge_map_heading_goes_through_the_shared_helper`` 接手。
+        这条是 ``test_every_course_heading_goes_through_the_shared_helper``
+        之外的冗余网 —— 那个测试只覆盖清单里的页面, 这条盯的是"总数没有悄悄变少"。
         """
         source = strip_js_comments(read_asset("app.js"))
         assert source.count("function courseLabel(") == 1
-        assert source.count("esc(courseLabel(courseId))") >= 8
+        assert source.count("esc(courseLabel(courseId))") >= 7
 
 
     def test_the_course_identity_string_has_exactly_one_producer(self):

@@ -36,6 +36,7 @@ const WEB_FILES = [
   'views/learn.js',
   'views/review.js',
   'views/knowledge.js',
+  'views/knowledge-graph.js',
   'views/flashcards.js',
   'views/materials.js',
   'views/courses.js',
@@ -424,6 +425,27 @@ const ROUTES = {
           evidence_count: 1,
         },
       ],
+    },
+  },
+  // TASK-105: `#/knowledge` 现在渲染知识地图页 (顶栏「知识地图」入口) —— 它按
+  // 课程取这个投影, 不再是 `/api/knowledge` + `/api/course-knowledge`。
+  // 这里给空 graph: 无节点时图谱走明确空态, 不会在无头沙箱里碰 canvas 尺寸。
+  ['/api/courses/' + COURSE_ID + '/knowledge-map']: {
+    data: {
+      course_id: COURSE_ID,
+      knowledge_points: [
+        {
+          knowledge_id: 'kp-1',
+          title: 'Definicion de funcion',
+          validation_status: 'supported',
+          review_status: 'confirmed',
+          evidence_refs: ['evid-1'],
+        },
+      ],
+      materials: [],
+      conflicts: [],
+      stats: {},
+      graph: { nodes: [], edges: [] },
     },
   },
   // Task 64: 出题依据链
@@ -2473,6 +2495,24 @@ async function main() {
       table['/api/course-knowledge'] = {
         data: { course_id: id, topic_count: 0, relation_count: 0 },
       };
+      // TASK-105: `#/knowledge` 换成知识地图页后按课程取知识地图投影 ——
+      // 换课表必须给两门课都备上, 否则换课请求 404。
+      // (`/api/knowledge` 仍留给练习页的出题面板。)
+      table['/api/courses/' + id + '/knowledge-map'] = {
+        data: {
+          course_id: id,
+          knowledge_points: [{
+            knowledge_id: 'kp-' + slow, title: 'TITLE-' + tag,
+            validation_status: 'supported', review_status: 'pending',
+            // 有证据: 列表视图的那一行才会画出「生成卡片」按钮 (旧平铺页同判据)。
+            evidence_refs: ['evid-' + slow], original_terms: [],
+          }],
+          materials: [],
+          conflicts: [],
+          stats: {},
+          graph: { nodes: [], edges: [] },
+        },
+      };
     }
 
     function switchTable() {
@@ -2592,10 +2632,64 @@ async function main() {
     const PAGES = [
       ['#/reviews', '#/reviews', 'KP-GP', 'KP-GEO'],
       ['#/materials', '#/materials', 'FILE-GP-mat.pdf', 'FILE-GEO-mat.pdf'],
-      ['#/knowledge', '#/knowledge', 'TITLE-GP', 'TITLE-GEO'],
     ];
     for (const [hash, nav, markerBefore, markerAfter] of PAGES) {
       await switchStaysOn(switchTable(), hash, nav, markerBefore, markerAfter);
+    }
+
+    // 2026-10-12 (TASK-105): `#/knowledge` 从平铺表换成知识地图页 —— 默认视图
+    // 是**图谱 (canvas)**, 知识点标题只画在画布上、DOM 里没有文本, 所以上面那套
+    // "文本 marker" 断言在这里会**假红** (不是真缺陷)。改为"请求 + 状态"断言,
+    // 更贴合真实语义: 换课后确实按新课程重新取知识地图, 状态与高亮都跟着走。
+    // switchStaysOn() 本身不动 —— `#/reviews` / `#/materials` 仍在复用它。
+    {
+      const table = switchTable();
+      const sandbox = await loadApp(table, { 'ca.course': GP });
+      const route = grab(sandbox, 'route');
+      const switchCourse = grab(sandbox, 'switchCourse');
+      const kmState = () => grab(sandbox, 'KM_STATE');
+      sandbox.window.location.hash = '#/knowledge';
+      useCourse(table, GP);
+      await route();
+      const before = html(sandbox);
+      check('#/knowledge opens the knowledge map for the current course',
+        kmState().courseId === GP && kmState().loaded === true,
+        String(kmState().courseId) + '/' + String(kmState().loaded));
+      check('#/knowledge lands on the graph view by default',
+        kmState().view === 'graph', String(kmState().view));
+      check('#/knowledge renders the knowledge map heading',
+        before.indexOf('知识地图') >= 0, before.slice(0, 200));
+      // 2026-10-12 (TASK-105) 能力保全: 旧平铺页独有的三项能力必须仍可触达。
+      check('#/knowledge still offers the one-click Chinese backfill',
+        before.indexOf('data-action="kp-backfill"') >= 0, before.slice(0, 300));
+      check('#/knowledge still links to the flashcards page',
+        before.indexOf('href="#/flashcards"') >= 0, before.slice(0, 300));
+      const fetchedBefore = sandbox.__fetched.length;
+      useCourse(table, GEO);
+      await switchCourse(GEO);
+      const fresh = sandbox.__fetched.slice(fetchedBefore).join(' | ');
+      check('#/knowledge re-queries the knowledge map with the new course',
+        fresh.indexOf('/api/courses/' + GEO + '/knowledge-map') >= 0, fresh.slice(0, 300));
+      check('#/knowledge loads the new course into the map state',
+        kmState().courseId === GEO, String(kmState().courseId));
+      check('#/knowledge keeps the route after switching course',
+        sandbox.window.location.hash === '#/knowledge', sandbox.window.location.hash);
+      check('#/knowledge persists the new course for reload',
+        sandbox.window.localStorage.getItem('ca.course') === GEO,
+        String(sandbox.window.localStorage.getItem('ca.course')));
+      check('#/knowledge keeps the top-nav highlight on the knowledge entry',
+        JSON.stringify(activeNav(sandbox)) === JSON.stringify(['#/knowledge']),
+        JSON.stringify(activeNav(sandbox)));
+      const bar = sandbox.document.getElementById('course-list').innerHTML;
+      check('#/knowledge moves the sidebar highlight to the new course',
+        (bar.match(/class="active"/g) || []).length === 1 &&
+        new RegExp('<a class="active" href="#/courses/' + GEO + '"').test(bar), bar.slice(0, 200));
+      // 列表视图: 每行「生成卡片」按钮 (能力保全第三项)。
+      vm.runInContext("kmSetView('list');", sandbox);
+      const listOut = html(sandbox);
+      check('#/knowledge list view keeps the per-row flashcard button',
+        listOut.indexOf('data-action="create-flashcard"') >= 0 &&
+        listOut.indexOf('kp-geo') >= 0, listOut.slice(0, 400));
     }
 
     // 概览 / 今日 = **全局页** (2026-09-22 任务书 §5/§11/§13): 左侧换课只换
