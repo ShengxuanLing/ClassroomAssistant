@@ -1158,24 +1158,29 @@ class TestResume:
         """真子进程启动 -> 读同一个数据目录, 结果必须一致。"""
         data_dir = str(tmp_path / "data")
         cid, sid, kp_id, _ = _seed_dir(data_dir)
+        # 仓库根目录从测试文件位置算出, 绝不写死开发机绝对路径: 旧写法
+        # ``sys.path.insert(0, r'D:/Project/Clases')`` + ``cwd="D:/Project/Clases"``
+        # 在 Linux / macOS / CI 上直接 FileNotFoundError (目录不存在), 与
+        # test_multi_course / test_student_today 的同名子进程测试同一先例。
+        repo_root = str(Path(__file__).resolve().parents[1])
         script = (
             "import json, sys\n"
-            "sys.path.insert(0, r'D:/Project/Clases')\n"
+            "sys.path.insert(0, r'%s')\n"
             "from src.application.workspace import Workspace\n"
-            f"ws = Workspace(r'{data_dir}')\n"
-            f"row = ws.learning_workflow_start('{cid}', '{sid}')\n"
+            "ws = Workspace(r'%s')\n"
+            "row = ws.learning_workflow_start(r'%s', r'%s')\n"
             "out = {'has_task': row['has_task'],\n"
             "       'task': (row['current_task'] or {}).get('knowledge_point_id'),\n"
             "       'orderable': row['progress']['orderable']}\n"
             "print(json.dumps(out))\n"
             "ws.close()\n"
-        )
+        ) % (repo_root, data_dir, cid, sid)
         proc = subprocess.run(
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
             timeout=120,
-            cwd="D:/Project/Clases",
+            cwd=repo_root,
         )
         assert proc.returncode == 0, proc.stderr[-2000:]
         payload = json.loads(proc.stdout.strip().splitlines()[-1])

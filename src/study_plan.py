@@ -40,11 +40,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, FrozenSet, Iterable, Mapping, Optional, Tuple
 
-from src.knowledge_dependency import (
-    DependencyCoverageItem,
-    DependencyStatus,
-)
-
 __all__ = [
     "STUDY_PLAN_SCHEMA_VERSION",
     "RULES_VERSION",

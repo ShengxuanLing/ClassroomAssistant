@@ -31,8 +31,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Mapping, Optional
 
 from src.integration import EvidenceIntegrator, ConflictRecord
 from src.knowledge_structure import KnowledgeStructure, KnowledgePoint

@@ -37,7 +37,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 from src.application.errors import InvalidInputError, NotFoundError
 

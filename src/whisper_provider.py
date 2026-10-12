@@ -16,7 +16,7 @@ import threading
 from typing import Any, Optional
 
 from src.asr_provider import (
-    ASRProvider, ASRProviderConfig, ASRProviderErrorCode,
+    ASRProvider, ASRProviderConfig,
     ASRInvalidInputError, ASRConfigurationError, ASRProcessingError,
     ASRUnavailableError, ASRProviderError, TranscriptionResult,
 )

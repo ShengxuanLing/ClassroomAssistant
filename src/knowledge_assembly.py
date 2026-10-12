@@ -52,7 +52,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Iterable, List, Mapping, Optional, Sequence, Union
 
 from src.evidence_store import EvidenceStore
 from src.integration import EvidenceIntegrator

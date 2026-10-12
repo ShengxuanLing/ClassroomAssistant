@@ -12,7 +12,7 @@ Domain 对象 (KnowledgePoint / Evidence / ...) 不得直接暴露给 UI 层。
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Optional
 
 from src.models import (
     ClassSession,

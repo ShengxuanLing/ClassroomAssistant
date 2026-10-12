@@ -10,7 +10,6 @@ domain 层通过 SHA-256 确定性生成, 应用层禁止引入 uuid4 / datetime
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from src.models import (
@@ -23,12 +22,10 @@ from src.models import (
 
 from src.application.dto import course_to_dict, material_to_dict, session_to_dict
 from src.application.errors import (
-    ApplicationError,
     ConflictError,
     StorageError,
     InvalidInputError,
     NotFoundError,
-    map_application_error,
 )
 
 __all__ = ["CourseService"]

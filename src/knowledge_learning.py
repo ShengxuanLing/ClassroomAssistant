@@ -38,7 +38,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, FrozenSet, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
 
 from src.models import Evidence, KnowledgePoint
 

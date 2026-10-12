@@ -1411,6 +1411,9 @@ class TestUi:
             "pageLearn": "#/today",
             "pageLearnKnowledge": "#/today",
             "pageReview": "#/review",
+            # pageCourseReview: 课程级审核深链 (#/courses/<c>/review),
+            # 与 #/review 同属考前复习分区 (TASK-KM-PREMIUM-QA §六.4 修无效课程回退时登记)。
+            "pageCourseReview": "#/review",
             "pageKnowledge": "#/knowledge",
             # pageFlashcards: 卡片挂在知识点分区下 (从知识点页进入), 顶栏没有
             # 独立的卡片项, 所以高亮 #/knowledge —— 与 flashcards.js:7 一致。
@@ -1429,6 +1432,9 @@ class TestUi:
             "pageCourse": "",
             "pageSession": "",
             "pageKnowledgeDetail": "",
+            # pageKnowledgeMap: 探索页不属于任何顶栏分区, 清空
+            # (与 app.js markActiveNav 上方注释表一致)。
+            "pageKnowledgeMap": "",
         }
         js = _app_js()
         observed = {}

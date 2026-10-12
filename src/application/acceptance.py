@@ -51,14 +51,13 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from src.application.errors import InvalidInputError, NotFoundError
-from src.application.runtime import Clock, fixed_clock, utc_now_iso
+from src.application.runtime import Clock, fixed_clock
 from src.application.workspace import Workspace
 from src.asr_provider import MockASRProvider
 from src.models import (
-    BoundingBox,
     Material,
     MaterialType,
     OCRResult,

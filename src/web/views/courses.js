@@ -857,7 +857,13 @@ async function pageCourse(courseId) {
     '<div class="page-head"><div class="crumbs"><a href="#/">' + t('概览') + '</a>' + t(' / 课程') + '</div>' +
     '<h1>' + esc(course.name || course.code || '') + '</h1>' +
     '<p class="subtitle mono small">' + esc(courseIdentity(course)) + '</p>' +
-    '<p class="small"><button type="button" class="small" data-action="course-ai-overview"' +
+    '<p class="small">' +
+    // 知识地图入口: 该页是课程级的只读投影 (#/courses/<id>/knowledge-map),
+    // 此前只存在于路由表里、全站没有任何链接指向它 —— 用户点不到。
+    // 放在课程页头是最短的发现路径。文案复用 km.title (zh/es/ca 三语齐备)。
+    '<a class="small" href="#/courses/' + encodeURIComponent(courseId) + '/knowledge-map">' +
+    esc(t('km.title')) + ' →</a>' +
+    ' <button type="button" class="small" data-action="course-ai-overview"' +
     ' aria-controls="course-ai-overview">' + esc(t('ai.courseOverview')) + '</button></p>' +
     // 有 guia docent 时, 页头三行 (教师/学期/课程语言) 换成 guia 精简摘要 ——
     // 教师/联系人本来就该来自 guia docent, 而且摘要有「查看详情」入口。

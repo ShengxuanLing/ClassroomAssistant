@@ -355,6 +355,8 @@ classroom-data/
   工具上限前未返回，明确记为未完成而非通过。详见
   `docs/task-78-today-classes-restack.md`。
 
+- **2026-10-11（审查报告对账：知识地图入口已闭环 + 跨平台测试路径修复）**：收到外部审查报告（基线 `f3f38ea`、上游已核验 `24d4e73`，列出 P0–P2 与 Bruce 独立审阅 5 条），逐条对账后确认：**P0（`#/courses/<id>/knowledge-map` 路由调用未定义的 `pageKnowledgeMap`）与 P1（知识探索/证据回溯）已在当前工作树的 KM Premium 在制品中闭环** —— `views/knowledge.js::pageKnowledgeMap` 已实现（+483 行），后端 `GET /api/courses/{id}/knowledge-map` 路由与 `Workspace.knowledge_map` 只读投影已在（`endpoints.py:729`、`workspace.py:2855`；证据→材料经 EvidenceStore 解析、断链证据进 `unresolved_evidence_ids` 不充数、空课程返回空数组而非 null），`tests/test_knowledge_map.py` 8 条全绿；`ui_audit.js` **613 全过**、`ui_render_check.js` **314 全过**。报告中的音频时间戳失败（0.7 vs 断言 0.4）在当前代码**已不复现**（`test_evidence_ingestion.py::TestProvenance::test_audio_timestamps_preserved` 通过），不作为本轮变更。**本轮实际修改**：① **P2** —— `tests/test_learning_workflow.py::TestResume::test_restart_in_subprocess_matches_in_process` 的 `sys.path.insert(0, r'D:/Project/Clases')` 与 `cwd="D:/Project/Clases"` 改为由 `Path(__file__)` 计算的仓库根目录（与 `test_multi_course` / `test_student_today` 同名子进程测试同一先例），消除开发机绝对路径依赖、恢复 Linux/CI 可移植性；② **Bruce 第 4 条** —— `README.md` 与 `docs/getting_started.md` 的 AI 配置段收窄绝对化表述：「任何 OpenAI 兼容的服务都行」→「只按 OpenAI 兼容的 `/chat/completions` 契约发请求（标准库 urllib，超时与 429/5xx 退避内置），兼容程度以各家实际行为为准」；「key 不会泄露」→「key 不进 git、不到达浏览器前端（日志 / `--check` / HTTP 响应只有有 / 无两种形状），本机进程内存、运行日志与自建网关审计仍是各自责任面」。**未做**（报告自身要求单独设计或另行授权）：OCR「成功且 0 证据」的状态语义重设计（当前已由 D1/D4 的 warning 行 + `warn.empty.NO_TEXT_EXTRACTED` 可操作文案 + `DOCUMENT_PARSE_FAILED` 区分缓解，`scanned_or_no_text_layer` 元数据在解析层即有）、真实 OCR/ASR 引擎验收、浏览器 E2E 常态化、上游三项本地路径冲突（`src/web/app.js` / `styles.css` / `scripts/backup.bat`）的合并决策。逐项证据见 `docs/review-2026-10-11-optimization.md`。
+
 ---
 
 *本规范是项目的基础指导文件。随着项目发展，可根据实际需要补充和细化。核心原则——证据优先、绝不编造、明确标注不确定性——始终不变。*

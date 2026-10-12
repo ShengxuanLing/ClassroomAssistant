@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional
 
 from src.models import Course, Language, Material, MaterialType
 from src.evidence_store import EvidenceState, EvidenceStore

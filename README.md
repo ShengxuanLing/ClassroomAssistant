@@ -56,8 +56,8 @@ pip install -r requirements.txt
 ## 可选：开启 AI 语义分析
 
 **不配也能用。** 默认关闭，关了就走本地确定性链路；配了之后，处理材料时会自动
-提炼摘要 / 主题 / 知识点。任何 OpenAI 兼容的服务都行（OpenAI、DeepSeek、Kimi、
-自建网关……），三步：
+提炼摘要 / 主题 / 知识点。provider 只按 OpenAI 兼容的 `/chat/completions` 契约发请求（标准库实现，超时与退避内置），OpenAI、DeepSeek、Kimi、
+自建网关等，三步：
 
 **1. 复制模板。** 把 `scripts\ai-env.bat.example` 复制一份，改名成 `ai-env.bat`，
 放在同一个 `scripts\` 目录下。
@@ -83,7 +83,7 @@ set "CLASSROOM_AI_MODEL=你的模型名"
 python -m src.application.cli --check     # 输出里应有 ai_enabled = True / ai_mode = 'real'
 ```
 
-`scripts\ai-env.bat` 已在 `.gitignore` 里，**不会被提交**，key 不会泄露。改完需要
+`scripts\ai-env.bat` 已在 `.gitignore` 里，**不会被提交**；key 只从进程环境读入，**不到达浏览器前端**（日志与 `--check` 输出只显示「有 / 无」）。本机进程内存、运行日志与自建网关的审计仍是各自的责任面。改完需要
 **重启**才生效（环境变量只在进程启动时读一次）。
 
 进阶：也可以在仓库根目录建 `.env` 写同样的键（优先级更高）；视觉模型、超时、

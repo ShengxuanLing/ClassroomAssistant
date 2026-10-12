@@ -1,11 +1,10 @@
 from __future__ import annotations
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from src.knowledge_structure import KnowledgeStructure, KnowledgePoint
-from src.knowledge_validation import KnowledgeValidator
 from src.integration import ConflictRecord
 
 # P1-4: ``ValidationStatus`` / ``ReviewStatus`` 的真源已收口到 ``src.models``

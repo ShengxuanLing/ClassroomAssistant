@@ -42,7 +42,7 @@ from src.application.config import (
     OCR_KINDS,
     load_local_environment,
 )
-from src.application.errors import ApplicationError, ConfigurationError, PortInUseError
+from src.application.errors import ApplicationError, PortInUseError
 from src.application.logging_setup import configure_logging, log_event
 from src.application.workspace import APPLICATION_NAME, APPLICATION_VERSION
 

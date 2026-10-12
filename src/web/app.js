@@ -1350,7 +1350,7 @@ function renderCourseSwitcher(courses) {
  *
  *   顶栏项              归属它的路由
  *   #/today             #/today, #/learn, #/learn/<kp>, #/courses/<c>/learn/<kp>
- *   #/review            #/review
+ *   #/review            #/review, #/courses/<c>/review
  *   #/                  #/
  *   #/knowledge         #/knowledge, #/flashcards
  *   #/materials         #/materials
@@ -1361,7 +1361,7 @@ function renderCourseSwitcher(courses) {
  *   #/review-pack       #/review-pack
  *
  *   清空 ('')           #/courses/<c>, #/courses/<c>/sessions/<s>,
- *                       #/courses/<c>/knowledge/<k>
+ *                       #/courses/<c>/knowledge/<k>, #/courses/<c>/knowledge-map
  *
  * 清空的那三页是"课程内部"的详情, 顶栏没有对应分区, 而且它们各有多条进入路径
  * (课程页 / 知识点 / 今日 / 错题本…) —— 跟随"上一页"会得到一个由
@@ -1487,6 +1487,8 @@ document.addEventListener('click', (event) => {
     // TASK-79: 按需翻译。幂等 (后端命中缓存不再调 LLM), 失败可重试, 且
     // 无论成败都不改原文与证据 —— 所以这里不做任何本地回滚。
     actionTranslateKp(courseId, knowledgeId, target);
+  } else if (action.indexOf('km-') === 0) {
+    kmAction(action, target);
   } else if (action === 'kp-backfill') {
     // TASK-81 §A2: 批量补翻。同样的幂等口径, 只是把范围从一条换成整门课;
     // 任务坞占位, 页面不等它。
@@ -1573,6 +1575,12 @@ async function route() {
     // ---- TASK-KM-PREMIUM-EXECUTION: Knowledge Map Premium 探索页 ----
     else if (parts[0] === 'courses' && parts.length === 3 && parts[2] === 'knowledge-map') {
       await pageKnowledgeMap(parts[1]);
+    }
+    // 审核页: ``#/courses/<id>/review`` → 课程范围的审核集合。
+    // (无效课程的报错在 pageCourseReview 里, 路由体只留纯 parts 谓词 ——
+    // test_web_ui_invariants 把路由体内每条 if 都编译成谓词, 非谓词会红。)
+    else if (parts[0] === 'courses' && parts.length === 3 && parts[2] === 'review') {
+      await pageCourseReview(parts[1]);
     }
     // 练习页的学生段是**可选**的 (``#/courses/<c>/exercises/<e>`` 与
     // ``#/courses/<c>/exercises/<e>/<sid>`` 都在用), 所以这条接受 4 与 5。

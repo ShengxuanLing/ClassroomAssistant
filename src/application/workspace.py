@@ -2862,27 +2862,79 @@ class Workspace:
 
         # 每个知识点的 evidence_refs 直接取自 KP 记录, 不再逐个 trace:
         # 画布需要的是"这个点有多少来源", 而不是每条证据的正文。
+        #
+        # 口径 (TASK-KM-PREMIUM-QA P0 实测后明确, 勿回退):
+        # - ``evidence_counts``: {kp_id: 该点引用数}, 条目数 == KP 数,
+        #   不是独立证据数。
+        # - ``stats.evidence_count``: 去重后的**独立证据**数。
+        # - ``stats.evidence_ref_count``: 引用/关联总数 (sum)。
+        # 真实案例 course-32dde014868219be: 61 个 KP 各 1 条引用, 但去重后
+        # 只有 6 条独立证据 (11/9/6/11/12/12 共享), 所以 61 vs 6 都是对的,
+        # 只是口径不同 —— 以前只报 61 并标"条证据"是错的。
         evidence_counts: dict[str, int] = {}
         for kp in kps:
             evidence_counts[str(kp.get("knowledge_id"))] = len(
                 kp.get("evidence_refs") or []
             )
 
+        def _ref_evidence_id(ref: Any) -> str:
+            if isinstance(ref, Mapping):
+                return str(ref.get("evidence_id") or "")
+            return str(ref or "")
+
+        distinct_evidence_ids: set[str] = set()
+        for kp in kps:
+            for ref in kp.get("evidence_refs") or []:
+                eid = _ref_evidence_id(ref)
+                if eid:
+                    distinct_evidence_ids.add(eid)
+
         # 材料 -> 它支撑哪些知识点 (反向索引)。这是 UI-only 分组的唯一
         # 合法依据; 它来自 evidence.source.material_id, 不是编造的。
+        #
+        # 曾经的真实缺陷: evidence_refs 里是**证据 ID 字符串**
+        # (如 doc-evidence-*), 旧代码把它们原样当材料 ID 用, 导致返回的键
+        # 全是证据 ID (真实材料 mat-* 一个不在键里), 前端按材料查全 miss。
+        # 现在经 EvidenceStore 逐条解析到真实 material_id; 解析不到的进
+        # unresolved, 绝不伪装成材料。
+        evidence_to_material: dict[str, str] = {}
+        unresolved_evidence_ids: set[str] = set()
+        for eid in sorted(distinct_evidence_ids):
+            mid = ""
+            try:
+                evidence = self.store.get(eid)
+                if evidence is not None and evidence.source_reference is not None:
+                    mid = str(evidence.source_reference.material_id or "")
+            except Exception:  # noqa: BLE001 - 断链证据不应让只读投影报 500
+                mid = ""
+            if mid:
+                evidence_to_material[eid] = mid
+            else:
+                unresolved_evidence_ids.add(eid)
+        # dict 形状 ref 自带 material_id 时 (旧 AI 路径) 仅作回退, 且只在
+        # store 解析失败时用 —— store 永远优先。
+        for kp in kps:
+            for ref in kp.get("evidence_refs") or []:
+                if not isinstance(ref, Mapping):
+                    continue
+                eid = _ref_evidence_id(ref)
+                if eid and eid in unresolved_evidence_ids:
+                    fallback = str(ref.get("material_id") or "")
+                    if fallback:
+                        evidence_to_material[eid] = fallback
+                        unresolved_evidence_ids.discard(eid)
+
         material_to_kps: dict[str, list[str]] = {}
         for kp in kps:
             kid = str(kp.get("knowledge_id"))
             for ref in kp.get("evidence_refs") or []:
-                mid = ""
-                if isinstance(ref, dict):
-                    mid = str(ref.get("material_id") or "")
-                else:
-                    mid = str(ref)
+                mid = evidence_to_material.get(_ref_evidence_id(ref), "")
                 if mid:
                     material_to_kps.setdefault(mid, [])
                     if kid not in material_to_kps[mid]:
                         material_to_kps[mid].append(kid)
+        for mid in material_to_kps:
+            material_to_kps[mid] = sorted(material_to_kps[mid])
 
         return {
             "course_id": course_id,
@@ -2890,6 +2942,7 @@ class Workspace:
             "materials": materials,
             "evidence_counts": evidence_counts,
             "material_to_knowledge": material_to_kps,
+            "unresolved_evidence_ids": sorted(unresolved_evidence_ids),
             "topics": [],
             "knowledge_memberships": [],
             "relations": deps.get("outgoing", []) if isinstance(deps, dict) else [],
@@ -2897,7 +2950,10 @@ class Workspace:
             "stats": {
                 "knowledge_point_count": len(kps),
                 "material_count": len(materials),
-                "evidence_count": sum(evidence_counts.values()),
+                # 独立证据 = 去重引用中能在 EvidenceStore 里解析到的;
+                # 断链引用只进 evidence_ref_count 与 unresolved, 不充数。
+                "evidence_count": len(evidence_to_material),
+                "evidence_ref_count": sum(evidence_counts.values()),
                 "topic_count": 0,
                 "relation_count": len(deps.get("outgoing", [])) if isinstance(deps, dict) else 0,
                 "conflict_count": len(conflicts or []),

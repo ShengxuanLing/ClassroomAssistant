@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from functools import partial
 from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequence
 
 from src.answer_evaluation import (
@@ -381,6 +382,16 @@ class WorkspacePersistence:
     # 材料注册表
     # ------------------------------------------------------------------
 
+    def _save_material_record(
+        self, record: dict[str, Any], material_id: str
+    ) -> None:
+        """单条材料记录的"记录 + 处理状态 + 证据链"三写 (供 partial 绑定)。"""
+        self._repos.materials.save_record(record)
+        self._repos.materials.processing.save(record)
+        self._repos.materials.replace_evidence(
+            material_id, record.get("evidence_ids") or ()
+        )
+
     def save_material_records(
         self, records: Iterable[Mapping[str, Any]]
     ) -> int:
@@ -399,15 +410,12 @@ class WorkspacePersistence:
         with self._repos.transaction():
             for record in pending:
                 material_id = str(record["material_id"])
-
-                def _save_one(record=record, material_id=material_id) -> None:
-                    self._repos.materials.save_record(record)
-                    self._repos.materials.processing.save(record)
-                    self._repos.materials.replace_evidence(
-                        material_id, record.get("evidence_ids") or ()
-                    )
-
-                self._write("material", _save_one)
+                # partial 绑定当轮的值: 与"默认参数捕获循环变量"等价,
+                # 但不会触发"可变默认实参"告警, 语义也更直白。
+                self._write(
+                    "material",
+                    partial(self._save_material_record, record, material_id),
+                )
         return len(pending)
 
     def load_material_records(self, course_id: Optional[str] = None) -> list[dict[str, Any]]:

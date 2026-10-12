@@ -27,7 +27,7 @@ from src.application.errors import PortInUseError
 from src.application.logging_setup import log_event
 from src.application.workspace import Workspace
 from src.api.endpoints import MAX_UPLOAD_BYTES, build_router
-from src.api.responses import ApiResponse, failure, json_bytes, success
+from src.api.responses import ApiResponse, failure, json_bytes
 from src.api.router import NotFoundRoute, Request, Router, parse_query
 
 __all__ = [

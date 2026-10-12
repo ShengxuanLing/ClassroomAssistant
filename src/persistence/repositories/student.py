@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 from src.persistence.repositories.base import DocumentRepository
 from src.student_learning import (

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
-from src.models import Evidence, SourceReference, VerificationStatus
+from src.models import Evidence, VerificationStatus
 
 
 class RelationshipType(str, Enum):
@@ -449,21 +449,6 @@ class EvidenceIntegrator:
         return EvidenceIntegrator._negation_conflict_from_statements(
             neg_a, pos_a, neg_b, pos_b
         )
-
-    @staticmethod
-    def _find_negated_statements(text: str, negation_words: list[str]) -> list[str]:
-        statements = re.split(r"[.;]", text)
-        negated: list[str] = []
-        for stmt in statements:
-            stmt = stmt.strip()
-            if not stmt:
-                continue
-            for word in negation_words:
-                pattern = _negation_pattern(word)
-                if re.search(pattern, stmt, re.IGNORECASE):
-                    negated.append(stmt)
-                    break
-        return negated
 
     @staticmethod
     def _affirm(statement: str) -> str:

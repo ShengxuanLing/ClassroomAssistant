@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import os
 from typing import List, Optional
 
 from src.models import (
     Material,
     MaterialType,
     Evidence,
-    Language,
-    Confidence,
-    EvidenceType,
-    SourceReference,
     ClassSession,
 )
 from src.note_parser import NoteParser

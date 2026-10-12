@@ -38,7 +38,6 @@ from src.exercise_generation import (
     ExerciseTemplateGenerator,
     GenerationConfig,
     GenerationRefusal,
-    TemplateId,
 )
 
 __all__ = ["ExerciseWorkflow", "WORKFLOW_VERSION"]

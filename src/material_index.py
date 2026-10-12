@@ -3,7 +3,6 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from src.models import Material, MaterialType, Language
 
 _EXT_TO_TYPE = {

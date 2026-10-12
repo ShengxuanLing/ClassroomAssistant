@@ -32,7 +32,7 @@ payload 里的 ``evidence_refs`` 仍然保留, 两者由仓储**从同一对象*
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Optional
 
 from src.integration import ConflictRecord
 from src.knowledge_structure import KnowledgeStructure, Relationship

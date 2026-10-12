@@ -41,7 +41,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Union
 
-from src.models import Evidence, EvidenceType, Language, SourceReference
+from src.models import Evidence, EvidenceType, SourceReference
 
 # ---------------------------------------------------------------------------
 # Constants

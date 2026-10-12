@@ -42,7 +42,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Union
 
 from src.application.errors import InvalidInputError, NotFoundError
 
@@ -653,11 +653,16 @@ class MistakesView:
         *,
         knowledge_id: Optional[str] = None,
         _preloaded: Optional[
-            tuple[
-                Sequence[Mapping[str, Any]],
-                Mapping[str, Mapping[str, Any]],
-                Mapping[str, Mapping[str, Any]],
-                ...,
+            Union[
+                tuple[
+                    Sequence[Mapping[str, Any]],
+                    Mapping[str, Mapping[str, Any]],
+                ],
+                tuple[
+                    Sequence[Mapping[str, Any]],
+                    Mapping[str, Mapping[str, Any]],
+                    Mapping[str, Mapping[str, Any]],
+                ],
             ]
         ] = None,
     ) -> list[dict[str, Any]]:

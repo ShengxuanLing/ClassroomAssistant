@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import secrets
-from typing import Callable, Optional
 
 # P1-4: ``Clock`` / ``utc_now_iso`` / ``fixed_clock`` 的真源已收口到中立的
 # ``src.common.clock`` (持久化层与应用层都需要注入式时钟, 但二者不得互相依赖,

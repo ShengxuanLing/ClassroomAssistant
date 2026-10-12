@@ -13,7 +13,7 @@ domain 对象 (EvidenceStore / KnowledgeOrganizationService / ...),
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional
 
 from src.models import Course, Evidence
 from src.evidence_store import EvidenceStore
@@ -34,7 +34,6 @@ from src.application.runtime import Clock
 from src.application.errors import (
     ApplicationError,
     InvalidInputError,
-    NotFoundError,
     map_application_error,
 )
 

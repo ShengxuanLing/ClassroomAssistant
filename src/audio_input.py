@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from src.models import Material, MaterialType
+from src.models import Material
 
 # Authoritative audio extension set for this layer.
 # Mirrors MaterialIndex._EXT_TO_TYPE and

@@ -81,6 +81,16 @@ def test_get_knowledge_points_sorted_by_id():
     assert isinstance(result[0], dict)
 
 
+def test_all_registered_kp_ids_sorted_by_id():
+    # Qodana PyCallingNonCallable 回归: registered_knowledge_point_ids 是
+    # frozenset property, 不能加 () 调用 (曾报 TypeError)。
+    org = _org_service()
+    _register(org, _kp("b-kp"))
+    _register(org, _kp("a-kp"))
+    svc = KnowledgeService(org)
+    assert svc._all_registered_kp_ids() == ["a-kp", "b-kp"]
+
+
 def test_get_knowledge_point_not_found():
     org = _org_service()
     _register(org, _kp("kp1"))

@@ -25,7 +25,7 @@ spec Task 41 要求答案保存 ``submitted_at``, 因此时间戳作为**运行�
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from src.application.errors import InvalidInputError, NotFoundError
 from src.application.runtime import Clock, utc_now_iso

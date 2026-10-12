@@ -39,7 +39,6 @@ from typing import Any, Callable, Optional
 
 from src.application.config import AppConfig
 from src.application.errors import ApplicationError, PortInUseError
-from src.application.logging_setup import get_logger
 from src.application.workspace import APPLICATION_NAME, APPLICATION_VERSION
 
 __all__ = [

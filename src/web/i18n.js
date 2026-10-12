@@ -94,6 +94,49 @@ const I18N = {
     'knowledge.aiSummaryNotice': '本知识点由 AI 分析生成：上方标题与正文是抽象总结，原文只保留在下方证据链中。',
     'knowledge.fallbackNotice': '这是确定性 fallback 的原文证据摘录，不是 AI 总结。请运行 AI 分析生成抽象知识点。',
     'session.missing': '课堂记录缺失',
+    // ---- Knowledge Map Premium (km.*) ----
+    'km.title': '知识地图',
+    'km.subtitle': '按来源探索知识点 · {course}',
+    'km.statKnowledge': '知识点',
+    'km.statClustered': '已归类',
+    'km.statOrphans': '未归类',
+    'km.statEvidence': '条证据',
+    'km.statEvidenceRefs': '处引用',
+    'km.statMaterials': '份材料',
+    'km.conflictTag': '冲突',
+    'km.conflictNote': '{n} 处冲突待处理',
+    'km.conflictLink': '前往审核',
+    'km.searchLabel': '搜索知识点',
+    'km.searchPlaceholder': '搜索知识点…',
+    'km.clearSearch': '清除',
+    'km.filterAll': '全部来源',
+    'km.filterSource': '按来源筛选',
+    'km.viewLabel': '视图',
+    'km.view.explore': '探索',
+    'km.view.list': '列表',
+    'km.view.materials': '材料',
+    'km.legendTitle': '图例',
+    'km.legendGrouping': '按来源分组',
+    'km.legendNoRelations': '暂无知识关系',
+    'km.legendClick': '点击查看详情',
+    'km.colSource': '来源',
+    'km.evidenceCount': '{n} 条证据',
+    'km.noEvidence': '暂无证据',
+    'km.clusterEmpty': '暂无知识点',
+    'km.unknownMaterial': '未知材料（证据指向的材料不在本课程注册表中）',
+    'km.unlocated': '未定位',
+    'km.unlocatedNote': '这些知识点尚未关联到任何材料',
+    'km.uiOnlyGrouping': '仅界面分组 · 非课程层级',
+    'km.supports': '支撑的知识点',
+    'km.supportsHint': '来自证据来源的反向关联',
+    'km.supportsNone': '暂无知识点引用此材料',
+    'km.supportCount': '{n} 个知识点',
+    'km.courseEmpty': '该课程暂无知识点。',
+    'km.noMaterials': '该课程暂无材料。',
+    'km.searchEmpty': '未找到匹配的知识点。',
+    'km.needCourse': '需要选择课程',
+    'km.courseNotFound': '课程不存在',
+    'km.backToCourse': '返回课程',
     // ---- Task 41: 练习 / 作答 / 评估 ----
     'ex.title': '练习', 'ex.prompt': '题目', 'ex.type': '题型',
     'ex.difficulty': '难度', 'ex.knowledgePoints': '关联知识点',
@@ -564,6 +607,49 @@ const I18N = {
     'knowledge.aiSummaryNotice': 'Este punto fue generado por IA: el título y el texto son una síntesis; la fuente original se conserva solo en la cadena de evidencia.',
     'knowledge.fallbackNotice': 'Este es un extracto de evidencia del fallback determinista, no un resumen de IA. Ejecuta el análisis IA para generar una síntesis conceptual.',
     'session.missing': 'Sesión no disponible',
+    // ---- Knowledge Map Premium (km.*) ----
+    'km.title': 'Mapa de conocimiento',
+    'km.subtitle': 'Explora los puntos por origen · {course}',
+    'km.statKnowledge': 'Puntos de conocimiento',
+    'km.statClustered': 'Agrupados',
+    'km.statOrphans': 'Sin grupo',
+    'km.statEvidence': 'Evidencias',
+    'km.statEvidenceRefs': 'Referencias',
+    'km.statMaterials': 'Materiales',
+    'km.conflictTag': 'Conflicto',
+    'km.conflictNote': '{n} conflictos pendientes',
+    'km.conflictLink': 'Ir a revision',
+    'km.searchLabel': 'Buscar puntos de conocimiento',
+    'km.searchPlaceholder': 'Buscar puntos de conocimiento...',
+    'km.clearSearch': 'Borrar',
+    'km.filterAll': 'Todos los origenes',
+    'km.filterSource': 'Filtrar por origen',
+    'km.viewLabel': 'Vista',
+    'km.view.explore': 'Explorar',
+    'km.view.list': 'Lista',
+    'km.view.materials': 'Materiales',
+    'km.legendTitle': 'Leyenda',
+    'km.legendGrouping': 'Agrupado por origen',
+    'km.legendNoRelations': 'Sin relaciones de conocimiento',
+    'km.legendClick': 'Clic para ver detalles',
+    'km.colSource': 'Origen',
+    'km.evidenceCount': '{n} evidencias',
+    'km.noEvidence': 'Sin evidencia',
+    'km.clusterEmpty': 'Sin puntos de conocimiento',
+    'km.unknownMaterial': 'Material desconocido (el material citado por la evidencia no esta registrado en este curso)',
+    'km.unlocated': 'Sin ubicar',
+    'km.unlocatedNote': 'Estos puntos aun no se asocian a ningun material',
+    'km.uiOnlyGrouping': 'Agrupacion solo de interfaz - no es jerarquia del curso',
+    'km.supports': 'Puntos que respalda',
+    'km.supportsHint': 'Asociacion inversa desde el origen de la evidencia',
+    'km.supportsNone': 'Ningun punto cita este material',
+    'km.supportCount': '{n} puntos de conocimiento',
+    'km.courseEmpty': 'Esta asignatura aun no tiene puntos de conocimiento.',
+    'km.noMaterials': 'Esta asignatura aun no tiene material.',
+    'km.searchEmpty': 'No se encontraron puntos de conocimiento coincidentes.',
+    'km.needCourse': 'Se requiere un curso',
+    'km.courseNotFound': 'Curso no encontrado',
+    'km.backToCourse': 'Volver al curso',
     'ex.title': 'Ejercicios', 'ex.prompt': 'Enunciado', 'ex.type': 'Tipo',
     'ex.difficulty': 'Dificultad', 'ex.knowledgePoints': 'Puntos de conocimiento',
     'ex.prerequisites': 'Prerrequisitos', 'ex.basis': 'Base del enunciado (evidencia original)',
@@ -1002,6 +1088,49 @@ const I18N = {
     'knowledge.aiSummaryNotice': 'Aquest punt l’ha generat la IA: el títol i el text són una síntesi; la font original només es conserva a la cadena d’evidències.',
     'knowledge.fallbackNotice': 'Aquest és un extracte d’evidència del fallback determinista, no un resum de la IA. Executa l’anàlisi IA per generar una síntesi conceptual.',
     'session.missing': 'Sessió no disponible',
+    // ---- Knowledge Map Premium (km.*) ----
+    'km.title': 'Mapa de coneixement',
+    'km.subtitle': 'Explora els punts per origen · {course}',
+    'km.statKnowledge': 'Punts de coneixement',
+    'km.statClustered': 'Agrupats',
+    'km.statOrphans': 'Sense grup',
+    'km.statEvidence': 'Evidencies',
+    'km.statEvidenceRefs': 'Referencies',
+    'km.statMaterials': 'Materials',
+    'km.conflictTag': 'Conflicte',
+    'km.conflictNote': '{n} conflictes pendents',
+    'km.conflictLink': 'Anar a revision',
+    'km.searchLabel': 'Cerca punts de coneixement',
+    'km.searchPlaceholder': 'Cerca punts de coneixement...',
+    'km.clearSearch': 'Esborrar',
+    'km.filterAll': 'Tots els origens',
+    'km.filterSource': 'Filtrar per origen',
+    'km.viewLabel': 'Vista',
+    'km.view.explore': 'Explorar',
+    'km.view.list': 'Llista',
+    'km.view.materials': 'Materials',
+    'km.legendTitle': 'Llegenda',
+    'km.legendGrouping': 'Agrupat per origen',
+    'km.legendNoRelations': 'Sense relacions de coneixement',
+    'km.legendClick': 'Clic per veure detalls',
+    'km.colSource': 'Origen',
+    'km.evidenceCount': '{n} evidencies',
+    'km.noEvidence': 'Sense evidencia',
+    'km.clusterEmpty': 'Sense punts de coneixement',
+    'km.unknownMaterial': 'Material desconegut (el material citat per l-evidencia no esta registrat en aquest curs)',
+    'km.unlocated': 'Sense ubicar',
+    'km.unlocatedNote': 'Aquests punts encara no s-associen a cap material',
+    'km.uiOnlyGrouping': 'Agrupacio nomes d-interficie - no es jerarquia del curs',
+    'km.supports': 'Punts que respon',
+    'km.supportsHint': 'Associacio inversa des de l-origen de l-evidencia',
+    'km.supportsNone': 'Cap punt cita aquest material',
+    'km.supportCount': '{n} punts de coneixement',
+    'km.courseEmpty': 'Aquesta assignatura encara no te punts de coneixement.',
+    'km.noMaterials': 'Aquesta assignatura encara no te material.',
+    'km.searchEmpty': 'No s-han trobat punts de coneixement coincidentes.',
+    'km.needCourse': 'Cal un curs',
+    'km.courseNotFound': 'Curs no trobat',
+    'km.backToCourse': 'Tornar al curs',
     'ex.title': 'Exercicis', 'ex.prompt': 'Enunciat', 'ex.type': 'Tipus',
     'ex.difficulty': 'Dificultat', 'ex.knowledgePoints': 'Punts de coneixement',
     'ex.prerequisites': 'Prerequisits', 'ex.basis': "Base de l'enunciat (evidència original)",
@@ -1628,6 +1757,7 @@ const TRANSLATIONS = {
     '处理步骤': 'Pasos de procesamiento',
     '没有处理步骤可显示。': 'No hay pasos de procesamiento que mostrar.',
     '课程选择判定失败，已按列表顺序显示。': 'No se pudo determinar el curso seleccionado; se muestra en el orden de la lista.',
+    '路径': 'Ruta',
   },
   ca: {
     '时间线': 'Línia de temps',
@@ -1822,6 +1952,7 @@ const TRANSLATIONS = {
     '处理步骤': 'Passos de processament',
     '没有处理步骤可显示。': 'No hi ha passos de processament per mostrar.',
     '课程选择判定失败，已按列表顺序显示。': 'No s\'ha pogut determinar el curs seleccionat; es mostra per ordre de llista.',
+    '路径': 'Ruta',
   },
 };
 
@@ -1835,16 +1966,22 @@ const TRANSLATIONS = {
  * 第 3 条是刻意的: 中文模式下 TRANSLATIONS 根本不参与, 所以**中文界面与
  * 引入译文表之前逐字节一致**; 缺译的西语/加泰语则退化成中文, 不显示内部 key。
  */
-function t(key) {
+function t(key, vars) {
   const table = I18N[state.lang] || I18N.zh;
-  if (Object.prototype.hasOwnProperty.call(table, key)) return table[key];
-  const fallback = I18N.zh;
-  if (Object.prototype.hasOwnProperty.call(fallback, key)) return fallback[key];
-  const translated = TRANSLATIONS[state.lang];
-  if (translated && Object.prototype.hasOwnProperty.call(translated, key)) {
-    return translated[key];
+  let out;
+  if (Object.prototype.hasOwnProperty.call(table, key)) out = table[key];
+  else if (Object.prototype.hasOwnProperty.call(I18N.zh, key)) out = I18N.zh[key];
+  else if (TRANSLATIONS[state.lang] &&
+           Object.prototype.hasOwnProperty.call(TRANSLATIONS[state.lang], key)) {
+    out = TRANSLATIONS[state.lang][key];
+  } else {
+    return key;
   }
-  return key;
+  if (vars && typeof out === 'string') {
+    out = out.replace(/\{(\w+)\}/g, (m, name) =>
+      Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : m);
+  }
+  return out;
 }
 
 

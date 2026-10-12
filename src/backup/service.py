@@ -78,7 +78,7 @@ import os
 import shutil
 import zipfile
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from src.application.data_dirs import (
     DATA_LAYOUT_DIRS,
@@ -87,7 +87,6 @@ from src.application.data_dirs import (
     file_sha256,
     iter_files,
     remove_quietly,
-    safe_join,
 )
 from src.application.runtime import Clock, utc_now_iso
 from src.backup.archive import (

@@ -565,6 +565,77 @@ function trace() {
 }
 
 /**
+ * Knowledge Map (``GET /api/courses/<id>/knowledge-map``) 夹具。
+ *
+ * 刻意复刻真实口径 (TASK-KM-PREMIUM-QA P0): 3 个 KP / 2 份材料 /
+ * **2 条独立证据** / **3 处引用** —— kp-1 与 kp-2 共享 evid-1。
+ * 谁把引用总数 (3) 标成证据数, 下面的口径断言立刻红。
+ * 全 ASCII: es/ca 下渲染出 CJK 就一定是界面文案漏译。
+ */
+function knowledgeMap(overrides) {
+  return Object.assign(
+    {
+      course_id: COURSE_ID,
+      knowledge_points: [
+        knowledgePoint(),
+        knowledgePoint({
+          knowledge_id: 'kp-2',
+          title: 'Dominio de una funcion',
+          content: 'El dominio es el conjunto de entrada.',
+          evidence_refs: ['evid-1'],
+        }),
+        knowledgePoint({
+          knowledge_id: 'kp-3',
+          title: 'Rango de una funcion',
+          content: 'El rango es el conjunto de salida.',
+          evidence_refs: ['evid-2'],
+        }),
+        // 零证据的知识点: 真实存在的一类 (另两门课有), 必须进"未定位"组,
+        // 不得隐藏, 不得编造归属。
+        knowledgePoint({
+          knowledge_id: 'kp-orphan',
+          title: 'Idea sin evidencia',
+          content: 'Una idea aun sin respaldo.',
+          evidence_refs: [],
+        }),
+      ],
+      materials: [
+        material(),
+        material({
+          material_id: 'material-2',
+          filename: 'pizarra-04.png',
+          extension: '.png',
+          material_type: 'image',
+          source_type: 'image',
+          relative_path: 'images/pizarra-04.png',
+        }),
+      ],
+      evidence_counts: { 'kp-1': 1, 'kp-2': 1, 'kp-3': 1, 'kp-orphan': 0 },
+      material_to_knowledge: {
+        'material-1': ['kp-1', 'kp-2'],
+        'material-2': ['kp-3'],
+      },
+      unresolved_evidence_ids: [],
+      topics: [],
+      knowledge_memberships: [],
+      relations: [],
+      conflicts: [],
+      stats: {
+        knowledge_point_count: 4,
+        material_count: 2,
+        evidence_count: 2,
+        evidence_ref_count: 3,
+        topic_count: 0,
+        relation_count: 0,
+        conflict_count: 0,
+      },
+      summary: {},
+    },
+    overrides
+  );
+}
+
+/**
  * TASK-79: 知识点级中文层的夹具。
  *
  * **全 ASCII**: 中文解释的夹具内容故意写成 ASCII 占位串, 而不是真中文。
@@ -1012,6 +1083,8 @@ function routes() {
   table['/api/courses'] = { courses: [course()] };
   table['/api/courses/' + COURSE_ID] = course();
   table['/api/courses/' + COURSE_ID + '/workspace'] = courseWorkspace();
+  // Knowledge Map: 3 KP / 2 材料 / 2 独立证据 / 3 处引用 (kp-1 与 kp-2 共享)。
+  table['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap();
   table['/api/courses/' + COURSE_ID + '/review'] = courseReview();
   table['/api/courses/' + COURSE_ID + '/review-summary'] = {
     course_id: COURSE_ID,
@@ -1540,6 +1613,16 @@ function emptyRoutes() {
     study: { available: false, course_id: null, student_id: null, note: 'No learning state yet', items: [], items_total: 0 },
     counts: { courses_today: 0, sessions_today: 0, pending_materials: 0, pending_review: 0, study_items: 0 },
   });
+  table['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap({
+    knowledge_points: [],
+    materials: [],
+    evidence_counts: {},
+    material_to_knowledge: {},
+    stats: {
+      knowledge_point_count: 0, material_count: 0, evidence_count: 0,
+      evidence_ref_count: 0, topic_count: 0, relation_count: 0, conflict_count: 0,
+    },
+  });
   table['/api/courses/' + COURSE_ID + '/workspace'] = courseWorkspace({
     sessions: [], pending_review: [], pending_review_ids: [], recent_materials: [],
     counts: { sessions: 0, materials: 0, evidence: 0, knowledge_points: 0, pending_review: 0 },
@@ -1796,6 +1879,8 @@ const PAGES = [
   { name: 'review', args: [] },
   // Task 68: 多课程总览
   { name: 'myCourses', args: [] },
+  // Knowledge Map Premium: 按材料分簇的知识点探索器。
+  { name: 'knowledgeMap', args: [COURSE_ID] },
 ];
 
 function pageByName(name) {
@@ -3848,6 +3933,220 @@ async function audit() {
       /\.card-zh\s*\{/.test(CSS));
     check('the Chinese layer never reuses the original block markup',
       !/renderCardZh[\s\S]{0,400}originalBlock/.test(VIEWS_FLASHCARDS));
+  }
+
+  // ---- 12) Knowledge Map: 口径 / 分组 / 搜索 / 视图 / 路由 ---------------
+  //
+  // 夹具口径 (见 knowledgeMap()): 3 KP / 2 材料 / 2 独立证据 / 3 处引用。
+  // 下面每一条都是 TASK-KM-PREMIUM-QA 修掉的真实缺陷的形状:
+  //   - 引用总数标成证据数 (后端曾经 sum, 前端曾经重算 sum);
+  //   - 分组键是证据 ID 而不是材料 ID (前端按材料查全 miss, 空 <h2>);
+  //   - `#/courses/<id>/review` 对无效课程静默回退到别的课。
+  {
+    const table = routes();
+    const sandbox = await renderPage(pageByName('knowledgeMap'), table, 'zh');
+    const out = html(sandbox);
+    const evLabel = t_zh(sandbox, 'km.statEvidence');
+    const refLabel = t_zh(sandbox, 'km.statEvidenceRefs');
+
+    // 口径: 证据是去重数 (2), 引用另起一项 (3), 两数同时在, 不互相冒充。
+    check('km stats show the distinct evidence count',
+      out.indexOf('<b>2</b>' + evLabel) >= 0, out.slice(0, 500));
+    check('km stats show the ref total as its own stat',
+      out.indexOf('<b>3</b>' + refLabel) >= 0, out.slice(0, 500));
+    check('km stats never label the ref sum as evidence',
+      out.indexOf('<b>3</b>' + evLabel) === -1, out.slice(0, 500));
+    check('km stats bar has six stats',
+      (out.match(/class="km-stat"/g) || []).length === 6, out.slice(0, 500));
+
+    // 分组: 按真实材料分簇, 标题非空, 每个点都能进详情。
+    check('km explore groups by the real materials',
+      out.indexOf('clase-03.mp3') >= 0 && out.indexOf('pizarra-04.png') >= 0,
+      out.slice(0, 500));
+    check('km explore never renders an empty cluster title',
+      out.indexOf('<h2></h2>') === -1, out.slice(0, 500));
+    check('km explore links every point to its detail page',
+      ['kp-1', 'kp-2', 'kp-3', 'kp-orphan'].every((kid) =>
+        out.indexOf('#/courses/' + encodeURIComponent(COURSE_ID) +
+          '/knowledge/' + encodeURIComponent(kid)) >= 0), out.slice(0, 500));
+    // 零证据的点进"未定位"组: 计数 1, 标题在, 链接受, 不编归属。
+    check('km shows zero-evidence points as unlocated, not hidden',
+      out.indexOf('<b>1</b>' + t_zh(sandbox, 'km.statOrphans')) >= 0 &&
+      out.indexOf(t_zh(sandbox, 'km.unlocated')) >= 0 &&
+      out.indexOf('Idea sin evidencia') >= 0, out.slice(0, 500));
+    check('km explore marks the grouping as UI-only, not a hierarchy',
+      out.indexOf(t_zh(sandbox, 'km.uiOnlyGrouping')) >= 0, out.slice(0, 500));
+    check('km renders no bare translation keys',
+      out.indexOf('km.') === -1, out.slice(0, 500));
+
+    // 搜索: 缩小后能恢复, 不打新请求 (视图内过滤)。
+    const fetchedBefore = sandbox.__fetched.length;
+    vm.runInContext("KM_STATE.query='dominio'; kmPaint();", sandbox);
+    const searched = html(sandbox);
+    check('km search narrows to the matching point',
+      searched.indexOf('Dominio de una funcion') >= 0 &&
+      searched.indexOf('Rango de una funcion') === -1, searched.slice(0, 500));
+    vm.runInContext("KM_STATE.query=''; kmPaint();", sandbox);
+    const restored = html(sandbox);
+    check('km clearing the search restores the full set',
+      restored.indexOf('Rango de una funcion') >= 0 &&
+      restored.indexOf('Definicion de funcion') >= 0, restored.slice(0, 500));
+    check('km search filters locally without new requests',
+      sandbox.__fetched.length === fetchedBefore,
+      sandbox.__fetched.join(' '));
+    // 无结果是明确文案, 不是空白。
+    vm.runInContext("KM_STATE.query='zzz-no-such-point'; kmPaint();", sandbox);
+    check('km search with no match shows an explicit empty state',
+      html(sandbox).indexOf(t_zh(sandbox, 'km.searchEmpty')) >= 0);
+    vm.runInContext("KM_STATE.query=''; kmPaint();", sandbox);
+
+    // 视图切换: 不重新请求, 非法值回退探索视图。
+    const viewFetched = sandbox.__fetched.length;
+    vm.runInContext("kmSetView('list');", sandbox);
+    const listOut = html(sandbox);
+    check('km list view renders a table with all points',
+      listOut.indexOf('<table') >= 0 &&
+      listOut.indexOf('Rango de una funcion') >= 0, listOut.slice(0, 500));
+    vm.runInContext("kmSetView('materials');", sandbox);
+    const matOut = html(sandbox);
+    check('km materials view renders each material with its points',
+      matOut.indexOf('clase-03.mp3') >= 0 &&
+      matOut.indexOf(t_zh(sandbox, 'km.supports')) >= 0, matOut.slice(0, 500));
+    vm.runInContext("kmSetView('bogus');", sandbox);
+    check('km falls back to explore on an unknown view',
+      html(sandbox).indexOf('km-cluster') >= 0);
+    check('km view switches do not refetch',
+      sandbox.__fetched.length === viewFetched, sandbox.__fetched.join(' '));
+
+    // 未知分组键 (旧后端曾发证据 ID): 不隐藏, 明确标注。
+    const ghost = routes();
+    ghost['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap({
+      material_to_knowledge: { 'ghost-mat-9': ['kp-1'] },
+    });
+    const gs = await renderPage(pageByName('knowledgeMap'), ghost, 'zh');
+    const gout = html(gs);
+    check('km labels an unregistered cluster instead of hiding it',
+      gout.indexOf('ghost-mat-9') >= 0 &&
+      gout.indexOf(t_zh(gs, 'km.unknownMaterial')) >= 0 &&
+      gout.indexOf('<h2></h2>') === -1, gout.slice(0, 500));
+
+    // 旧 payload (无新字段): 回退本地计算, 口径仍然正确。
+    const legacy = routes();
+    const leg = knowledgeMap();
+    delete leg.stats.evidence_count;
+    delete leg.stats.evidence_ref_count;
+    legacy['/api/courses/' + COURSE_ID + '/knowledge-map'] = leg;
+    const ls = await renderPage(pageByName('knowledgeMap'), legacy, 'zh');
+    const lout = html(ls);
+    check('km falls back to local counts on legacy payloads',
+      lout.indexOf('<b>2</b>' + t_zh(ls, 'km.statEvidence')) >= 0 &&
+      lout.indexOf('<b>3</b>' + t_zh(ls, 'km.statEvidenceRefs')) >= 0,
+      lout.slice(0, 500));
+
+    // 空课程: 明确文案, 不是空白页。
+    const es2 = await renderPage(pageByName('knowledgeMap'), emptyRoutes(), 'zh');
+    check('km empty course states it explicitly',
+      html(es2).indexOf(t_zh(es2, 'km.courseEmpty')) >= 0);
+
+    // 转义: 证据/标题里的原文逐字但转义后渲染。
+    const xss = routes();
+    xss['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap({
+      knowledge_points: [knowledgePoint({ title: 'A <script>alert(1)</script> & "B"' })],
+      material_to_knowledge: { 'material-1': ['kp-1'] },
+      evidence_counts: { 'kp-1': 1 },
+      stats: {
+        knowledge_point_count: 1, material_count: 2, evidence_count: 1,
+        evidence_ref_count: 1, topic_count: 0, relation_count: 0, conflict_count: 0,
+      },
+    });
+    const xs = await renderPage(pageByName('knowledgeMap'), xss, 'zh');
+    const xout = html(xs);
+    check('km escapes point titles',
+      xout.indexOf('&lt;script&gt;') >= 0 &&
+      xout.indexOf('<script>alert(1)') === -1, xout.slice(0, 500));
+
+    // 冲突横幅: 有冲突才出现, 指向课程级审核页。
+    const conf = routes();
+    conf['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap({
+      conflicts: [{ conflict_id: 'conf-1', evidence_refs: ['evid-1'] }],
+      stats: {
+        knowledge_point_count: 3, material_count: 2, evidence_count: 2,
+        evidence_ref_count: 3, topic_count: 0, relation_count: 0, conflict_count: 1,
+      },
+    });
+    const cs = await renderPage(pageByName('knowledgeMap'), conf, 'zh');
+    check('km conflict banner links to the course review page',
+      html(cs).indexOf('#/courses/' + encodeURIComponent(COURSE_ID) + '/review') >= 0);
+    check('km shows no conflict banner without conflicts',
+      out.indexOf('km-conflicts') === -1);
+
+    // 规模: 300 条一次铺开不断言耗时 (vm 计时抖), 只钉正确性 ——
+    // 行数对、分组对、口径对。性能回归由真实浏览器实测守 (见最终报告)。
+    {
+      const big = routes();
+      const points = [];
+      for (let i = 0; i < 300; i += 1) {
+        points.push(knowledgePoint({
+          knowledge_id: 'scale-' + i,
+          title: 'Punto escalado ' + i,
+          evidence_refs: ['evid-1'],
+        }));
+      }
+      const counts = {};
+      points.forEach((kp) => { counts[kp.knowledge_id] = 1; });
+      big['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap({
+        knowledge_points: points,
+        evidence_counts: counts,
+        material_to_knowledge: {
+          'material-1': points.map((kp) => kp.knowledge_id),
+        },
+        stats: {
+          knowledge_point_count: 300, material_count: 2, evidence_count: 1,
+          evidence_ref_count: 300, topic_count: 0, relation_count: 0,
+          conflict_count: 0,
+        },
+      });
+      const ss = await renderPage(pageByName('knowledgeMap'), big, 'zh');
+      const sout = html(ss);
+      check('km renders 300 points without dropping rows',
+        (sout.match(/class="km-kp-row"/g) || []).length === 300, String((sout.match(/class="km-kp-row"/g) || []).length));
+      check('km keeps the caliber at scale (1 evidence, 300 refs)',
+        sout.indexOf('<b>1</b>' + t_zh(ss, 'km.statEvidence')) >= 0 &&
+        sout.indexOf('<b>300</b>' + t_zh(ss, 'km.statEvidenceRefs')) >= 0);
+    }
+
+    // t() 插值: 新式 {name} 与旧式 .replace('{n}') 同时成立。
+    for (const lang of ['zh', 'es', 'ca']) {
+      const ibox = await loadApp(routes(), lang);
+      const interpolated = ibox.t('km.evidenceCount', { n: 5 });
+      check('t() interpolates {n} in ' + lang,
+        interpolated.indexOf('5') >= 0 && interpolated.indexOf('{n}') === -1,
+        interpolated);
+      const legacyCall = ibox.t('km.conflictNote').replace('{n}', '4');
+      check('t() stays compatible with .replace in ' + lang,
+        legacyCall.indexOf('4') >= 0 && legacyCall.indexOf('{n}') === -1,
+        legacyCall);
+      check('t() leaves unknown placeholders alone in ' + lang,
+        ibox.t('km.evidenceCount', {}).indexOf('{n}') >= 0);
+    }
+
+    // 路由: 深链直达知识地图; 审核路由认课程, 无效课程报错不回退。
+    const routed = await loadApp(routes(), 'zh');
+    routed.window.location.hash = '#/courses/' + COURSE_ID + '/knowledge-map';
+    await routed.route();
+    check('route reaches the knowledge map deep link',
+      html(routed).indexOf(t_zh(routed, 'km.title')) >= 0);
+    routed.window.location.hash = '#/courses/' + COURSE_ID + '/review';
+    await routed.route();
+    check('route reaches the course review page',
+      html(routed).length > 0 &&
+      html(routed).indexOf(t_zh(routed, 'km.courseNotFound')) === -1);
+    routed.window.location.hash = '#/courses/no-such-course/review';
+    await routed.route();
+    const badOut = html(routed);
+    check('route rejects an unknown course instead of falling back',
+      badOut.indexOf('NOT_FOUND') >= 0 &&
+      badOut.indexOf(t_zh(routed, 'km.courseNotFound')) >= 0, badOut.slice(0, 500));
   }
 }
 

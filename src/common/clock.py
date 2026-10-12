@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import datetime as _dt
-from typing import Callable, Optional
+from typing import Callable
 
 __all__ = ["utc_now", "utc_now_iso", "Clock", "fixed_clock"]
 

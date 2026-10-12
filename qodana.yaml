@@ -18,10 +18,12 @@ profile:
 #  - name: <SomeEnabledInspectionId>
 
 #Disable inspections
-#exclude:
-#  - name: <SomeDisabledInspectionId>
-#    paths:
-#      - <path/where/not/run/inspection>
+exclude:
+  # scripts/dev-archive 是已归档的一次性脚本 (见 AGENTS.md P0-3),
+  # 不属于生产代码, 不进质量门禁。Qodana 曾在此目录报 59 条噪音。
+  - name: All
+    paths:
+      - scripts/dev-archive
 
 #Execute shell command before Qodana execution (Applied in CI/CD pipeline)
 #bootstrap: sh ./prepare-qodana.sh
@@ -43,4 +45,5 @@ profile:
 #    total: 50
 
 #Specify Qodana linter for analysis (Applied in CI/CD pipeline)
-linter: jetbrains/qodana-jvm:2026.1
+# 本仓库是纯 Python 项目: 必须用 qodana-python, jvm 镜像查不到 Python 检查。
+linter: jetbrains/qodana-python:2026.1

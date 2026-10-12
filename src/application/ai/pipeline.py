@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from src.application.ai import PIPELINE_VERSION
 from src.application.ai.chunking import (
@@ -32,14 +32,11 @@ from src.application.ai.chunking import (
     chunks_for_evidence,
 )
 from src.application.ai.merge import (
-    MergeProposal,
     deduplicate_candidates,
     propose_merge_with_existing,
 )
 from src.application.ai.prompts import (
     CHUNK_EXTRACTION_PROMPT_VERSION,
-    IMAGE_PROMPT_VERSION,
-    AUDIO_PROMPT_VERSION,
     MERGE_PROMPT_VERSION,
     SUMMARY_PROMPT_VERSION,
     SUMMARY_ZH_PROMPT_VERSION,
@@ -64,10 +61,6 @@ from src.application.ai.schemas import (
     ChunkAIResult,
     KnowledgeCandidate,
     MaterialAIResult,
-    SummaryZhResult,
-    KpZhResult,
-    GlossaryEntry,
-    CourseOverviewResult,
     parse_material_response,
     parse_structured_response,
     parse_summary_zh_response,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib
-from typing import Any, List, Optional
+from typing import List
 
 from src.models import (
     BoundingBox, Confidence, Evidence, EvidenceType, Language,

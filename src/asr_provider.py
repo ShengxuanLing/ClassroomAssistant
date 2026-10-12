@@ -1,9 +1,9 @@
 from __future__ import annotations
 import hashlib
 from abc import ABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Optional
 
 from src.audio_input import AudioInput
 from src.models import Transcript, TranscriptLanguage, TranscriptSegment

@@ -32,7 +32,6 @@ Constraints honored (spec section 2)
 from __future__ import annotations
 
 import hashlib
-import json
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -41,7 +40,6 @@ from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
 from src.knowledge_organization import (
     KnowledgeOrganizationService,
     KnowledgeRelationType,
-    OrganizationSchemaError,
 )
 
 __all__ = [

@@ -23,11 +23,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Optional
 
 from src.evidence_store import EvidenceStore
 from src.knowledge_organization import CourseKnowledgeStructure
-from src.knowledge_review import ReviewRecord
 from src.knowledge_structure import KnowledgeStructure
 from src.models import Evidence
 from src.persistence.repositories import Repositories

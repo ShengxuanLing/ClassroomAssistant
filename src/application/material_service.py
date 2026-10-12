@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence
 
 from src.models import Material
 from src.evidence_store import EvidenceStore
@@ -22,10 +22,8 @@ from src.evidence_ingestion import (
     IngestionReport,
 )
 from src.application.course_service import CourseService
-from src.application.dto import material_to_dict
 from src.application.errors import (
     InvalidInputError,
-    NotFoundError,
 )
 
 __all__ = ["MaterialService"]

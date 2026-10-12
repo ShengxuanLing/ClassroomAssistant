@@ -40,6 +40,7 @@ from src.models import (
     Language,
     Material,
     MaterialType,
+    OCRResult,
     SourceReference,
     Transcript,
 )
@@ -595,6 +596,7 @@ class PPTXExtractorAdapter(ExtractorAdapter):
             if not image.is_ocr_capable:
                 continue
             tmp_path: Optional[str] = None
+            ocr_result: Optional[OCRResult] = None
             try:
                 with tempfile.NamedTemporaryFile(
                     suffix=image.extension or ".png", delete=False
@@ -627,6 +629,12 @@ class PPTXExtractorAdapter(ExtractorAdapter):
                         os.unlink(tmp_path)
                     except OSError:
                         pass
+
+            if ocr_result is None:
+                # 引擎返回 None(无文本): 只保留幻灯片自带文本。
+                # 抛异常的路径已由上面的 except 跳过, 这里只处理"成功但无结果",
+                # 与 except 分支"坏图不拖垮整份文稿"的语义一致。
+                continue
 
             # The engine stamp makes a mock run impossible to mistake for a
             # real one.  MockOCREngine reports its *class*; the local

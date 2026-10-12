@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 
 __all__ = ["Migration", "MIGRATIONS", "migration_name", "latest_version"]
 

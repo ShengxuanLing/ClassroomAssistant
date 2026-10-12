@@ -2,9 +2,14 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from src.models import KnowledgePoint
 from src.integration import ConflictRecord
+
+if TYPE_CHECKING:
+    # 仅供静态类型检查: knowledge_review 在运行时导入本模块,
+    # 这里运行时导入会造成循环依赖。
+    from src.knowledge_review import ReviewRecord
 class RelationType(str, Enum):
     RELATED_TO = 'related_to'
     PRE_REQUSITE_OF = 'prerequisite_of'
@@ -58,7 +63,7 @@ class KnowledgeStructure:
         self.knowledge_points[kp.knowledge_id] = kp
         return True
 
-    def add_review_record(self, record) -> bool:
+    def add_review_record(self, record: ReviewRecord) -> bool:
         """Append-only, idempotent review-record storage (Task 15).
 
         Deduplicates by stable review_id so resubmitting the same human

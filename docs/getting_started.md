@@ -37,7 +37,9 @@ pip install -r requirements.txt
 不开也能跑通完整流程 —— 默认关闭，处理只产出证据（确定性链路，不出网）。开启后，
 处理材料时会**额外**自动提炼摘要 / 主题 / 知识点并落库（细节见 §5）。
 
-任何 OpenAI 兼容的服务都行（OpenAI、DeepSeek、Kimi、自建网关……）。三步：
+provider 只按 OpenAI 兼容的 `/chat/completions` 契约发请求（标准库 `urllib` 实现，超时与
+429/5xx 退避内置）；OpenAI、DeepSeek、Kimi、自建网关等**按这个契约实现**的都能接 ——
+但「兼容」到什么程度以各家网关的实际行为为准，本项目只保证这一个契约。三步：
 
 **1.** 复制模板：把 `scripts\ai-env.bat.example` 复制一份，改名成 `ai-env.bat`，
 放在同一个 `scripts\` 目录下。
@@ -63,7 +65,7 @@ set "CLASSROOM_AI_MODEL=你的模型名"
 python -m src.application.cli --check     # 输出里应有 ai_enabled = True / ai_mode = 'real'
 ```
 
-`scripts\ai-env.bat` 已在 `.gitignore` 里，**不会被提交**，key 不会泄露。改完需要
+`scripts\ai-env.bat` 已在 `.gitignore` 里，**不会被提交**；key 只从进程环境读入 provider，**不到达浏览器前端**（`--check`、启动日志、操作日志、HTTP 响应里只有「有 / 无」两种形状）。剩下的风险面请自行评估：本机进程内存、运行日志、以及你自建网关那一侧的审计。改完需要
 **重启**才生效（环境变量只在进程启动时读一次）。
 
 进阶：也可以在仓库根目录建 `.env` 写同样的键（优先级更高：进程环境 > `.env` >

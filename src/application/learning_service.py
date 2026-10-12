@@ -45,7 +45,6 @@ from src.exercises import (
     Exercise,
     ExerciseError,
     ExerciseType,
-    FillBlank,
 )
 from src.answer_evaluation import (
     AnswerEvaluationLog,

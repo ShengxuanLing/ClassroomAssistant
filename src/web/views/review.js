@@ -101,6 +101,23 @@ function rsCoverageCard(payload) {
  * 也没有这类字段 (见 ReviewSet 的 No Prediction Contract)。顶部那句
  * ``rs.notPredictor`` 是刻意放的: 学生需要知道这个页面的定位。
  */
+// 课程级审核入口 (``#/courses/<id>/review``): 先认 URL 里的课程。
+//
+// 无效课程必须报错而不是静默回退: pageReview() 经 requireCourse() 取课,
+// setRouteCourse() 失败时 state 里还是上一门课 —— 不拦就会出现
+// "URL 写着 A 课, 内容却是 B 课的审核集" (TASK-KM-PREMIUM-QA §六.4)。
+async function pageCourseReview(courseId) {
+  markActiveNav('#/review');
+  if (!setRouteCourse(courseId)) {
+    renderError(new ApiError({
+      code: 'NOT_FOUND',
+      message: t('km.courseNotFound') + ': ' + courseId,
+    }));
+    return;
+  }
+  await pageReview();
+}
+
 async function pageReview() {
   markActiveNav('#/review');
   const courseId = await requireCourse();

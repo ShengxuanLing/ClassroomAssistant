@@ -10,15 +10,13 @@ KnowledgeDependencyAnalyzer + KnowledgeReviewService 组合成稳定的
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from src.models import Course, Evidence, KnowledgePoint
+from src.models import Course, KnowledgePoint
 from src.knowledge_organization import (
-    CourseKnowledgeStructure,
     KnowledgeOrganizationService,
 )
 from src.knowledge_coverage import (
-    CourseGapReport,
     KnowledgeCoverageAnalyzer,
 )
 from src.knowledge_dependency import (
@@ -226,7 +224,7 @@ class KnowledgeService:
         ]
 
     def _all_registered_kp_ids(self) -> List[str]:
-        return sorted(self._service.registered_knowledge_point_ids())
+        return sorted(self._service.registered_knowledge_point_ids)
 
     def _get_kp_or_none(self, kp_id: str) -> Optional[Any]:
         """按 ID 取 KP, 未注册则 None (过滤掉组织层已失效的引用)。"""

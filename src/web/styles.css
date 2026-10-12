@@ -846,3 +846,78 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
 
 .learn-next { border-left: 3px solid var(--accent); padding-left: 10px; margin-top: 10px; }
 .learn-next p { margin: 0 0 6px; }
+
+
+/* ---- TASK-KM-PREMIUM-EXECUTION: 知识点探索器 (Knowledge Explorer) ---------
+ *
+ * 设计口径与既有页面一致: 复用 --accent / --surface / --border 等既有 token,
+ * 不引入新颜色; 卡片、pill、kv 都沿用全局形态。唯一的增量是"分簇卡 + 工具栏
+ * + 统计条"这三个新容器。
+ *
+ * 不画 canvas/SVG 节点图 —— 真实数据 (0 relations / 0 topics / 0 memberships)
+ * 支撑不起层级, 61 个节点挤一屏只会变成一排小矩形。真正的空间化是"按材料
+ * 分簇", 即下面 .km-cluster 这个语义。
+ */
+
+/* 统计条: 一行只读计数, 数字用 tabular-nums 对齐, 不参与交互。 */
+.km-stats {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline;
+  margin: 0 0 12px; font-size: 13px; color: var(--text-muted);
+}
+.km-stat b {
+  font-size: 16px; color: var(--text); margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 冲突提示: 课程有未解决冲突时出现, 链接到既有的冲突处理入口。 */
+.km-conflicts {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  padding: 9px 12px; margin-bottom: 12px;
+  background: var(--warn-soft); border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+}
+
+/* 工具栏: 搜索 (左) + 筛选与视图切换 (右)。窄屏换行, 搜索框占满整行。 */
+.km-toolbar {
+  display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+  justify-content: space-between; margin-bottom: 14px;
+}
+.km-search { display: flex; gap: 6px; align-items: center; flex: 1 1 260px; min-width: 0; }
+.km-search input { flex: 1 1 auto; min-width: 0; }
+.km-clear { flex: 0 0 auto; white-space: nowrap; }
+.km-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.km-view-switch { display: flex; gap: 4px; }
+.km-view-btn { font-variant-numeric: normal; }
+.km-view-btn[aria-pressed="true"] {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent); font-weight: 600;
+}
+
+/* 分簇卡: 一个材料 + 归属它的知识点。 */
+.km-cluster .km-cluster-note {
+  font-size: 11px; color: var(--text-muted);
+}
+.km-cluster-orphan { border-left: 3px solid var(--warn); }
+.km-cluster-orphan > :last-child { margin-bottom: 0; }
+
+.km-kp-list { list-style: none; margin: 0; padding: 0; }
+.km-kp-row {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline;
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+}
+.km-kp-row:last-child { border-bottom: 0; }
+.km-kp-title { font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
+.km-kp-meta { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+
+/* Material Map: 每张卡 = 一个材料 + 它支撑的知识点列表。 */
+.km-material-row .km-material-meta { font-size: 12px; }
+.km-material-row > :last-child { margin-bottom: 0; }
+
+/* 图例卡: 说明"分组是 UI-only, 不是真实层级", 防止误读。 */
+.km-legend p { margin: 0 0 4px; }
+.km-legend p:last-child { margin-bottom: 0; }
+
+@media (max-width: 560px) {
+  .km-search { flex: 1 1 100%; }
+  .km-filters { flex: 1 1 100%; }
+}

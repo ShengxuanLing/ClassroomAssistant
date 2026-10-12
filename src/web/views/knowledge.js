@@ -476,3 +476,486 @@ async function actionTranslateKp(courseId, knowledgeId, button) {
 }
 
 // ---- 学生页 (Task 40 会展开) ---------------------------------------------
+
+// ============================================================================
+// TASK-KM-PREMIUM-EXECUTION: Knowledge Map Premium (知识点探索器)
+// ============================================================================
+//
+// 设计约束 (来自任务书与 AGENTS.md, 逐条对应):
+//
+// 1. 不伪造数据。真实课程里 topics / knowledge_memberships / relations 全都
+//    是空数组 (实测 61 KP / 2 材料 / 6 独立证据 / 61 处引用 / 0 关系 / 0 主题)。
+//    所以本视图
+//    **不画**层级树、不画关系边。布局是 UI-only 分组 (按证据来源分簇), 界面上
+//    明确标注"按来源分组, 不是课程层级"。
+// 2. 画布不画 61 个节点。61 个真实知识点挤在一屏只会变成"一排小矩形"。
+//    本视图默认是 **材料分组卡片**: 真实数据里 evidence_refs 指向
+//    material_id, 服务端 knowledge-map 已给出 material_to_knowledge 反查
+//    索引 —— 这是当前数据下唯一真实的、可导航的分组结构。
+// 3. 详情复用现有详情页 (#/courses/<id>/knowledge/<kp>), 不在画布里重造
+//    一份"简化版详情"。画布里只放定位所需的最小信息。
+// 4. 中文仅解释界面; 知识点标题/正文/证据原文逐字渲染, 不改写。
+// 5. 列表视图与画布**共享同一份** view model, 切换视图不重新请求 API。
+//
+// view model (km 前缀) 与业务对象分离:
+//   knowledge[]  ← 后端 KnowledgePoint 原样
+//   materials[]  ← 后端 Material 原样
+//   clusters     ← derived: material_id -> knowledge ids (真实反查)
+//   orphans      ← derived: 无证据的知识点 (真实情况, 不隐藏)
+//   ui           ← 纯 UI 状态: query / activeMaterial / view
+
+const KM_STATE = {
+  knowledge: [],
+  materials: [],
+  clusters: {},      // material_id -> [knowledge_id]
+  orphans: [],       // 无证据的知识点
+  conflicts: [],
+  stats: {},
+  courseId: '',
+  query: '',
+  activeMaterial: 'all',
+  view: 'explore',   // explore | list | materials
+  loaded: false,
+};
+
+// ---- 数据加载与 view model 装配 ----------------------------------------
+
+function kmKnowledgeById() {
+  const byId = {};
+  KM_STATE.knowledge.forEach((kp) => { byId[String(kp.knowledge_id)] = kp; });
+  return byId;
+}
+
+// 从 API 响应装配 view model。
+//
+// 关键: 分组结构**完全来自后端** (material_to_knowledge 是服务端算好的反查),
+// 前端不推断、不重排、不补全。evidence_refs 是 KP 记录上的原始字段, 直接读。
+function kmBuildViewModel(payload) {
+  const data = payload || {};
+  KM_STATE.knowledge = Array.isArray(data.knowledge_points) ? data.knowledge_points.slice() : [];
+  KM_STATE.materials = Array.isArray(data.materials) ? data.materials.slice() : [];
+  KM_STATE.conflicts = Array.isArray(data.conflicts) ? data.conflicts.slice() : [];
+  KM_STATE.stats = data.stats || {};
+
+  const reverse = data.material_to_knowledge || {};
+  const clusters = {};
+  Object.keys(reverse).forEach((materialId) => {
+    clusters[materialId] = (reverse[materialId] || []).slice();
+  });
+  KM_STATE.clusters = clusters;
+
+  // 无证据的知识点: 数据真实存在的一部分 (目标课程 61 条每条 1 条引用, 但另两门课
+  // 有 0 证据的)。列为"未定位"组, 明确告知缺证据, 不隐藏也不编造。
+  KM_STATE.orphans = KM_STATE.knowledge
+    .filter((kp) => !(kp.evidence_refs || []).length)
+    .map((kp) => String(kp.knowledge_id));
+
+  KM_STATE.loaded = true;
+}
+
+async function kmLoad(courseId) {
+  KM_STATE.courseId = courseId || '';
+  KM_STATE.query = '';
+  KM_STATE.activeMaterial = 'all';
+  KM_STATE.view = 'explore';
+  KM_STATE.loaded = false;
+  const payload = await api('/courses/' + encodeURIComponent(courseId) + '/knowledge-map');
+  kmBuildViewModel(payload);
+}
+
+// ---- 过滤: 全局搜索 + 来源筛选 --------------------------------------------
+//
+// 搜索只在"标题 / 原文术语"上做子串匹配。不引入模糊匹配打分 —— 真实数据里
+// 标题是完整短语, 子串已经够用; 引入打分只会让"为什么这条排前面"更难解释。
+
+function kmMatches(kp, needle) {
+  if (!needle) return true;
+  const haystack = [kp.title || '', kp.knowledge_id || '']
+    .concat(kp.original_terms || [])
+    .join('\n')
+    .toLowerCase();
+  return haystack.indexOf(needle) >= 0;
+}
+
+function kmVisibleKnowledge() {
+  const needle = KM_STATE.query.trim().toLowerCase();
+  return KM_STATE.knowledge.filter((kp) => {
+    if (KM_STATE.activeMaterial !== 'all') {
+      const materialId = KM_STATE.activeMaterial;
+      if ((KM_STATE.clusters[materialId] || []).indexOf(String(kp.knowledge_id)) < 0) return false;
+    }
+    return kmMatches(kp, needle);
+  });
+}
+
+// ---- 渲染: 小部件 --------------------------------------------------------
+
+function kmMaterialLabel(material) {
+  if (!material) return '';
+  return String(material.filename || material.material_id || '');
+}
+
+// 统计条: 只报真实计数, 不说"已建立知识图谱"这类没数据支撑的话。
+//
+// 口径 (TASK-KM-PREMIUM-QA P0, 与后端 knowledge_map 同源):
+//   证据 = 去重后的独立证据数 (后端 stats.evidence_count)
+//   引用 = 知识点→证据的关联总数 (后端 stats.evidence_ref_count)
+// 真实案例: 61 个 KP 各 1 条引用, 但只对应 6 条独立证据 —— 两数都对,
+// 口径不同, 必须同时展示, 不得把引用数标成证据数。
+function kmDistinctEvidenceTotal() {
+  const seen = {};
+  KM_STATE.knowledge.forEach((kp) => {
+    (kp.evidence_refs || []).forEach((ref) => {
+      const id = (ref && typeof ref === 'object') ? ref.evidence_id : ref;
+      if (id) seen[String(id)] = true;
+    });
+  });
+  return Object.keys(seen).length;
+}
+
+function kmStatsBar() {
+  const stats = KM_STATE.stats || {};
+  const kpTotal = KM_STATE.knowledge.length;
+  const clustered = KM_STATE.knowledge.length - KM_STATE.orphans.length;
+  // 后端新字段优先; 旧 payload / 单测 mock 无该字段时回退本地计算。
+  const evTotal = (stats.evidence_count != null) ? stats.evidence_count : kmDistinctEvidenceTotal();
+  const refTotal = (stats.evidence_ref_count != null)
+    ? stats.evidence_ref_count
+    : KM_STATE.knowledge.reduce((sum, kp) => sum + (kp.evidence_refs || []).length, 0);
+  return '<div class="km-stats">' +
+    '<span class="km-stat"><b>' + esc(kpTotal) + '</b>' + esc(t('km.statKnowledge')) + '</span>' +
+    '<span class="km-stat"><b>' + esc(clustered) + '</b>' + esc(t('km.statClustered')) + '</span>' +
+    '<span class="km-stat"><b>' + esc(KM_STATE.orphans.length) + '</b>' + esc(t('km.statOrphans')) + '</span>' +
+    '<span class="km-stat"><b>' + esc(evTotal) + '</b>' + esc(t('km.statEvidence')) + '</span>' +
+    '<span class="km-stat"><b>' + esc(refTotal) + '</b>' + esc(t('km.statEvidenceRefs')) + '</span>' +
+    '<span class="km-stat"><b>' + esc(stats.material_count || KM_STATE.materials.length) + '</b>' + esc(t('km.statMaterials')) + '</span>' +
+    '</div>';
+}
+
+function kmConflictBanner() {
+  if (!KM_STATE.conflicts.length) return '';
+  return '<div class="km-conflicts">' +
+    '<span class="pill pill-warn">' + esc(t('km.conflictTag')) + '</span> ' +
+    '<span class="small">' + esc(t('km.conflictNote').replace('{n}', String(KM_STATE.conflicts.length))) + '</span> ' +
+    '<a class="small" href="#/courses/' + encodeURIComponent(KM_STATE.courseId) + '/review">' +
+    esc(t('km.conflictLink')) + '</a></div>';
+}
+
+// 搜索框 + 视图切换 + 来源筛选。
+//
+// 搜索框是**受控输入**: 每次 input 只改 view model 再局部重绘, 不打 API。
+// 视图切换按钮用 aria-pressed 表达"当前是哪个视图", 不靠 class 名单独承载状态。
+function kmToolbar() {  const viewButtons = [
+    '<button type="button" class="km-view-btn" data-action="km-set-view" data-view="explore" aria-pressed="' + (KM_STATE.view === 'explore' ? 'true' : 'false') + '">' + esc(t('km.view.explore')) + '</button>',
+    '<button type="button" class="km-view-btn" data-action="km-set-view" data-view="list" aria-pressed="' + (KM_STATE.view === 'list' ? 'true' : 'false') + '">' + esc(t('km.view.list')) + '</button>',
+    '<button type="button" class="km-view-btn" data-action="km-set-view" data-view="materials" aria-pressed="' + (KM_STATE.view === 'materials' ? 'true' : 'false') + '">' + esc(t('km.view.materials')) + '</button>',
+  ].join('');
+  const materialOptions = ['<option value="all">' + esc(t('km.filterAll')) + '</option>']
+    .concat(KM_STATE.materials.map((m) => (
+      '<option value="' + esc(m.material_id) + '"' +
+      (KM_STATE.activeMaterial === String(m.material_id) ? ' selected' : '') + '>' +
+      esc(kmMaterialLabel(m)) + '</option>'
+    )));
+  return '<div class="km-toolbar">' +
+    '<div class="km-search">' +
+    '<label class="sr-only" for="km-search-input">' + esc(t('km.searchLabel')) + '</label>' +
+    '<input type="text" id="km-search-input" data-action="km-search" autocomplete="off" ' +
+    'placeholder="' + esc(t('km.searchPlaceholder')) + '" value="' + esc(KM_STATE.query) + '">' +
+    (KM_STATE.query
+      ? ' <button type="button" class="km-clear" data-action="km-clear-search">' +
+        esc(t('km.clearSearch')) + '</button>'
+      : '') +
+    '</div>' +
+    '<div class="km-filters">' +
+    '<label class="sr-only" for="km-filter-material">' + esc(t('km.filterSource')) + '</label>' +
+    '<select id="km-filter-material" data-action="km-filter-material">' +
+    materialOptions.join('') + '</select>' +
+    '<div class="km-view-switch" role="group" aria-label="' + esc(t('km.viewLabel')) + '">' +
+    viewButtons + '</div>' +
+    '</div></div>';
+}
+
+// ---- 渲染: 探索视图 (默认) ----------------------------------------------
+//
+// 布局 = "按材料分簇"的卡片流。每张卡 = 一个真实材料 + 归属它的知识点列表。
+// 这是当前数据下**唯一真实**的空间化关联, 不需要任何推断。
+//
+// 卡片头显式写 "按来源分组 · 不是课程层级" —— 防止用户把 UI 分组误读成
+// 系统已经知道的知识层级 (项目铁律: 不伪造数据)。
+
+function kmClusterCard(materialId, visibleIds) {
+  const material = KM_STATE.materials.filter((m) => String(m.material_id) === materialId)[0];
+  // 防御: 后端修复前曾把证据 ID 当材料 ID 发下来, 那种键在这里查不到材料。
+  // 现在后端只发真实材料 ID, 这里保留兜底 —— 有数据绝不隐藏, 只明确标注。
+  const title = material ? kmMaterialLabel(material) : String(materialId);
+  const unknownNote = material
+    ? ''
+    : ' <span class="pill pill-warn tiny">' + esc(t('km.unknownMaterial')) + '</span>';
+  const ids = KM_STATE.clusters[materialId] || [];
+  const byId = kmKnowledgeById();
+  // 性能: 可见集由调用方一次算好传进来 (见 kmRenderExplore)。直接调
+  // kmVisibleKnowledge() 会让每行都重算一次全量过滤 —— 61 条无感,
+  // 1000 条时搜索从 ~50ms 涨到 ~1700ms (实测)。不传时回退旧路径。
+  const inScope = (typeof visibleIds === 'object' && visibleIds !== null)
+    ? (kid) => !!visibleIds[kid]
+    : (kid) => kmVisibleKnowledge().some((kp) => String(kp.knowledge_id) === kid);
+  const visible = ids.filter(inScope);
+  const rows = visible.map((kid) => {
+    const kp = byId[kid];
+    if (!kp) return '';
+    const evCount = (kp.evidence_refs || []).length;
+    return '<li class="km-kp-row">' +
+      '<a class="km-kp-title" href="#/courses/' + encodeURIComponent(KM_STATE.courseId) +
+      '/knowledge/' + encodeURIComponent(kid) + '">' + esc(kp.title || kid) + '</a>' +
+      knowledgeModeBadge(kp) +
+      '<span class="km-kp-meta">' +
+      ' <span class="pill pill-muted tiny">' + esc(t('km.evidenceCount', { n: evCount })) + '</span>' +
+      (evCount ? '' : ' <span class="pill pill-warn tiny">' + esc(t('km.noEvidence')) + '</span>') +
+      '</span></li>';
+  }).join('');
+
+  return '<div class="card km-cluster">' +
+    '<div class="card-head"><h2>' + esc(title) + '</h2>' + unknownNote +
+    '<span class="km-cluster-note">' + esc(t('km.uiOnlyGrouping')) + '</span></div>' +
+    (visible.length
+      ? '<ul class="km-kp-list">' + rows + '</ul>'
+      : emptyState(t('km.clusterEmpty'))) +
+    '</div>';
+}
+
+function kmOrphanCard(visibleIds) {
+  const byId = kmKnowledgeById();
+  const inScope = (typeof visibleIds === 'object' && visibleIds !== null)
+    ? (kid) => !!visibleIds[kid]
+    : (kid) => kmVisibleKnowledge().some((kp) => String(kp.knowledge_id) === kid);
+  const visible = KM_STATE.orphans
+    .filter(inScope)
+    .map((kid) => {
+      const kp = byId[kid] || {};
+      return '<li class="km-kp-row">' +
+        '<a class="km-kp-title" href="#/courses/' + encodeURIComponent(KM_STATE.courseId) +
+        '/knowledge/' + encodeURIComponent(kid) + '">' + esc(kp.title || kid) + '</a>' +
+        knowledgeModeBadge(kp) +
+        '</li>';
+    }).join('');
+  if (!visible) return '';
+  return '<div class="card km-cluster km-cluster-orphan">' +
+    '<div class="card-head"><h2>' + esc(t('km.unlocated')) + '</h2></div>' +
+    '<p class="small muted">' + esc(t('km.unlocatedNote')) + '</p>' +
+    (visible
+      ? '<ul class="km-kp-list">' + visible + '</ul>'
+      : emptyState(t('km.clusterEmpty'))) +
+    '</div>';
+}
+
+function kmRenderExplore() {
+  // 可见集只算一次, 分发给各卡片 (性能, 见 kmClusterCard 注释)。
+  const visibleList = kmVisibleKnowledge();
+  const visibleIds = {};
+  visibleList.forEach((kp) => { visibleIds[String(kp.knowledge_id)] = true; });
+  if (!visibleList.length) {
+    return KM_STATE.query.trim() || KM_STATE.activeMaterial !== 'all'
+      ? emptyState(t('km.searchEmpty'))
+      : emptyState(t('km.courseEmpty'));
+  }
+  const parts = [];
+  const clusterIds = Object.keys(KM_STATE.clusters).filter((id) => (KM_STATE.clusters[id] || []).length);
+  clusterIds.forEach((id) => parts.push(kmClusterCard(id, visibleIds)));
+  const orphanCard = kmOrphanCard(visibleIds);
+  if (orphanCard) parts.push(orphanCard);
+  return parts.join('');
+}
+
+// ---- 渲染: 列表视图 ------------------------------------------------------
+//
+// 列表与画布共享同一份 view model (KM_STATE), 切换视图**不重新请求 API**。
+// 表格列与知识点页一致 (标题 / 状态 / 证据数 / 归属材料), 只补一列"来源材料" ——
+// 这是从 material_to_knowledge 反查出来的真实归属, 不是前端猜的。
+
+function kmMaterialNamesFor(knowledgeId) {
+  const names = [];
+  Object.keys(KM_STATE.clusters).forEach((materialId) => {
+    if ((KM_STATE.clusters[materialId] || []).indexOf(knowledgeId) >= 0) {
+      const material = KM_STATE.materials.filter((m) => String(m.material_id) === materialId)[0];
+      names.push(kmMaterialLabel(material) || materialId);
+    }
+  });
+  return names;
+}
+
+function kmRenderList() {
+  const visible = kmVisibleKnowledge();
+  if (!visible.length) {
+    return KM_STATE.query.trim() || KM_STATE.activeMaterial !== 'all'
+      ? emptyState(t('km.searchEmpty'))
+      : emptyState(t('km.courseEmpty'));
+  }
+  return '<div class="card"><table class="data compact fixed">' +
+    tableCaption(t('km.title')) +
+    '<colgroup><col style="width:32%"><col style="width:130px"><col style="width:70px">' +
+    '<col></colgroup>' +
+    '<thead><tr>' +
+    '<th scope="col">' + t('标题') + '</th>' +
+    '<th scope="col">' + t('状态') + '</th>' +
+    '<th scope="col" class="num">' + t('证据') + '</th>' +
+    '<th scope="col">' + t('km.colSource') + '</th>' +
+    '</tr></thead><tbody>' +
+    visible.map((kp) => {
+      const kid = String(kp.knowledge_id);
+      const evCount = (kp.evidence_refs || []).length;
+      const sources = kmMaterialNamesFor(kid);
+      return '<tr>' +
+        '<td class="kp-title"><a href="#/courses/' + encodeURIComponent(KM_STATE.courseId) +
+        '/knowledge/' + encodeURIComponent(kid) + '">' + esc(kp.title || kid) + '</a>' +
+        knowledgeModeBadge(kp) + '<br><span class="tiny muted mono break-all">' + esc(kid) + '</span></td>' +
+        '<td class="nowrap">' + pill(kp.validation_status) + ' ' + pill(kp.review_status) + '</td>' +
+        '<td class="num">' + esc(evCount) + '</td>' +
+        '<td class="small break-all">' +
+        (sources.length
+          ? sources.map((name) => esc(name)).join('<br>')
+          : '<span class="muted">' + esc(t('km.unlocated')) + '</span>') +
+        '</td></tr>';
+    }).join('') +
+    '</tbody></table></div>';
+}
+
+// ---- 渲染: Material Map ---------------------------------------------------
+//
+// 材料列在左, 它支撑的知识点列在右, 每行带真实证据条数。这是"知识点 → 材料"
+// 这张关系在当前数据里**唯一可画**的方向, 服务端已给出反查索引。
+// 没有证据的材料如实写 "0 条证据", 不隐藏。
+
+function kmRenderMaterials() {
+  if (!KM_STATE.materials.length) return emptyState(t('km.noMaterials'));
+  const rows = KM_STATE.materials.map((m) => {
+    const materialId = String(m.material_id);
+    const ids = KM_STATE.clusters[materialId] || [];
+    const byId = kmKnowledgeById();
+    const links = ids.map((kid) => {
+      const kp = byId[kid] || {};
+      return '<li><a href="#/courses/' + encodeURIComponent(KM_STATE.courseId) +
+        '/knowledge/' + encodeURIComponent(kid) + '">' + esc(kp.title || kid) + '</a></li>';
+    }).join('');
+    return '<div class="card km-material-row">' +
+      '<div class="card-head"><h2>' + esc(kmMaterialLabel(m)) + '</h2>' +
+      '<span class="km-material-meta">' +
+      '<span class="pill ' + (ids.length ? 'pill-info' : 'pill-warn') + ' tiny">' +
+      esc(t('km.supportCount', { n: ids.length })) + '</span>' +
+      ' <span class="tiny muted">' + esc(t('km.supportsHint')) + '</span>' +
+      '</span></div>' +
+      '<dl class="kv compact">' +
+      '<dt>' + t('类型 / 大小') + '</dt><dd>' +
+      esc(m.material_type || m.source_type || '—') + ' · ' + fmtBytes(m.size) + '</dd>' +
+      '<dt>' + t('状态') + '</dt><dd>' + pill(m.processing_status) + '</dd>' +
+      '<dt>material_id</dt><dd class="mono tiny break-all">' + esc(materialId) + '</dd>' +
+      '<dt>' + t('路径') + '</dt><dd class="mono tiny break-all">' +
+      dash(m.relative_path || m.stored_path) + '</dd>' +
+      '</dl>' +
+      (links ? '<h3>' + esc(t('km.supports')) + '</h3><ul class="small km-kp-list">' + links + '</ul>'
+             : '<p class="small muted">' + esc(t('km.supportsNone')) + '</p>') +
+      '</div>';
+  }).join('');
+  return rows;
+}
+
+// ---- 页面入口 ------------------------------------------------------------
+//
+// 错误语义分两档 (不混为一谈):
+//   ApiError  (NETWORK_ERROR / NOT_FOUND / INTERNAL_ERROR) → renderError 整页错误态,
+//     因为这是"读不到数据", 用户能做的只有重试或换课程。
+//   渲染期异常 → 也走 renderError, 但先 showBanner 提示重试。
+
+async function pageKnowledgeMap(courseId) {
+  const id = courseId;
+  if (!id) {
+    renderError(new ApiError({ code: 'NOT_FOUND', message: t('km.needCourse') }));
+    return;
+  }
+  markActiveNav('');
+  setRouteCourse(id);
+  showBanner('');
+  showLoading();
+  try {
+    await kmLoad(id);
+  } catch (err) {
+    if (err instanceof ApiError) renderError(err);
+    else renderError(new ApiError({ code: 'INTERNAL_ERROR', message: String((err && err.message) || err) }));
+    return;
+  }
+  kmPaint();
+}
+
+// kmPaint: 只重绘 #view 的内容区, 不触碰 chrome (顶栏 / 侧栏)。
+// 搜索 / 切换视图 / 筛选都走这条路径 —— 没有新的网络请求。
+function kmPaint() {
+  if (!KM_STATE.loaded) {
+    setView('<div class="card"><p class="muted">' + esc(t('common.loading')) + '</p></div>');
+    return;
+  }
+  const body = KM_STATE.view === 'list' ? kmRenderList()
+    : KM_STATE.view === 'materials' ? kmRenderMaterials()
+      : kmRenderExplore();
+  setView(
+    '<div class="page-head">' +
+    '<div class="crumbs"><a href="#/courses/' + encodeURIComponent(KM_STATE.courseId) + '">' +
+    esc(t('km.backToCourse')) + '</a></div>' +
+    '<h1>' + esc(t('km.title')) + '</h1>' +
+    '<p class="subtitle">' + esc(t('km.subtitle', { course: courseLabel(KM_STATE.courseId) })) + '</p>' +
+    '</div>' +
+    kmConflictBanner() +
+    kmStatsBar() +
+    kmToolbar() +
+    '<div id="km-body">' + body + '</div>' +
+    '<div class="card km-legend">' +
+    '<h2>' + esc(t('km.legendTitle')) + '</h2>' +
+    '<p class="small">' + esc(t('km.legendGrouping')) + '</p>' +
+    '<p class="small">' + esc(t('km.legendNoRelations')) + '</p>' +
+    '<p class="small">' + esc(t('km.legendClick')) + '</p>' +
+    '</div>'
+  );
+}
+
+// ---- 事件 (委托到 window 上, 不依赖渲染完成时机) ------------------------
+
+function kmHandleSearch(event) {
+  KM_STATE.query = String(event.target.value || '');
+  kmPaint();
+}
+
+function kmHandleFilter(event) {
+  KM_STATE.activeMaterial = String(event.target.value || 'all');
+  kmPaint();
+}
+
+function kmSetView(view) {
+  const next = ['explore', 'list', 'materials'].indexOf(view) >= 0 ? view : 'explore';
+  KM_STATE.view = next;
+  kmPaint();
+}
+
+// 统一出口: 全局 data-action 派发 (app.js 的 click 委托会先到这里)。
+function kmAction(action, node) {
+  if (action === 'km-search' || action === 'km-filter-material') return;  // input 类自己管
+  if (action === 'km-clear-search') {
+    KM_STATE.query = '';
+    kmPaint();
+    const input = document.getElementById('km-search-input');
+    if (input) input.focus();
+    return;
+  }
+  if (action === 'km-set-view') {
+    kmSetView(node.getAttribute('data-view'));
+  }
+}
+
+// input / change 类事件是"逐字符触发", 不适合走 click 委托。
+window.addEventListener('input', (event) => {
+  const node = event.target;
+  if (!node || !node.getAttribute) return;
+  if (node.getAttribute('data-action') === 'km-search') kmHandleSearch(event);
+});
+window.addEventListener('change', (event) => {
+  const node = event.target;
+  if (!node || !node.getAttribute) return;
+  if (node.getAttribute('data-action') === 'km-filter-material') kmHandleFilter(event);
+});
