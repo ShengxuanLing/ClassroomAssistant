@@ -118,7 +118,7 @@ class TestTaskDockContract:
 
     def test_long_actions_report_to_dock(self):
         materials = read_web_source("views/materials.js")
-        students = read_web_source("views/students.js")
+        students = read_web_source("views/shared.js")
         assert "startTask(" in materials and "finishTask(" in materials
         assert "startTask(" in students and "finishTask(" in students
         # 并发重复请求返回 PROCESSING 时必须继续轮询，不能调用 finishTask(..., true)。

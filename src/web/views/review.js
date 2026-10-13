@@ -121,7 +121,7 @@ async function pageCourseReview(courseId) {
 async function pageReview() {
   markActiveNav('#/review');
   const courseId = await requireCourse();
-  const students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  const students = await ensureStudent(courseId);
   if (!students.length) {
     setView('<div class="page-head"><h1>' + esc(t('rs.title')) + '</h1></div>' +
       '<div class="card">' + emptyState(t('rs.noStudent')) +
@@ -142,7 +142,7 @@ async function pageReview() {
   );
 
   const head = '<div class="page-head"><h1>' + esc(t('rs.title')) + '</h1>' +
-    '<p class="subtitle">' + esc(studentId) + ' · ' + esc(courseLabel(courseId)) + '</p>' +
+    '<p class="subtitle">' + esc((students[0] && students[0].display_name) || studentId) + ' · ' + esc(courseLabel(courseId)) + '</p>' +
     '<p class="small muted">' + esc(t('rs.subtitle')) + '</p></div>';
 
   const body = data.empty

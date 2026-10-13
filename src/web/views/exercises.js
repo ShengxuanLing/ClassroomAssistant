@@ -6,7 +6,7 @@
 async function pageExercises() {
   markActiveNav('#/exercises');
   const courseId = await requireCourse();
-  const students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  const students = await ensureStudent(courseId);
   const kps = (await api('/knowledge', { query: { course_id: courseId } })).knowledge_points || [];
 
   // Task 64: 出题前提是知识点已核验。这里如实分开显示, 而不是把
@@ -88,15 +88,15 @@ async function pageExercise(courseId, exerciseId, studentId) {
   //
   // 其它页面 (learn / mistakes / review) 早就是"先按课程校验再退回
   // 第一个"的写法, 这里当时漏了。
-  const students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  const students = await ensureStudent(courseId);
   const sid = studentId || (
     state.studentId && students.some((s) => s.student_id === state.studentId)
       ? state.studentId
       : (students[0] ? students[0].student_id : null)
   );
   if (!sid) {
-    setView('<div class="card"><h1>' + esc(t('ex.title')) + '</h1>' +
-      noStudentsCard() + '</div>');
+    // TASK-107 (D2): 同上, 纯防御分支。
+    toast(t('student.prepare'), 'bad');
     return;
   }
   setStudent(sid);

@@ -6,6 +6,41 @@
 
 // ---- 跨页面共享渲染助手 ---------------------------------------------------
 
+/**
+ * DEFAULT_STUDENT_NAME = 'Me';
+ *
+ * ensureStudent(courseId) {
+ *   let students = (await api('/students', { query: { course_id: courseId } })).students || [];
+ *   if (students.length) return students;
+ *   await api('/students', {
+ *     method: 'POST',
+ *     query: { course_id: courseId },
+ *     body: { student_id: 'student-default', display_name: 'Me' },
+ *   });
+ *   return (await api('/students', { query: { course_id: courseId } })).students || [];
+ * }
+ *
+ * 
+ */
+const DEFAULT_STUDENT_NAME = 'Me';
+
+function defaultStudentId(courseId) {
+  return 'student-default';
+}
+
+async function ensureStudent(courseId) {
+  let students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  if (students.length) return students;
+  await api('/students', {
+    method: 'POST',
+    query: { course_id: courseId },
+    body: { student_id: defaultStudentId(courseId), display_name: DEFAULT_STUDENT_NAME },
+  });
+  return (await api('/students', { query: { course_id: courseId } })).students || [];
+}
+
+// ---- 跨页面共享渲染助手 ---------------------------------------------------
+
 
 function kpLink(courseId, knowledgeId, label) {
   return '<a href="#/courses/' + encodeURIComponent(courseId) + '/knowledge/' +

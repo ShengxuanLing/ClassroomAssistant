@@ -314,7 +314,7 @@ const I18N = {
     'learn.noPrerequisite': '没有前置要求。',
     'learn.backToToday': '返回今日',
     'learn.courseRequired': '请先选择一门课程。',
-    'learn.noStudent': '请先选择一个学生。',
+    'learn.noStudent': '本课程会自动创建一个默认学生，你无需手动添加。',
 
     // --- Task 67 考前复习模式 ---
     'rs.title': '考前复习',
@@ -343,7 +343,7 @@ const I18N = {
     'rs.total': '合计',
     'rs.empty': '暂时没有可复习的内容。',
     'rs.emptyGuide': '先处理课程材料并完成练习，这里会按证据与学习状态列出复习项。',
-    'rs.noStudent': '请先选择一个学生。',
+    'rs.noStudent': '本课程会自动创建一个默认学生，你无需手动添加。',
     'rs.backToToday': '返回今日',
     'rs.reason.student_state': '学习状态显示需要再看一遍',
     'rs.reason.evidence_not_supported': '证据尚不支持',
@@ -586,7 +586,7 @@ const I18N = {
     'student.pending': 'Ejercicios pendientes', 'student.registered': 'Puntos ya trabajados',
     'student.noStates': 'Este estudiante todavía no tiene estados de aprendizaje.',
     'student.none': 'Esta asignatura aún no tiene estudiantes.',
-    'student.prepare': 'Añade primero un estudiante para empezar con ejercicios y errores.',
+    'student.prepare': 'El curs crea automàticament un estudiant per defecte; no cal afegir-ne cap.',
     'path.prerequisite': 'Prerrequisito', 'path.knowledge': 'Conocimiento',
     'path.exercise': 'Ejercicio', 'path.evaluation': 'Evaluación',
     'path.blockedBy': 'Bloqueado por prerrequisitos', 'path.rawState': 'Estado Task 30',
@@ -833,7 +833,7 @@ const I18N = {
     'learn.noPrerequisite': 'Sin prerrequisitos.',
     'learn.backToToday': 'Volver a Hoy',
     'learn.courseRequired': 'Selecciona primero una asignatura.',
-    'learn.noStudent': 'Selecciona primero un estudiante.',
+    'learn.noStudent': 'El curso crea automáticamente un estudiante por defecto; no hace falta añadir ninguno.',
 
     // --- Task 67 modo de repaso de examen ---
     'rs.title': 'Repaso de examen',
@@ -862,7 +862,7 @@ const I18N = {
     'rs.total': 'Total',
     'rs.empty': 'Todavía no hay contenido para repasar.',
     'rs.emptyGuide': 'Procesa materiales y completa ejercicios; aquí aparecerán según la evidencia y el estado de aprendizaje.',
-    'rs.noStudent': 'Selecciona primero un estudiante.',
+    'rs.noStudent': 'El curso crea automáticamente un estudiante por defecto; no hace falta añadir ninguno.',
     'rs.backToToday': 'Volver a Hoy',
     'rs.reason.student_state': 'Tu estado de aprendizaje indica otra mirada',
     'rs.reason.evidence_not_supported': 'La evidencia aún no lo respalda',
@@ -1326,7 +1326,7 @@ const I18N = {
     'learn.noPrerequisite': 'Sense prerequisits.',
     'learn.backToToday': 'Tornar a Avui',
     'learn.courseRequired': 'Selecciona primer una assignatura.',
-    'learn.noStudent': 'Selecciona primer un estudiant.',
+    'learn.noStudent': 'El curso crea automáticamente un estudiante por defecto; no hace falta añadir ninguno.',
 
     // --- Task 67 mode de repàs d'examen ---
     'rs.title': 'Repàs d\'examen',
@@ -1354,7 +1354,7 @@ const I18N = {
     'rs.total': 'Total',
     'rs.empty': 'Encara no hi ha contingut per repassar.',
     'rs.emptyGuide': 'Processa materials i completa exercicis; aquí apareixeran segons l’evidència i l’estat d’aprenentatge.',
-    'rs.noStudent': 'Selecciona primer un estudiant.',
+    'rs.noStudent': 'El curso crea automáticamente un estudiante por defecto; no hace falta añadir ninguno.',
     'rs.backToToday': 'Tornar a Avui',
     'rs.reason.student_state': 'El teu estat d\'aprenentatge indica una altra mirada',
     'rs.reason.evidence_not_supported': 'L\'evidència encara no ho recolza',
@@ -2034,6 +2034,4 @@ function setLang(lang) {
  * setCourse()。此时侧边栏已经画好了, 不重绘的话它就一直停在上一门课上 ——
  * 用户点开 B 课, 主视图是 B, 左侧高亮的却还是 A。
  */
-
-
 

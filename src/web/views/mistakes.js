@@ -260,7 +260,7 @@ function whoList(rows) {
 async function pageMistakes() {
   markActiveNav('#/mistakes');
   const courseId = await requireCourse();
-  const students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  const students = await ensureStudent(courseId);
   const groupBy = state.mistakeGroupBy === 'topic' ? 'topic' : 'knowledge';
 
   if (!students.length) {
@@ -360,7 +360,7 @@ async function pageMistakes() {
 async function pageMistakeDetail(courseId, knowledgeId) {
   markActiveNav('#/mistakes');
   setRouteCourse(courseId);
-  const students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  const students = await ensureStudent(courseId);
   if (!students.length) {
     setView('<div class="card"><h1>' + esc(t('mk.detailTitle')) + '</h1>' +
       noStudentsCard() + '</div>');

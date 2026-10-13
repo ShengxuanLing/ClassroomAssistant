@@ -911,7 +911,7 @@ def test_the_explanation_language_picker_is_gone_from_the_ui():
     """TASK-81 §C: 请求语言下拉被删掉 (它只能选出一个必然 404 的组合)。"""
     import tests.support as support
 
-    raw = support.read_web_source("views/students.js")
+    raw = support.read_web_source("views/shared.js")
     # 注释里可以解释历史, 但**代码**里不许再有这个下拉 (扫描器不剥注释,
     # 所以这里显式只查代码部分)。
     source = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)

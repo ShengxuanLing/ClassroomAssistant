@@ -39,7 +39,7 @@ const WEB_FILES = [
   'views/knowledge-graph.js',
   'views/materials.js',
   'views/courses.js',
-  'views/students.js',
+  'views/shared.js',
   'views/exercises.js',
   'views/mistakes.js',
   'views/review-pack.js',
@@ -1447,7 +1447,7 @@ async function main() {
       oldRoute.window.location.hash = hash;
       await oldRoute.route();
       const out = html(oldRoute);
-      check(hash + ' falls back to the not-found page', out.includes('未找到页面'), out);
+      check(hash + ' redirects to My Courses instead of a bare not-found page', out.includes('我的课程') && ! out.includes('未找到页面'), out);
     }
   }
 
@@ -2878,3 +2878,5 @@ main().catch((err) => {
   console.error(err && err.stack ? err.stack : err);
   process.exit(1);
 });
+
+

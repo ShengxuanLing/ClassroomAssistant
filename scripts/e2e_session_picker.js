@@ -42,7 +42,7 @@ const WEB_FILES = [
   'views/knowledge-graph.js',
   'views/materials.js',
   'views/courses.js',
-  'views/students.js',
+  'views/shared.js',
   'views/exercises.js',
   'views/mistakes.js',
   'views/review-pack.js',

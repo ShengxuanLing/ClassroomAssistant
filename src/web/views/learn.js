@@ -81,7 +81,7 @@ function learnTaskCard(title, task) {
 async function pageLearn() {
   markActiveNav('#/today');
   const courseId = await requireCourse();
-  const students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  const students = await ensureStudent(courseId);
   if (!students.length) {
     setView('<div class="page-head"><h1>' + esc(t('learn.title')) + '</h1></div>' +
       '<div class="card">' + emptyState(t('learn.noStudent')) + '</div>');
@@ -98,7 +98,7 @@ async function pageLearn() {
   );
 
   const head = '<div class="page-head"><h1>' + esc(t('learn.title')) + '</h1>' +
-    '<p class="subtitle">' + esc(studentId) + ' · ' + esc(courseLabel(courseId)) + '</p></div>';
+    '<p class="subtitle">' + esc((students[0] && students[0].display_name) || studentId) + ' · ' + esc(courseLabel(courseId)) + '</p></div>';
 
   const body = data.has_task
     ? learnTaskCard(t('learn.currentTask'), data.current_task) +
@@ -118,7 +118,7 @@ async function pageLearnKnowledge(courseId, knowledgeId) {
   // 在 `#/learn/<kp>` 上刷新, 则变成整条导航都没有高亮。两种都是"高亮的位置
   // 不是用户所在的位置"。
   markActiveNav('#/today');
-  const students = (await api('/students', { query: { course_id: courseId } })).students || [];
+  const students = await ensureStudent(courseId);
   if (!students.length) {
     setView('<div class="card">' + emptyState(t('learn.noStudent')) + '</div>');
     return;

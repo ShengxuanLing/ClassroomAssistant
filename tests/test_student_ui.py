@@ -953,12 +953,14 @@ class TestRemovedStudentPages:
         assert 'href="#/students"' not in body
         assert "student.register" not in body
         assert source.count("function noStudentsCard(") == 1
-        # 1 处定义 + 5 处调用: exercises(2) / mistakes(2, 含重做空态) /
-        # review(1, 考前复习页空态) / learn(1, 今日学习页空态)。
-        # 新增调用点必须复用同一个
-        # 空态函数, 不许各页自己写一份。
-        assert source.count("noStudentsCard()") == 5
-
+        # 1 处定义 + 4 处调用: exercises(1, 单题页空态) / mistakes(2, 列表空态
+        #   + 详情页空态) / learn(0, 今日页与知识点页都改走 ensureStudent)。
+        # review(0, 考前复习页同样改走 ensureStudent)。
+        # TASK-107 (D2) 之后, 依赖学生的页面在 0 学生时自动建默认学生,
+        # 所以这些还没有学生的空态分支只剩单题页 / 错题本两个页面还留着
+        #   (它们按 studentId 精确取数, 拿不到就该报错而不是静默空转)。
+        # 新增调用点必须复用同一个空态函数, 不许各页自己写一份。
+        assert source.count("noStudentsCard()") == 4
     def test_backend_student_endpoints_are_not_removed(self):
         """反向契约不能误伤后端 API。"""
         source = read_asset("app.js")
@@ -1242,3 +1244,4 @@ class TestTheLiveSessionPickerEndToEnd:
         # 都写成 no-op 也能绿。
         assert "E2E (live, with sessions) OK" in result.stdout, result.stdout
         assert "2 sessions" in result.stdout, result.stdout
+
