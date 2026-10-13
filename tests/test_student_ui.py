@@ -954,9 +954,10 @@ class TestRemovedStudentPages:
         assert "student.register" not in body
         assert source.count("function noStudentsCard(") == 1
         # 1 处定义 + 5 处调用: exercises(2) / mistakes(2, 含重做空态) /
-        # flashcards(1, 无学生时只给文字引导)。新增调用点必须复用同一个
+        # review(1, 考前复习页空态) / learn(1, 今日学习页空态)。
+        # 新增调用点必须复用同一个
         # 空态函数, 不许各页自己写一份。
-        assert source.count("noStudentsCard()") == 6
+        assert source.count("noStudentsCard()") == 5
 
     def test_backend_student_endpoints_are_not_removed(self):
         """反向契约不能误伤后端 API。"""

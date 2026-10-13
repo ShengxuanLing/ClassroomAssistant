@@ -8729,3 +8729,116 @@ scripts/ui_audit.js                                 UI audit OK (629 checks)    
   - 默认视图仍是 `graph`（用户说「反正在那个页面也可以切换显示方式」）。
   - 真机验证新建的 1 张记忆卡片留在本地库里（`POST /api/flashcards` 无删除端点）：它是本次
     验收的产物，内容是真实知识点，不影响任何断言。
+
+---
+
+## TASK-106 下线「记忆卡片」（2026-10-13）
+
+### 依据
+
+用户：「删掉知识卡片这个功能，没有实际用途」。功能确实存在，但**入口只有 1 处**（知识地图页
+副标题里一个链接），其余全部是隐藏代码路径 —— 判定可拆。计划书：
+`docs/task-106-108-cleanup-plan.md`（含 D1 决策点、§12 接手前必读、§12.5 的 8 步顺序）。
+
+### 决策 D1（用户 2026-10-13 拍板）
+
+**方案 A**：代码全删 + 追加 `m005` 迁移 `DROP TABLE flashcards, flashcard_evidence`。
+动库前实测：卡片 **1** 张（`flashcard-2746b4f18bbac8f5a487`，`state='new'`，从未复习，属
+Gestió de Projectes）、`flashcard_evidence` **1** 行 ⇒ 数据损失 ≈ 0。已报用户并取得确认。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `src/web/views/flashcards.js` | **删除**（157 行） |
+| `src/persistence/repositories/flashcard.py` | **删除**（125 行） |
+| `tests/test_flashcards.py` / `tests/test_fsrs_scheduling.py` | **删除**（260 / 98 行） |
+| `src/scheduling/`（`__init__.py` + `fsrs.py`） | **整包删除**（302 行）—— §3.4 核对项③确认只服务记忆卡片 |
+| `src/models.py` | 删 `class Flashcard`（−111 行） |
+| `src/web/app.js` | 删 `create-flashcard` 派发分支 + `flashcardId` / `flashcardRating` 两个悬空变量 |
+| `src/web/i18n.js` | 删 `fc.*` 三语（zh / es / ca） |
+| `src/web/index.html` / `styles.css` | 删 `<script src="/views/flashcards.js">` / `.card-zh` 样式 |
+| `src/web/views/knowledge.js` | 删副标题的记忆卡片链接、列表视图每行「生成卡片」按钮（并清掉两处过期注释） |
+| `src/api/endpoints.py` | 删 4 个 handler 与 4 条路由注册 |
+| `src/application/workspace.py` | 删 `list/create/get/review_flashcard` + `flashcard_scheduler` 接线 + `/api/health` 的 FSRS 字段 |
+| `src/application/persistence_wiring.py` | 删 `save_flashcards` / `load_flashcards` |
+| `src/persistence/models/tables.py` | 删 `TABLES["flashcards"]` / `LINK_TABLES["flashcard_evidence"]` |
+| `src/persistence/repositories/__init__.py` | 删 import / `__all__` / 绑定 / `counts()["flashcards"]` |
+| `src/persistence/migrations/m005_drop_flashcards.py` | **新增**（先删 link 表再删主表） |
+| `scripts/ui_audit.js` / `ui_render_check.js` / `ui_stress_check.js` / `e2e_session_picker.js` | `WEB_FILES` 去掉 `views/flashcards.js`；前两者并删掉 flashcards 夹具、路由表项、`PAGES` 项与全部 flashcards check |
+| `tests/support.py` | `WEB_SOURCE_ORDER` 去掉 `views/flashcards.js` |
+| `tests/test_multi_course.py` | 顶栏归属表删 `"pageFlashcards": "#/knowledge"` |
+| `tests/test_student_ui.py` | `noStudentsCard()` 调用点 6 → **5** |
+| `tests/test_production_gate.py` | 迁移链 4 → **5**；仓储 19 → **18**；运行时依赖集合去掉 `fsrs` |
+| `tests/test_dependency_audit.py` | `IMPORT_TO_REQUIREMENT` 去掉 `"fsrs"` |
+| `README.md` / `requirements.txt` | 删 fsrs 段落 / 依赖 |
+| `src/common/clock.py` | docstring 里指向 `src/scheduling/fsrs.py` 的例子改成 `database.py` / `workspace.py` |
+
+### 验收（实测数字）
+
+```text
+grep -rn -E "flashcard|fsrs" src/ tests/ scripts/   0 命中（只剩 m004/m005 迁移文件自身的表名与
+                                                     test_production_gate 的说明性注释）
+import src.persistence / models / workspace / endpoints   OK
+Flashcard in models                                  False
+MIGRATIONS                                           [1,2,3,4,5]   latest=5
+Repositories 仓储数                                   18
+定向 13 文件                                          709 passed / 1 failed（环境）
+scripts/ui_audit.js                                  UI audit OK (610 checks)          ← 629
+scripts/ui_render_check.js                           UI RENDER CHECK: OK (314 checks)  ← 316
+```
+
+**m005 已在真实库上执行并复核**（修好 P0-1 后开库即迁移，属预期行为，计划书 §12.4）：
+
+```text
+schema_version 台账   [(1,'001_initial_schema'), (2,'002_…'), (3,'003_…'),
+                       (4,'004_flashcards'), (5,'005_drop_flashcards')]
+flashcard* 表         []                                  ← 已消失
+courses / knowledge_points / evidence   5 / 467 / 126      ← 未变
+```
+
+迁移前用 `VACUUM INTO` 打了快照（`temp/pre-m005-snapshot.sqlite`，2.65 MB），逐表比对结果：
+**只有 `flashcards` / `flashcard_evidence` 两张表消失，`schema_version` 由 4 变 5，其余
+33 张表行数一字未变** —— 无附带数据损失。
+
+### check 数下降的解释（−19 / −2，全部是"被删功能自己的 check"）
+
+`ui_render_check.js` **−2**：正是两条 flashcards 专用断言
+（`#/knowledge still links to the flashcards page` / `… keeps the per-row flashcard button`）。
+
+`ui_audit.js` **−19**，逐项可对上：
+
+| 来源 | 条数 |
+|---|---|
+| 显式删掉的 flashcards 断言（per-row affordance 1 + 空态入口 1 + TASK-79 卡片组 7 + 静态守卫 3） | 12 |
+| `PAGES` 去掉 `flashcards` 项（三语渲染 5 + 空态 1 + 原始 course_id 不回显 1） | 7 |
+| **合计** | **19** |
+
+没有一条是"因为报错才被删掉"的 —— 下降全部来自功能本体的消失。
+
+### 额外发现（计划书没列、但必须同步）
+
+1. **`tests/test_persistence_migration.py::test_no_migration_drops_a_table`** 是计划书漏掉的结构
+   守卫（"任何迁移出现 `DROP TABLE` 即违规"），方案 A 必然触发它。**没有删掉守卫**，而是把唯一
+   批准的例外写死：新增 `_APPROVED_DROPS = {5: {"flashcards", "flashcard_evidence"}}`，测试改名
+   `test_only_approved_migrations_drop_a_table` —— 除 m005 外任何 `DROP TABLE` 仍会失败。连带
+   同步了 `docs/data_model.md` §5 与 `m003` 注释里对旧测试名的引用。
+2. **`test_latest_version_is_four` → `test_latest_version_is_five`**（断言 4 → 5）。
+3. **仓库根目录躺着 3 个游离脚本**（`temp_patch_route.py` 0 字节、`_patch_bs.py`、`_patch_ws.py`），
+   被上一轮的 `git add -A` 一起提交进 `5c49df0`，触发
+   `test_production_gate.py::TestBuildHygiene::test_no_stray_python_file_outside_src_and_tests`。
+   核实两个 patch 脚本的改动**都已落到源码**（`bootstrap.py` 有 `ai_timeout_seconds`；
+   `workspace.py::_translate_kp_once` 已是 `Optional[int] = None`）⇒ 已失效，删除。
+4. **`src/application/workspace.py` 的工作区行尾是 CRLF**（4097 行，与 `.gitattributes` 的
+   `eol=lf` 不符；其余改动文件都是 LF）。已按字节把 `\r\n` 统一成 `\n`；`git diff --numstat`
+   前后都是 `2 138`，证明只动了行尾、没有内容变化。
+5. 其余 `i/lf w/crlf` 的文件（`docs/review-*.md`、`reports/km-map-*.html`、
+   `src/application/bootstrap.py`、`src/application/ai/service.py` 等）**属别的任务线，未动** ——
+   它们在工作区是 CRLF 但索引/blob 是 LF，`git status` 干净，不影响本次提交。
+
+### 规模 / 风险
+
+- **规模 M**：前端 5 + 后端 7 + 删 5 个文件/包 + 1 条迁移 + 8 处守卫/脚本 + 3 份文档。
+- **风险**：代码侧 `git revert` 可回滚；**m005 的 DROP 不可逆**（快照在 `temp/`，不在版本控制里）。
+- **未做**：TASK-107（「无学生」死路）与 TASK-108（无入口页面 / 端点清点）**本次未实施** ——
+  计划书 §4 / §5 的处置建议仍待用户拍板 D2 与 §5.3 处置表。

@@ -133,7 +133,10 @@ Material ──→ Evidence ──→ KnowledgePoint ──→ Validation / Revi
 - 每个迁移是一个 `Migration`，携带**严格递增**的整数 `version`。
 - 迁移**只做加法**：新增表 / 新增列 / 建索引 / 数据回填。
   **绝不 `DROP TABLE` 已有业务表**——那等于删库重建。这条由
-  `tests/test_persistence_migration.py::test_no_migration_drops_a_table` 断言。
+  `tests/test_persistence_migration.py::test_only_approved_migrations_drop_a_table`
+  断言。唯一被显式批准过的破坏性迁移是 `005_drop_flashcards`（TASK-106 下线
+  记忆卡片，用户 2026-10-13 拍板），它的版本号与表名一起写死在该测试的
+  `_APPROVED_DROPS` 里；除它之外，任何迁移再出现 `DROP TABLE` 仍会失败。
 - 每条迁移在**自己的事务**里执行，失败即整体回滚，不会留下半迁移的 schema。
 - 迁移名一旦发布就不许改（它写进了台账，改名会让审计对不上）。
 - 库版本**高于**代码支持的上限 → `UnsupportedSchemaVersionError`，**绝不降级或猜测**。

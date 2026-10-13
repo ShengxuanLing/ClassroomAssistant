@@ -74,8 +74,7 @@ from src.knowledge_organization import (
     KnowledgeOrganizationService,
     KnowledgeRelationType,
 )
-from src.models import ClassSession, Course, Flashcard
-from src.scheduling.fsrs import FSRSScheduler
+from src.models import ClassSession, Course
 
 __all__ = ["CourseContext", "Workspace", "APPLICATION_NAME", "APPLICATION_VERSION"]
 
@@ -217,7 +216,7 @@ class Workspace:
         llm_mode: Optional[str] = None,
         persistence: Optional[Any] = None,
         database_path: Optional[str] = None,
-        flashcard_scheduler: Optional[Any] = None,
+
     ) -> None:
         if not isinstance(data_dir, str) or not data_dir.strip():
             raise InvalidInputError("data_dir must be a non-empty string")
@@ -285,8 +284,6 @@ class Workspace:
         self._ai_provider: Optional[Any] = None
         self._ai_reports: dict[tuple[str, str], dict[str, Any]] = {}
         # Scheduling is an orthogonal projection: StudyPlanner still decides
-        # what to study, while FSRS owns only the next review time.
-        self._flashcard_scheduler = flashcard_scheduler or FSRSScheduler()
         # Course synthesis is a derived, read-only cache.  It is never part
         # of the student/learning state and is rebuilt only from this course's
         # material reports.
@@ -402,9 +399,6 @@ class Workspace:
     def database_path(self) -> Optional[str]:
         return None if self._persistence is None else self._persistence.path
 
-    @property
-    def flashcard_scheduler(self) -> Any:
-        return self._flashcard_scheduler
 
     # ------------------------------------------------------------------
     # 生命周期 (Task 48)
@@ -2274,125 +2268,6 @@ class Workspace:
                 duration_ms=(time.monotonic() - started) * 1000,
             )
 
-    # ------------------------------------------------------------------
-    # Flashcards (evidence-grounded; scheduling is a separate projection)
-    # ------------------------------------------------------------------
-
-    def list_flashcards(
-        self,
-        course_id: str,
-        *,
-        student_id: Optional[str] = None,
-        due_before: Optional[str] = None,
-    ) -> list[dict[str, Any]]:
-        self.get_course(course_id)
-        if self._persistence is None:
-            return []
-        cards = self._persistence.load_flashcards(
-            course_id=course_id,
-            student_id=student_id,
-            due_before=due_before,
-        )
-        return [card.to_dict() for card in cards]
-
-    def create_flashcard(
-        self,
-        course_id: str,
-        student_id: str,
-        kp_id: str,
-        *,
-        front: Optional[str] = None,
-        back: Optional[str] = None,
-        example: str = "",
-        audio_path: str = "",
-        source_refs: Optional[Sequence[str]] = None,
-        due: Optional[str] = None,
-    ) -> dict[str, Any]:
-        """Create one grounded card from an existing course knowledge point.
-
-        Explicit source references may narrow, but never invent, the KP's
-        evidence chain.  With no evidence there is no card: an unsupported
-        flashcard would break the product's evidence-chain invariant.
-        """
-        self.get_course(course_id)
-        student_id = str(student_id or "").strip()
-        if not student_id:
-            raise InvalidInputError("student_id is required")
-        kp = self.knowledge_point(course_id, kp_id)
-        available_refs = [str(ref) for ref in (kp.get("evidence_refs") or []) if ref]
-        requested_refs = list(source_refs or available_refs)
-        if not requested_refs:
-            raise InvalidInputError(
-                "cannot create a flashcard from a knowledge point without evidence"
-            )
-        unknown = [ref for ref in requested_refs if ref not in set(available_refs)]
-        if unknown:
-            raise InvalidInputError(
-                "flashcard source_refs must come from the knowledge point evidence",
-                detail={"unknown_source_refs": unknown},
-            )
-        if self._persistence is None:
-            raise StorageError("flashcards require persistent storage")
-        card = Flashcard(
-            course_id=course_id,
-            student_id=student_id,
-            kp_id=kp_id,
-            front=str(front or kp.get("title") or kp_id).strip(),
-            back=str(back or kp.get("content") or "").strip(),
-            example=str(example or ""),
-            audio_path=str(audio_path or ""),
-            source_refs=requested_refs,
-            due=str(due or self._clock()),
-        )
-        with self._atomic():
-            self._persistence.save_flashcards([card])
-        result = card.to_dict()
-        result["evidence"] = self.knowledge_evidence(course_id, kp_id)
-        return result
-
-    def get_flashcard(
-        self, course_id: str, flashcard_id: str, *, student_id: Optional[str] = None
-    ) -> dict[str, Any]:
-        if self._persistence is None:
-            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
-        card = self._persistence.repositories.flashcards.load(flashcard_id)
-        if card is None or card.course_id != course_id:
-            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
-        if student_id is not None and card.student_id != student_id:
-            # Do not reveal another learner's card through a guessed id.
-            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
-        return card.to_dict()
-
-    def review_flashcard(
-        self,
-        course_id: str,
-        flashcard_id: str,
-        rating: Any,
-        *,
-        student_id: Optional[str] = None,
-    ) -> dict[str, Any]:
-        """Persist one explicit human review result and project its next due date."""
-        if self._persistence is None:
-            raise StorageError("flashcards require persistent storage")
-        card = self._persistence.repositories.flashcards.load(flashcard_id)
-        if card is None or card.course_id != course_id:
-            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
-        if student_id is not None and card.student_id != student_id:
-            raise NotFoundError("flashcard not found", detail={"flashcard_id": flashcard_id})
-        try:
-            update = self._flashcard_scheduler.review(card, rating)
-        except (TypeError, ValueError) as exc:
-            raise InvalidInputError(str(exc)) from exc
-        card.due = update.due
-        card.stability = update.stability
-        card.difficulty = update.difficulty
-        card.state = update.state
-        card.reps = update.reps
-        card.lapses = update.lapses
-        card.last_review = update.last_review
-        with self._atomic():
-            self._persistence.save_flashcards([card])
-        return card.to_dict()
 
     def knowledge_evidence(
         self, course_id: str, knowledge_id: str
@@ -4211,17 +4086,6 @@ class Workspace:
             "ai": {
                 "mode": self._ai_mode,
                 "enabled": bool(self._ai_enabled),
-            },
-            "scheduling": {
-                "backend": getattr(self._flashcard_scheduler, "backend", None) and getattr(
-                    self._flashcard_scheduler.backend, "name", "unknown"
-                ),
-                "desired_retention": getattr(
-                    self._flashcard_scheduler, "desired_retention", 0.9
-                ),
-                "max_interval_days": getattr(
-                    self._flashcard_scheduler, "max_interval_days", 365
-                ),
             },
             # §1: LLM 模式显式可见 (与 asr/ocr 同语义)。绝不静默把 Mock
             # 当作真实模型; key 永不出现在 health 里。

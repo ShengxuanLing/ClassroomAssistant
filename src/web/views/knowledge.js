@@ -114,10 +114,9 @@ async function actionBackfillKpTranslations(courseId, button) {
 // (`#/knowledge`) 与 href **一字未动** —— 只把**渲染体**从旧平铺表换成知识
 // 地图页 (图谱/探索/列表/材料 四个视图, 默认图谱)。
 //
-// 旧平铺页独有的三项能力都搬进了知识地图页, 不是丢掉:
+// 旧平铺页独有的能力里, 只有一项搬进了知识地图页, 不是丢掉:
 //   ① 一键补翻 + 费用提示 → kmPaint() 的 actions 块
-//   ② 记忆卡片入口        → kmPaint() 页头副标题末尾
-//   ③ 每行「生成卡片」      → kmRenderList() 的行模板
+// (「记忆卡片」入口与每行「生成卡片」按钮原样搬来过, TASK-106 已随功能一起下线。)
 // 顶栏高亮仍归 `#/knowledge` 分区, 归属声明在这里; 取数与渲染交给共享的
 // kmOpenCourse (它自己不写高亮, 见其注释)。
 async function pageKnowledge() {
@@ -790,11 +789,6 @@ function kmRenderList() {
         knowledgeModeBadge(kp) +
         // TASK-105: 旧平铺页每行的「生成卡片」入口, 原样搬进列表视图的行
         // (有证据才给按钮, 没证据给灰字 —— 与旧页同一判据)。
-        ((kp.evidence_refs || []).length
-          ? ' <button class="small" data-action="create-flashcard" data-course="' +
-            esc(KM_STATE.courseId) + '" data-knowledge="' + esc(kid) + '">' +
-            esc(t('fc.create')) + '</button>'
-          : ' <span class="tiny muted">' + esc(t('fc.noEvidence')) + '</span>') +
         '<br><span class="tiny muted mono break-all">' + esc(kid) + '</span></td>' +
         '<td class="nowrap">' + pill(kp.validation_status) + ' ' + pill(kp.review_status) + '</td>' +
         '<td class="num">' + esc(evCount) + '</td>' +
@@ -898,11 +892,7 @@ function kmPaint() {
     '<div class="crumbs"><a href="#/courses/' + encodeURIComponent(KM_STATE.courseId) + '">' +
     esc(t('km.backToCourse')) + '</a></div>' +
     '<h1>' + esc(t('km.title')) + '</h1>' +
-    // 记忆卡片入口: 旧平铺页把它放在副标题末尾, TASK-105 原样搬过来。
-    // km.subtitle 的文案本身不改 (它被审计的插值用例盯着), 只在其后追加一个
-    // 独立链接。
     '<p class="subtitle">' + esc(t('km.subtitle', { course: courseLabel(KM_STATE.courseId) })) +
-    ' · <a href="#/flashcards">' + esc(t('fc.title')) + '</a></p>' +
     '</div>' +
     // TASK-81 §A2 / TASK-105: 一键补翻 —— 旧平铺页的独有入口, 换渲染体时
     // 必须一起搬 (否则是静默删功能)。费用提示与旧页逐字相同。

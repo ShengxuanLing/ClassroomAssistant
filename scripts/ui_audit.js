@@ -80,7 +80,6 @@ const WEB_FILES = [
   'views/review.js',
   'views/knowledge.js',
   'views/knowledge-graph.js',
-  'views/flashcards.js',
   'views/materials.js',
   'views/courses.js',
   'views/students.js',
@@ -103,7 +102,6 @@ function viewSource(rel) {
   return WEB_SOURCES.filter((source) => source.name === rel)[0].code;
 }
 const VIEWS_KNOWLEDGE = viewSource('views/knowledge.js');
-const VIEWS_FLASHCARDS = viewSource('views/flashcards.js');
 const VIEWS_MATERIALS = viewSource('views/materials.js');
 const CSS = fs.readFileSync(path.join(ROOT, 'src', 'web', 'styles.css'), 'utf8');
 const INDEX_HTML = fs.readFileSync(path.join(ROOT, 'src', 'web', 'index.html'), 'utf8');
@@ -768,37 +766,6 @@ function groundedExplanation() {
   };
 }
 
-function flashcards() {
-  return {
-    flashcards: [
-      {
-        flashcard_id: 'fc-1',
-        course_id: COURSE_ID,
-        student_id: STUDENT_ID,
-        kp_id: KP_ID,
-        front: 'Definicion de funcion',
-        back: 'Una funcion es una relacion entre conjuntos.',
-        example: '',
-        state: 'new',
-        due: '2026-09-25T00:00:00+00:00',
-        source_refs: ['evid-1'],
-      },
-      {
-        flashcard_id: 'fc-2',
-        course_id: COURSE_ID,
-        student_id: STUDENT_ID,
-        kp_id: KP_ID,
-        front: 'Dominio de una funcion',
-        back: 'El dominio es el conjunto de entrada.',
-        example: 'Ejemplo del dominio.',
-        state: 'review',
-        due: '2026-09-26T00:00:00+00:00',
-        source_refs: ['evid-1'],
-      },
-    ],
-  };
-}
-
 function exerciseView() {
   return {
     course_id: COURSE_ID,
@@ -1160,8 +1127,6 @@ function routes() {
   table['/api/knowledge/' + KP_ID + '/translate'] = kpTranslation();
   // TASK-81 §C: 解释面板 (语言由证据决定, 不再由下拉选)。
   table['/api/knowledge/' + KP_ID + '/explanation'] = groundedExplanation();
-  // 记忆卡片页 (TASK-79 降级为“背题入口”).
-  table['/api/flashcards'] = flashcards();
   table['/api/students'] = { students: [{ student_id: STUDENT_ID, display_name: 'Ana' }] };
   table['/api/students/' + STUDENT_ID + '/exercises'] = {
     course_id: COURSE_ID,
@@ -1922,8 +1887,6 @@ const PAGES = [
   { name: 'exercises', args: [] },
   { name: 'mistakes', args: [] },
   { name: 'mistakeDetail', args: [COURSE_ID, KP_ID] },
-  // TASK-79: 记忆卡片页 (标题可点进详情 + 中文预览行)。
-  { name: 'flashcards', args: [] },
   { name: 'exercise', args: [COURSE_ID, EXERCISE_ID, STUDENT_ID] },
   // Task 66: 今天的学习流程 (入口 + 知识点学习页)
   { name: 'learn', args: [] },
@@ -3795,8 +3758,6 @@ async function audit() {
   //    fixture 里的 evidence content —— 中文层是**加**上去的, 不是换掉它的。
   // 2. **三语界面文案**。kpZh.* 九个 key 在 es/ca 下不得出现 CJK, 否则就是
   //    漏译; 中文**数据**用 ASCII 夹具 (理由见 kpGlossary() 的注释)。
-  // 3. **卡片标题是链接**。 flashcards 降级为“背题入口”: front 必须是指向
-  //    知识点详情的 <a>, 否则学生看到一个不懂的西语概念却无处可去。
   {
     const sandbox = await renderPage(pageByName('knowledgeDetail'), routes(), 'zh');
     const out = html(sandbox);
@@ -3980,24 +3941,12 @@ async function audit() {
     check('the knowledge entry opens on the graph view',
       kmEntryOut.indexOf('data-view="graph" aria-pressed="true"') >= 0,
       kmEntryOut.slice(0, 400));
-    check('the knowledge entry keeps the per-row flashcard affordance',
-      vm.runInContext("kmSetView('list');", kmEntry) === undefined &&
-      html(kmEntry).indexOf('data-action="create-flashcard"') >= 0,
-      html(kmEntry).slice(0, 400));
 
-    // 两处**空态引导**也指向这个入口 (href 仍是 `#/knowledge`, 文案用同一个
-    // 被改名的 key)。它们只在"有学生但没内容"时才画, 真机上不一定碰得到,
-    // 所以在这里把两个空态**真的渲染一遍**并断言入口还在 —— 换渲染体不能把
-    // 这两个入口带走。
+    // 一处**空态引导**也指向这个入口 (href 仍是 `#/knowledge`, 文案用同一个
+    // 被改名的 key)。它只在"有学生但没内容"时才画, 真机上不一定碰得到,
+    // 所以在这里把这个空态**真的渲染一遍**并断言入口还在 —— 换渲染体不能把
+    // 这个入口带走。
     {
-      const noCards = routes();
-      noCards['/api/flashcards'] = { flashcards: [] };
-      const fc = await renderPage(pageByName('flashcards'), noCards, 'zh');
-      const fcOut = html(fc);
-      check('the flashcards empty state still links to the knowledge entry',
-        fcOut.indexOf(t_zh(fc, 'fc.emptyGuide')) >= 0 &&
-        fcOut.indexOf('href="#/knowledge"') >= 0, fcOut.slice(0, 400));
-
       const noExercises = routes();
       noExercises['/api/students/' + STUDENT_ID + '/exercises'] = {
         course_id: COURSE_ID,
@@ -4015,33 +3964,6 @@ async function audit() {
     }
   }
 
-  // ---- TASK-79: 记忆卡片降级为“背题入口” (FSRS 打分未动) ---------------
-  {
-    const sandbox = await renderPage(pageByName('flashcards'), routes(), 'zh');
-    const out = html(sandbox);
-    const detailHref = '#/courses/' + encodeURIComponent(COURSE_ID) +
-      '/knowledge/' + encodeURIComponent(KP_ID);
-    check('the flashcard title links to the knowledge point detail',
-      out.indexOf('<h2><a href="' + detailHref + '">') >= 0, out.slice(0, 400));
-    check('the flashcard title is no longer plain text',
-      out.indexOf('<h2>Definicion de funcion</h2>') === -1, out.slice(0, 400));
-    check('the flashcard still renders the source text unchanged',
-      out.indexOf('Una funcion es una relacion entre conjuntos.') >= 0, out.slice(0, 400));
-    check('the flashcard still offers the three FSRS ratings',
-      ['again', 'good', 'easy'].every((rating) =>
-        out.indexOf('data-rating="' + rating + '"') >= 0), out.slice(0, 400));
-    check('the flashcard shows the cached Chinese explanation',
-      out.indexOf('FIXTURE chinese explanation placeholder') >= 0, out.slice(0, 400));
-    check('the flashcard Chinese preview carries the disclaimer',
-      out.indexOf(t_zh(sandbox, 'kpZh.disclaimer')) >= 0, out.slice(0, 400));
-
-    // 一页卡片对每个知识点只发一对只读请求 (两张卡共享一个 KP -> 不是 4 次)。
-    const glossaryCalls = sandbox.__fetched.filter(
-      (url) => String(url).split('?')[0].indexOf('/glossary') >= 0).length;
-    check('the flashcard page reads the Chinese layer once per knowledge point',
-      glossaryCalls === 1, String(glossaryCalls));
-  }
-
   // ---- TASK-79: 静态守卫 —— 共用渲染器只有一份 -----------------------------
   {
     const all = WEB_SOURCES.map((s) => s.code).join('\n');
@@ -4052,13 +3974,8 @@ async function audit() {
     check('the materials view delegates to the shared glossary renderer',
       VIEWS_MATERIALS.indexOf('renderGlossaryCard(') >= 0 &&
       VIEWS_MATERIALS.indexOf('function renderAiGlossary') < 0);
-    check('the knowledge detail and the flashcard page share the Chinese layer',
-      VIEWS_KNOWLEDGE.indexOf('renderTranslationZhCard(') >= 0 &&
-      VIEWS_FLASHCARDS.indexOf('renderCardZh') >= 0);
-    check('the Chinese-layer styles are declared for .card-zh',
-      /\.card-zh\s*\{/.test(CSS));
-    check('the Chinese layer never reuses the original block markup',
-      !/renderCardZh[\s\S]{0,400}originalBlock/.test(VIEWS_FLASHCARDS));
+    check('the knowledge detail uses the shared Chinese-layer renderer',
+      VIEWS_KNOWLEDGE.indexOf('renderTranslationZhCard(') >= 0);
   }
 
   // ---- 12) Knowledge Map: 口径 / 分组 / 搜索 / 视图 / 路由 ---------------

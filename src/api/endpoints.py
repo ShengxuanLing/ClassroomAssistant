@@ -610,10 +610,6 @@ def build_router(workspace: Workspace) -> Router:
         body = request.json_body() if request.body else {}
         if not isinstance(body, dict):
             raise InvalidInputError("request body must be a JSON object")
-        # TASK-80: body || query 双读, 与 create_flashcard 同口径。
-        # 原来只读 query, 而前端把 course_id 放在 POST body 里 —— query/body
-        # 分开拼, 于是用户点一次“翻译成中文”就撞一个必现的 400 (参数错 ≠
-        # 翻译失败)。双读同时覆盖旧缓存页面与只带 body 的外部调用。
         course_id = str(body.get("course_id") or request.require_q("course_id"))
         target_lang = str(
             body.get("target_lang") or request.q("target_lang") or "zh"
@@ -730,79 +726,6 @@ def build_router(workspace: Workspace) -> Router:
         return success(workspace.knowledge_map(request.params["course_id"]))
 
     router.get("/api/courses/{course_id}/knowledge-map", knowledge_map)
-
-    # ------------------------------------------------------------------
-    # flashcards (evidence-grounded memory cards)
-    # ------------------------------------------------------------------
-
-    def list_flashcards(request: Request) -> ApiResponse:
-        course_id = request.require_q("course_id")
-        cards = workspace.list_flashcards(
-            course_id,
-            student_id=request.q("student_id"),
-            due_before=request.q("due_before"),
-        )
-        return success({"flashcards": cards})
-
-    def create_flashcard(request: Request) -> ApiResponse:
-        body = request.json_body()
-        course_id = str(body.get("course_id") or request.require_q("course_id"))
-        student_id = str(body.get("student_id") or "").strip()
-        kp_id = str(body.get("kp_id") or body.get("knowledge_id") or "").strip()
-        if not student_id:
-            raise InvalidInputError("student_id is required")
-        if not kp_id:
-            raise InvalidInputError("kp_id is required")
-        before = {
-            card["flashcard_id"]
-            for card in workspace.list_flashcards(course_id, student_id=student_id)
-        }
-        card = workspace.create_flashcard(
-            course_id,
-            student_id,
-            kp_id,
-            front=body.get("front"),
-            back=body.get("back"),
-            example=str(body.get("example") or ""),
-            audio_path=str(body.get("audio_path") or ""),
-            source_refs=body.get("source_refs"),
-            due=body.get("due"),
-        )
-        return success(card, status=201 if card["flashcard_id"] not in before else 200)
-
-    def get_flashcard(request: Request) -> ApiResponse:
-        return success(
-            workspace.get_flashcard(
-                request.require_q("course_id"),
-                request.params["flashcard_id"],
-                student_id=request.q("student_id"),
-            )
-        )
-
-    def review_flashcard(request: Request) -> ApiResponse:
-        body = request.json_body()
-        raw_rating = body.get("rating", body.get("result", "good"))
-        rating = {
-            "again": 1,
-            "hard": 2,
-            "good": 3,
-            "easy": 4,
-            "missed": 1,
-            "got_it": 3,
-        }.get(str(raw_rating).strip().lower(), raw_rating)
-        return success(
-            workspace.review_flashcard(
-                request.require_q("course_id"),
-                request.params["flashcard_id"],
-                rating,
-                student_id=body.get("student_id") or request.q("student_id"),
-            )
-        )
-
-    router.get("/api/flashcards", list_flashcards)
-    router.post("/api/flashcards", create_flashcard)
-    router.get("/api/flashcards/{flashcard_id}", get_flashcard)
-    router.post("/api/flashcards/{flashcard_id}/review", review_flashcard)
 
     # ------------------------------------------------------------------
     # course review center (Task 62)

@@ -1016,9 +1016,6 @@ class TestDependencyAudit:
             "av",
             "numpy",
             "rapidocr-onnxruntime",
-            # FSRS 生产后端 (src/scheduling/fsrs.py 的 PyFSRSBackend 延迟导入;
-            # wheel 缺失时回落到内置确定性调度器, 所以它可选但真实被使用)。
-            "fsrs",
         }
         assert declared == expected, (
             f"运行时依赖集合变了: 多了 {sorted(declared - expected)}, "
@@ -1352,29 +1349,28 @@ class TestVersionAndDocumentation:
         )
 
     def test_the_migration_chain_is_complete_and_contiguous(self) -> None:
-        """迁移链必须是 4 条且版本连续 (m001/m002/m003/m004)。
+        """迁移链必须是 5 条且版本连续 (m001..m005)。
 
         P1-5「去脆弱」: 不再靠文档关键字断言迁移数量, 而是直接读
-        ``src.persistence.migrations`` 的真源。release 1.0.1 的 schema 由
-        恰好 4 条迁移构成 (m004 ``flashcards`` 由 T1.2 记忆卡片交付引入,
-        见 ``src/persistence/migrations/m004_flashcards.py``), 且版本号
-        严格连续 (缺一条或插一条都会在这里炸。
+        ``src.persistence.migrations`` 的真源。TASK-106 追加了
+        m005 ``drop_flashcards`` (见 ``src/persistence/migrations/m005_drop_flashcards.py``),
+        所以迁移链现在是 5 条且版本号严格连续 (缺一条或插一条都会在这里炸)。
         """
         from src.persistence.migrations import MIGRATIONS, latest_version
 
         versions = [int(m.version) for m in MIGRATIONS]
-        assert len(MIGRATIONS) == 4, f"迁移数量应为 4, 实际 {len(MIGRATIONS)}"
-        assert versions == [1, 2, 3, 4], f"迁移版本必须连续 1,2,3,4, 实际 {versions}"
-        assert latest_version() == 4, f"latest_version 应为 4, 实际 {latest_version()}"
+        assert len(MIGRATIONS) == 5, f"迁移数量应为 5, 实际 {len(MIGRATIONS)}"
+        assert versions == [1, 2, 3, 4, 5], f"迁移版本必须连续 1,2,3,4,5, 实际 {versions}"
+        assert latest_version() == 5, f"latest_version 应为 5, 实际 {latest_version()}"
 
     def test_the_repository_contract_is_stable(self) -> None:
         """仓储契约: Repositories 暴露的仓储数量与关键仓储必须稳定。
 
         P1-5「去脆弱」: 用**内省**代替写死的文档关键字。release 1.0.1 的
-        ``Repositories`` 绑定 19 个仓储实例 (spec 早期写的 14 已过时 —— 经
-        实测 ``grep 'self.*= .*Repository('`` 得 19; m004 ``flashcards`` 加入
-        ``FlashcardRepository`` 后由 18 增至 19)。删除/改名一个仓储会
-        让此门失败, 强制同步。
+        ``Repositories`` 绑定 18 个仓储实例 (spec 早期写的 14 已过时 —— 经
+        实测 ``grep 'self.*= .*Repository('`` 得 18)。TASK-106 删除了
+        ``FlashcardRepository`` (m004 引入、m005 落库删除), 因此不再计入。
+        删除/改名一个仓储会让此门失败, 强制同步。
         """
         import tempfile
 
@@ -1393,17 +1389,17 @@ class TestVersionAndDocumentation:
         finally:
             db.close()
 
-        # release 1.0.1 契约: 19 个仓储 (OrganizationRepository 不继承 _TableBase,
-        # 故按"类名以 Repository 结尾"计数, 与 __init__ 里的 19 处绑定一致)。
-        # FlashcardRepository 同样落在该口径内 (类名以 Repository 结尾)。
-        assert len(repo_attrs) == 19, (
-            f"仓储数量应为 19, 实际 {len(repo_attrs)}: {sorted(repo_attrs)}"
+        # release 1.0.1+TASK-106 契约: 18 个仓储 (OrganizationRepository 不继承 _TableBase,
+        # 故按"类名以 Repository 结尾"计数, 与 __init__ 里的 18 处绑定一致)。
+        # TASK-106 删除了 FlashcardRepository，因此不再计入。
+        assert len(repo_attrs) == 18, (
+            f"仓储数量应为 18, 实际 {len(repo_attrs)}: {sorted(repo_attrs)}"
         )
         required = {
             "courses", "sessions", "materials", "material_processing",
             "evidence", "knowledge", "relationships", "conflicts",
             "reviews", "organization", "students", "learning_events",
-            "student_states", "exercises", "flashcards", "answers",
+            "student_states", "exercises", "answers",
             "evaluations", "study_plans", "learning_paths",
         }
         missing = required - set(repo_attrs)

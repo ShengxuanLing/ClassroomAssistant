@@ -37,7 +37,6 @@ const WEB_FILES = [
   'views/review.js',
   'views/knowledge.js',
   'views/knowledge-graph.js',
-  'views/flashcards.js',
   'views/materials.js',
   'views/courses.js',
   'views/students.js',
@@ -2659,11 +2658,10 @@ async function main() {
         kmState().view === 'graph', String(kmState().view));
       check('#/knowledge renders the knowledge map heading',
         before.indexOf('知识地图') >= 0, before.slice(0, 200));
-      // 2026-10-12 (TASK-105) 能力保全: 旧平铺页独有的三项能力必须仍可触达。
+      // 2026-10-12 (TASK-105) 能力保全: 旧平铺页独有的「一键补翻」必须仍可触达。
+      // (「记忆卡片」入口与每行「生成卡片」按钮原样搬来过, TASK-106 已随功能下线。)
       check('#/knowledge still offers the one-click Chinese backfill',
         before.indexOf('data-action="kp-backfill"') >= 0, before.slice(0, 300));
-      check('#/knowledge still links to the flashcards page',
-        before.indexOf('href="#/flashcards"') >= 0, before.slice(0, 300));
       const fetchedBefore = sandbox.__fetched.length;
       useCourse(table, GEO);
       await switchCourse(GEO);
@@ -2684,12 +2682,6 @@ async function main() {
       check('#/knowledge moves the sidebar highlight to the new course',
         (bar.match(/class="active"/g) || []).length === 1 &&
         new RegExp('<a class="active" href="#/courses/' + GEO + '"').test(bar), bar.slice(0, 200));
-      // 列表视图: 每行「生成卡片」按钮 (能力保全第三项)。
-      vm.runInContext("kmSetView('list');", sandbox);
-      const listOut = html(sandbox);
-      check('#/knowledge list view keeps the per-row flashcard button',
-        listOut.indexOf('data-action="create-flashcard"') >= 0 &&
-        listOut.indexOf('kp-geo') >= 0, listOut.slice(0, 400));
     }
 
     // 概览 / 今日 = **全局页** (2026-09-22 任务书 §5/§11/§13): 左侧换课只换

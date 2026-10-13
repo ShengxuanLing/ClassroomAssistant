@@ -5,10 +5,11 @@
 (旧库补到新版本且**不丢数据**) / 迁移失败整体回滚 / 版本链校验 /
 "不依赖删库重建" 的结构守卫。
 
-Task 68 新增了 ``003``。下面两条把"链上有几条迁移"写死成常量的断言
-随之从 2 改到 3 —— 这不是为了迁就实现而放宽判据, 而是**事实变了**:
-链上确实多了一条迁移。真正的守卫是"不得 DROP / 不得重建既有表",
-那两条一个字都没改。
+Task 68 新增了 ``003``, TASK-106 又新增了 ``005`` (``drop_flashcards``)。
+把"链上最新版本"写死成常量的断言随之 2 → 3 → 5 —— 这不是为了迁就实现而
+放宽判据, 而是**事实变了**: 链上确实多了一条迁移。真正的守卫是"不得悄悄
+DROP / 不得重建既有表", 那两条一个字都没改; ``005`` 是**用户显式批准**的
+唯一一条破坏性迁移 (见 ``_APPROVED_DROPS``)。
 """
 
 import os
@@ -46,8 +47,8 @@ def db(db_path):
 # ----------------------------------------------------------------------
 
 
-def test_latest_version_is_four():
-    assert latest_version() == 4
+def test_latest_version_is_five():
+    assert latest_version() == 5
 
 
 def test_chain_versions_are_strictly_increasing():
@@ -61,17 +62,39 @@ def test_migration_names_are_prefixed_with_their_version():
     assert all(migration_name(m).startswith(f"{m.version:03d}_") for m in MIGRATIONS)
 
 
-def test_no_migration_drops_a_table():
-    """规范明确: 不要直接依赖"删库重建"。
+#: 被**显式批准**的破坏性迁移 —— 版本号 -> 允许它删掉的表名 (小写)。
+#:
+#: 迁移纪律默认是"只做加法", 不得靠"删库重建"演进 schema。TASK-106 是用户
+#: 拍板的**功能下线**: 记忆卡片整条链路拆掉, 连同它那两张表一起从库里删
+#: (D1 = 方案 A, 2026-10-13 确认)。这次例外**写死在这里**, 而不是把守卫
+#: 删掉 —— 除 m005 之外, 任何迁移再出现 ``DROP TABLE`` 仍然会炸。
+_APPROVED_DROPS: dict[int, set[str]] = {
+    5: {"flashcards", "flashcard_evidence"},
+}
 
-    结构守卫: 任何迁移语句里出现 ``DROP TABLE`` 都视为违规。
+
+def test_only_approved_migrations_drop_a_table():
+    """破坏性迁移必须**逐条**被批准, 不允许悄悄出现。
+
+    TASK-106 的 ``005_drop_flashcards`` 是用户批准的唯一例外 (见
+    ``_APPROVED_DROPS``); 其余任何 ``DROP TABLE`` 一律违规。
     """
+    dropped: dict[int, set[str]] = {}
     for migration in MIGRATIONS:
         for statement in migration.statements:
-            assert "DROP TABLE" not in statement.upper(), (
-                f"migration {migration.version} drops a table; "
-                "migrations must be additive"
-            )
+            upper = statement.upper()
+            if "DROP TABLE" not in upper:
+                continue
+            # ``DROP TABLE [IF EXISTS] <name>;`` -> <name>
+            name = upper.split("DROP TABLE", 1)[1]
+            name = name.replace("IF EXISTS", "", 1).strip().rstrip(";").strip()
+            dropped.setdefault(int(migration.version), set()).add(name.lower())
+
+    assert dropped == _APPROVED_DROPS, (
+        f"破坏性迁移集合变了: {dropped}; 已批准的是 {_APPROVED_DROPS}。"
+        "若确实要新增一条 DROP, 必须先取得用户显式批准, 再把版本号与表名"
+        "加进 _APPROVED_DROPS。"
+    )
 
 
 def test_no_migration_recreates_an_existing_business_table():

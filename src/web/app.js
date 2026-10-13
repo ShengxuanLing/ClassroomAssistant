@@ -560,7 +560,7 @@ function noStudentsCard() {
 // --------------------------------------------------
 // 中文解释与术语表现在有**两处**消费者: 材料页 (``#/materials`` 的 AI
 // 面板) 与知识点详情页 (``#/courses/<id>/knowledge/<kp>`` 的中文卡), 而
-// flashcards 页复用术语表。它们的卡结构必须一致 —— 同一份中文, 在两页看到
+
 // 不同的表头、不同的空态文案、不同的截断口径, 用户只会以为其中一页坏了。
 //
 // 所以一份源码放 app.js (它先于所有 views/*.js 加载, 顺序无争议), 两页
@@ -1352,7 +1352,7 @@ function renderCourseSwitcher(courses) {
  *   #/today             #/today, #/learn, #/learn/<kp>, #/courses/<c>/learn/<kp>
  *   #/review            #/review, #/courses/<c>/review
  *   #/                  #/
- *   #/knowledge         #/knowledge, #/flashcards
+
  *   #/materials         #/materials
  *   #/reviews           #/reviews
  *   #/courses           #/courses
@@ -1463,8 +1463,6 @@ document.addEventListener('click', (event) => {
   const materialId = target.getAttribute('data-material');
   const sessionId = target.getAttribute('data-session');
   const knowledgeId = target.getAttribute('data-knowledge');
-  const flashcardId = target.getAttribute('data-flashcard');
-  const flashcardRating = target.getAttribute('data-rating');
   // 材料页 (重构后): 一键分析 + 删除。课程页时间线仍用 process/retry
   // (views/courses.js), 保留那两个分支; evidence/digest/ai-analyze 仅
   // 材料页在用, 材料页移除后分支一并移除。
@@ -1493,12 +1491,6 @@ document.addEventListener('click', (event) => {
     // TASK-81 §A2: 批量补翻。同样的幂等口径, 只是把范围从一条换成整门课;
     // 任务坞占位, 页面不等它。
     actionBackfillKpTranslations(courseId, target);
-  } else if (action === 'create-flashcard') {
-    actionCreateFlashcard(courseId, knowledgeId, target);
-  } else if (action === 'review-flashcard') {
-    actionReviewFlashcard(
-      courseId, target.getAttribute('data-student'), flashcardId, flashcardRating, target
-    );
   }
 });
 
@@ -1550,7 +1542,7 @@ async function route() {
     else if (parts[0] === 'review') await pageReview();
     else if (parts[0] === 'review-pack') await pageReviewPack();
     else if (parts[0] === 'knowledge') await pageKnowledge();
-    else if (parts[0] === 'flashcards') await pageFlashcards();
+    
     else if (parts[0] === 'materials') await pageMaterials();
     else if (parts[0] === 'reviews') await pageReviews();
     else if (parts[0] === 'exercises') await pageExercises();

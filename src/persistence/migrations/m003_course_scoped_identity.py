@@ -25,7 +25,7 @@
 为什么是**新建表**而不是改旧表
 --------------------------------------------------------------------
 
-项目的迁移纪律是**只做加法** (``test_no_migration_drops_a_table`` /
+项目的迁移纪律是**只做加法** (``test_only_approved_migrations_drop_a_table`` /
 ``test_no_migration_recreates_an_existing_business_table``)。而 SQLite 里
 "改主键"只能靠重建表, 重建又会触发另一条更硬的限制: 子表
 (``session_memberships`` / ``knowledge_memberships`` / ``knowledge_relations``

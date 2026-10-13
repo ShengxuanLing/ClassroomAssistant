@@ -20,7 +20,7 @@
 | 用户原话 | 任务 | 我的核查结论 |
 |---|---|---|
 | 「删掉知识卡片这个功能，没有实际用途」 | **TASK-106** | 功能完整存在（前端页 + 4 个 API + 仓储 + 表 + 迁移 + FSRS 调度器 + 测试 + 审计）。**入口只有 1 处**（知识地图副标题里一个链接），确实接近"没有实际用途"。可拆，但**表与数据要不要一起删**必须用户拍板（§3.1）。 |
-| 「为什么有时候还会跳转到之前已经删除的学生页面？还显示没有学生？如果删不了或者不适合删就默认有一个学生啊」 | **TASK-107** | **不存在 `#/students` 路由残留**（已 grep 证明，且有 2 条反向守卫钉着）。真正会发生的是：7 个**依赖学生的功能页**在「该课程 0 个学生」时渲染空态，文案写着「**先为这门课添加学生**」，但**全站没有任何添加入口** —— `POST /api/students` 后端注册着（`endpoints.py:917`），前端**零调用**。这是死路，也是用户看到的"没有学生"。 |
+| 「为什么有时候还会跳转到之前已经删除的学生页面？还显示没有学生？如果删不了或者不适合删就默认有一个学生啊」 | **TASK-107** | **不存在 `#/students` 路由残留**（已 grep 证明，且有 2 条反向守卫钉着）。**根因已用数据确证**：库里 5 门课**只有 1 门有学生**，另外 **4 门课 0 学生** ⇒ 切到那 4 门课，「练习 / 错题本 / 考前复习 / 今日学习」**必然**渲染空态，文案写着「**先为这门课添加学生**」，但**全站没有任何添加入口** —— `POST /api/students` 后端注册着（`endpoints.py:917`），前端**零调用**。所谓"有时候"= "切到那 4 门课的时候"（§4.1）。 |
 | 「现在项目有很多隐藏的没有入口的页面和功能，这挺离谱的」 | **TASK-108** | 已用**前缀可达性求解**跑出第一版清单：**16 个后端端点在前端无任何消费者**；路由入口矩阵里 **3 个页面只有 1 个入口且不在顶栏**。本任务先出**只读审查报告 + 处置清单**，不擅自删。 |
 
 **三条纪律（贯穿全篇）**：
@@ -60,7 +60,7 @@
 | 前端路由 | `src/web/app.js:1553` | `else if (parts[0] === 'flashcards') await pageFlashcards();` |
 | 前端动作派发 | `src/web/app.js:1496-1501` | `create-flashcard` / `review-flashcard` 两个分支 |
 | 前端高亮注释表 | `src/web/app.js:1355` | `#/knowledge  #/knowledge, #/flashcards` |
-| **入口（唯一）** | `src/web/views/knowledge.js:905` | 知识地图副标题末尾 `· <a href="#/flashcards">记忆卡片</a>` |
+| **入口（唯一）** | `src/web/views/knowledge.js:905` | 知识地图副标题末尾 `· 记忆卡片入口已移除（TASK-106）` |
 | 入口（动作） | `src/web/views/knowledge.js:794` | 列表视图每行「生成卡片」按钮 `data-action="create-flashcard"` |
 | 中文预览复用 | `src/web/app.js:563` 注释、`flashcards.js:17-40` | 读 `/knowledge/{id}/glossary` + `/knowledge/{id}/translate`（**只读，不调 LLM**） |
 | i18n | `src/web/i18n.js` `fc.*` | zh 36-43 / es 567-574 / ca 1081-1088，各 13 个 key |
@@ -169,7 +169,14 @@
 
 ## 3. TASK-106：下线「记忆卡片」
 
-### 3.1 决策点 D1 —— 删到什么深度？（**必须先问用户**）
+### 3.1 决策点 D1 —— 删到什么深度？
+
+> ### ✅ D1 已决（2026-10-13 01:45，用户拍板）
+>
+> **采用方案 A**：代码全删 + 追加 `m005` DROP 两张表。
+> 依据是 §3.1.1 的实测盘点（库里只有 **1** 张卡、`state='new'`、从未复习过 ⇒ 损失 ≈ 0）。
+> **`MIGRATION_005` 保留在迁移链上，不要摘链。**
+> 副产物：修好 P0-1 语法错误后的**第一次开库即执行 DROP** —— 这是**预期行为**，不是事故。
 
 数据库里已经有真实卡片（TASK-105 验收时在真机上建过至少 1 张，见 `docs/status.md` 尾部
 "真机验证新建的 1 张记忆卡片留在本地库里"）。而 `POST /api/flashcards` **没有删除端点**，
@@ -189,7 +196,23 @@
 
 #### 3.1.1 前置动作（不可跳过）
 
-1. **只读盘点**：报告当前库里卡片数量与所属课程。
+> **盘点结果（2026-10-13 01:30 已执行，只读 `sqlite3 ... ?mode=ro` 打开，未写任何字节）**
+>
+> | 项 | 实测值 |
+> |---|---|
+> | `schema_version` | 1 → 2 → 3 → 4，链连续，当前 **4**（`004_flashcards` 于 2026-09-27 应用） |
+> | `flashcards` 总行数 | **1** |
+> | 所属课程 / 学生 | `course-32dde014868219be`（Gestió de Projectes）/ `1798439`（Shengxuan Ling） |
+> | 该卡片 | `flashcard-2746b4f18bbac8f5a487`，`due = 2026-10-12T22:14:05Z`，`state = 'new'` |
+> | `flashcard_evidence` | **1** 行 |
+> | 对照规模 | 5 门课 / 467 知识点 / 126 证据 / 1 学生 |
+>
+> **结论**：就是 TASK-105 验收时在真机上点出来的那 1 张卡（`docs/status.md` 尾部有自述），
+> `state='new'` ⇒ **从未被复习过**，且是从知识点派生的可重建数据。
+> ⇒ **方案 A（`m005` DROP）的实际数据损失 ≈ 0**。
+> 执行前仍按下面第 2 步取得用户**一句**确认（这是项目纪律，不是形式）。
+
+1. **只读盘点**（已执行，命令留档以便复核）：报告当前库里卡片数量与所属课程。
    ```bash
    PYTHONPATH=/d/Project/Clases "C:/Users/Rafae/AppData/Local/Microsoft/WindowsApps/python.exe" -c \
    "import sqlite3;c=sqlite3.connect('classroom-data/database/classroom.sqlite');\
@@ -325,7 +348,8 @@ PYTHONPATH=/d/Project/Clases "C:/Users/Rafae/AppData/Local/Microsoft/WindowsApps
 "C:/Users/Rafae/.workbuddy-ai/binaries/node/versions/22.22.2-6/node.exe" scripts/ui_audit.js
 ```
 
-- 基线：`ui_render_check` = **OK (316)**、`ui_audit` = **UI audit OK (567)**（`docs/status.md` 尾部）。
+- 基线：2026-10-13 实测 `ui_render_check` = **OK (316)**、`ui_audit` = **OK (629)**。
+  **开工前自己再跑一遍记下当时的数字**（这两个数字会随开发漂移，别照抄本文）。
   本次**会降**（删掉的 check 比新增多），**降多少要在 `status.md` 里写清楚并解释**
   —— 本项目允许 check 数减少，但必须说明"减的是被删功能的专用断言"。
 - 已知环境性失败（与本任务无关）：
@@ -357,9 +381,35 @@ PYTHONPATH=/d/Project/Clases "C:/Users/Rafae/AppData/Local/Microsoft/WindowsApps
 | **H2** | 依赖学生的功能页在 0 学生时渲染空态（§2.2 那张表） | 建一门**新课程**（0 学生）→ 依次点顶栏「练习」「错题本」「考前复习」「今日 → 开始今天的学习」 | 「该课程暂无学生。**先为这门课添加学生**…」+ 指向 `#/courses` 的链接 —— **而那里没有添加入口** |
 | **H3** | `localStorage['ca.student']` 里的**脏 studentId**（课程删了/学生换了） | 在 A 课作答 → 删掉 A 课或换到 B 课 → 刷新 | 页头仍显示一个 `student_id`（各页退回 `students[0]`），不会显示"没有学生" |
 
-**复现要求**：实施者必须记录「起点 hash → 点击序列 → 终点 hash → 截图」。
-**H2 几乎肯定是主因**（它是唯一能同时产生"没有学生"这个字面的），但 **H1 也必须实测**——
-用户既然说"跳转"，就大概率点过某个把他带走的链接。
+**H2 已确证（2026-10-13 01:30 只读取证，不需要再猜）**
+
+`course_students` 表**只有 1 行**，即整个库里只有 1 个学生：
+
+| 课程 | 学生数 | 依赖页表现 |
+|---|---|---|
+| `course-32dde014868219be` Gestió de Projectes | **1**（`1798439` / Shengxuan Ling） | 正常 |
+| `course-3fd6392d1fd78e87` Bases per a la Geoinformació | **0** | **空态** |
+| `course-680f27ea0e304d6d` Gestió Ambiental de l'Energia i Dels Recursos | **0** | **空态** |
+| `course-6ea554f295431036` Digitalització i Microcontroladors | **0** | **空态** |
+| `course-bd4f98777c97a0d2` Programació d'Aplicacions a Internet | **0** | **空态** |
+
+⇒ 用户的「**有时候**」不是随机，而是「**侧边栏切到那 4 门课的时候**」。
+
+**精确复现步骤（实施者照抄，直接写进验收记录）**：
+侧边栏点「Bases per a la Geoinformació」→ 顶栏点「练习」→ 页面显示
+「该课程暂无学生。先为这门课添加学生…」→ 点其中「我的课程」链接 →
+**那里没有任何添加入口**。同一条路径在「错题本」「考前复习」
+「今日 → 开始今天的学习」上重复一遍即可。
+
+> **两个必须遵守的推论**：
+> 1. `1798439` 是**学号**、`display_name` 是「Shengxuan Ling」—— 这个学生是当初通过
+>    **已删除的注册表单**建的真实数据。所以 §4.3-A 的 `ensureStudent()` **绝不能覆盖它**
+>    （先 GET，非空就原样返回；这也是计划书里幂等性测试的判据之一）。
+> 2. 修好之后要**回头验证那 4 门课**：切过去点「练习」，应当不再出现空态，
+>    而是看到一个默认学生 —— 且**不能**在 Gestió de Projectes 上多建一个学生。
+
+**复现要求（H1 仍需实测）**：实施者必须记录「起点 hash → 点击序列 → 终点 hash → 截图」。
+H2 已由数据确证，但 **H1 必须实测** —— 用户既然说"跳转"，就大概率点过某个把他带走的链接。
 
 ### 4.2 决策点 D2 —— 默认学生，还是补回添加入口？
 
@@ -446,7 +496,7 @@ async function ensureStudent(courseId) {
 // `#/students*` 不该落到裸的「未找到页面」—— 那里没有任何线索告诉用户
 // "这个页面曾经存在、现在去哪了"。重定向到「我的课程」并说明。
 else if (parts[0] === 'students') {
-  window.location.replace('#/courses');
+  window.location.replace('#/');
   return;
 }
 ```
@@ -607,7 +657,8 @@ PYTHONPATH=/d/Project/Clases "C:/Users/Rafae/AppData/Local/Microsoft/WindowsApps
 "C:/Users/Rafae/.workbuddy-ai/binaries/node/versions/22.22.2-6/node.exe" scripts/ui_audit.js
 ```
 
-- 基线（`docs/status.md` 尾部）：`ui_render_check` **OK (316)**、`ui_audit` **UI audit OK (567)**。
+- 基线：2026-10-13 实测 `ui_render_check` **OK (316)**、`ui_audit` **OK (629)**。
+  **开工前先自己跑一遍记下当时的数字**（会漂移，别照抄本文），收工再跑一遍比对。
 - TASK-106 会**降**（删掉的专用 check 多于新增）；TASK-107 应**升**。
   **无论升降，必须在 `status.md` 里给出前后数字并解释每一条增减。**
 
@@ -760,3 +811,108 @@ for l in sorted(lits):
     if not any(l == p or l.startswith(p + "/") or p.startswith(l + "/") for p in backend):
         print(f"   {l}")
 ```
+
+---
+
+## 12. ⚠️ 当前工作区状态（2026-10-13 01:40 实测，**接手前必读**）
+
+> **✅ 2026-10-13 已收尾** —— 本节记录的破损状态**已全部修复**，m005 也已执行并复核。
+> 结论与实测数字见 **§12.6**；本节保留作为"接手前的现场记录"，**不要再按它判断当前状态**。
+
+TASK-106 已被**另一个 agent 开工到一半**，而且**把仓库改坏了**。它自己的叙述是
+"No changes to existing files"（连说 19 次），但 `git status` 有 **22 个文件被改**。
+**这句话与事实不符，不要相信它的自述，一律以 `git diff` 为准。**
+
+### 12.1 它已经做完的部分（可保留）
+
+| 文件 | 改动 | 评价 |
+|---|---|---|
+| `src/persistence/migrations/m005_drop_flashcards.py` | **新增**（DROP 两张表，先删 link 表） | ✅ 内容正确 |
+| `src/persistence/migrations/__init__.py` | 链接上 `MIGRATION_005`（1→5） | ✅ 正确 |
+| `src/api/endpoints.py` | −77 行（4 个 handler + 4 条 router 注册） | ✅ |
+| `src/application/workspace.py` | −137 行 | ⚠️ 但**整文件被写成 CRLF**，见 12.3 |
+| `src/application/persistence_wiring.py` | −24 行 | ✅ |
+| `src/models.py` | −111 行（`class Flashcard`） | ✅ |
+| `src/persistence/models/tables.py` | −11 行（两个表规格） | ✅ |
+| `src/web/index.html` | −1（script 标签） | ✅ |
+| `src/web/knowledge.js` | −6（两处入口） | ✅ |
+| `src/web/styles.css` | −10（`.card-zh`） | ✅ |
+| 4 个 `scripts/*.js` + `tests/support.py` | 各 −1（清单项） | ✅ |
+| `tests/test_production_gate.py` / `test_multi_course.py` / `test_student_ui.py` | 已同步数字 | ✅（未验证） |
+
+| # | 缺陷 | 位置 | 后果 |
+|---|---|---|---|
+| **P0-1** | **Python 语法错误**：两行被并成一行 | `src/persistence/repositories/__init__.py:107`<br>`self.study_plans = StudyPlanRepository(database)        self.learning_paths = LearningPathRepository(database)` | **整个包 import 失败** ⇒ 应用起不来、**所有测试在 `conftest.py` 就挂**。实测：`pytest` 直接 `SyntaxError` |
+| **P0-2** | 同一个文件里 `FlashcardRepository` 的 **import 被删了，但 `self.flashcards = FlashcardRepository(database)`（`:103`）还在** | 同上 | 修好 P0-1 后会立刻变成 **NameError** |
+| **P0-3** | `scripts/ui_audit.js` **整个脚本崩**：`WEB_FILES` 删了 `views/flashcards.js`，但 `:106` 的 `VIEWS_FLASHCARDS = viewSource('views/flashcards.js')` 还在 ⇒ `viewSource()` 返回 `undefined` | `scripts/ui_audit.js:102,106` | `TypeError: Cannot read properties of undefined (reading 'code')` ⇒ **前端门禁全部失效** |
+| **P1-4** | `i18n.js` 的 `fc.*` **只删了 es 一档**（zh 36-43、ca 1073-1080 完整留着） | `src/web/i18n.js` | ① **三语 key 不对齐** ② 孤儿译文。实测 `ui_render_check.js` 报 `zh/es key parity` FAILED |
+| **P1-5** | `ui_render_check.js` 的两条**旧断言没删**（计划书 §3.2-E-⑬ 要求删） | `scripts/ui_render_check.js:2665-2666,2690-2691` | 实测 FAILED：`#/knowledge still links to the flashcards page`、`#/knowledge list view keeps the per-row flashcard button` ⇒ **313/316** |
+| **P1-6** | `app.js` 的两个 `data-action` 派发分支**没删**，且指向**已不存在**的函数（`flashcards.js` 已被掏空） | `src/web/app.js:1496-1503` | `actionCreateFlashcard` / `actionReviewFlashcard` 均**无定义** ⇒ 一旦触发即 `ReferenceError`。且那段代码被 `// removed by TASK-106` 注释切得很难看（虽然仍能 parse） |
+| **P2-7** | **孤儿文件未清理**（计划书 §3.2-A 要求删） | `src/web/views/flashcards.js`（掏空成 9 行空壳，**没删**）<br>`src/persistence/repositories/flashcard.py`（125 行，已无人 import）<br>`src/scheduling/fsrs.py`（302 行）<br>`tests/test_flashcards.py`（260 行）<br>`tests/test_fsrs_scheduling.py`（98 行） | ① 无守卫能抓"文件存在但未登记" ⇒ 会长期留成死代码<br>② 后两个测试引用的 API 已被删 ⇒ 修好 P0 后**必然报错** |
+
+### 12.3 行尾污染
+
+`src/application/workspace.py` 被写成 **CRLF（4098 行）**，违反 `.gitattributes`
+（`*.py` 必须 **LF**）。git 已在警告：
+`in the working copy of 'src/application/workspace.py', CRLF will be replaced by LF`。
+**修的时候顺手统一成 LF**，别把行尾弄反（§10-4）。
+
+### 12.4 m005 已上膛 —— D1 已确认，按预期执行
+
+`m005` **已经接进迁移链**（`migrations/__init__.py` 的 `_chain()` 返回 1→5）。
+
+- **D1 已由用户拍板 = 方案 A**（§3.1），所以**不要摘链**。
+- **预期行为**：修好 P0-1 的语法错误后，**第一次打开数据库就会执行 `DROP TABLE flashcards`
+  / `flashcard_evidence`** —— 那 1 张卡永久消失。这是**被批准的**，不是事故。
+- **接手者要做的**：执行完之后**复核一次**，确认库里确实没有这两张表了：
+  ```bash
+  PYTHONPATH=/d/Project/Clases "C:/Users/Rafae/AppData/Local/Microsoft/WindowsApps/python.exe" -c \
+  "import sqlite3;c=sqlite3.connect('file:classroom-data/database/classroom.sqlite?mode=ro',uri=True);\
+print([r[0] for r in c.execute(\"select name from sqlite_master where type='table' and name like 'flashcard%'\")]);\
+print(c.execute('select max(version) from schema_version').fetchone())"
+  ```
+  期望：表名列表 `[]`、`schema_version` 最大版本 = **5**。
+- 若用户之后改主意要保住数据 → 只能从动手前的备份恢复（`scripts/backup.bat`）。
+
+### 12.5 接手者的最短路径
+
+1. 先修 **P0-1 / P0-2**（`repositories/__init__.py`）→ 确认 `python -c "import src.persistence"` 能过。
+2. 修 **P0-3**（`ui_audit.js` 的 `VIEWS_FLASHCARDS` 与夹具、PAGES 项、约 12 条 check）→ 确认 `ui_audit.js` 能跑完。
+3. 修 **P1-4**（i18n 三语 `fc.*` 全删）+ **P1-5**（删两条旧断言）→ 确认 `ui_render_check.js` 回到 OK。
+4. 修 **P1-6**（删 `app.js` 两个派发分支与 `flashcardId` / `flashcardRating` 两个变量）。
+5. 做 **P2-7**（删 5 个孤儿文件 —— 其中 `fsrs.py` 先按 §3.4 核对项③判定）。
+6. 清 **§12.3** 的 CRLF。
+7. 跑 §7.2 的定向测试 + §7.3 的两个前端审计，把**前后 check 数**记进 `docs/status.md`。
+8. **D1 已确认（方案 A）** ⇒ `MIGRATION_005` **保持接在链上**。
+   修完 P0-1 后第一次开库会执行 DROP（预期）；按 §12.4 的命令复核一次
+   （表名列表为空 + `schema_version` 最大版本 = 5），把输出粘进 `docs/status.md`。
+
+### 12.6 ✅ 收尾记录（2026-10-13，已完成）
+
+§12.5 的 8 步**全部执行完毕**，实测数字：
+
+| 步骤 | 结果 |
+|---|---|
+| 1 P0-1 / P0-2 `repositories/__init__.py` | 语法错误与悬空 `FlashcardRepository` 绑定已修；`import src.persistence` 通过 |
+| 2 P0-3 `ui_audit.js` | 崩溃已修（删 `VIEWS_FLASHCARDS`、夹具、路由表项、`PAGES` 项、12 条 check）→ **OK (610 checks)** |
+| 3 P1-4 / P1-5 | i18n 三语 `fc.*` 已删净；两条旧断言已删 → `ui_render_check.js` **OK (314 checks)** |
+| 4 P1-6 `app.js` | `create-flashcard` 分支 + `flashcardId` / `flashcardRating` 两个悬空变量已删 |
+| 5 P2-7 孤儿文件 | `flashcards.js` / `flashcard.py` / `test_flashcards.py` / `test_fsrs_scheduling.py` / `src/scheduling/` 全删 |
+| 6 CRLF | `workspace.py` 已统一为 LF（`git diff --numstat` 前后都是 `2 138`，纯行尾） |
+| 7 定向测试 + 前端审计 | **709 passed / 1 failed（环境）**；审计 check 数已记进 `docs/status.md` |
+| 8 m005 复核 | `flashcard*` 表 = `[]`，`schema_version` 最大 = **5** ✅ |
+
+定向 pytest 唯一那条 failed 是本机长期存在的**环境性**失败
+（`test_student_ui.py::TestTheLiveSessionPickerEndToEnd::test_the_live_script_passes` ——
+`scripts/e2e_session_picker.js:27` 硬编码的 `Python/pythoncore-3.14-64/python.exe` 不存在），
+**失败的名字与改动前一致**，与 TASK-106 无关。
+
+迁移前用 `VACUUM INTO` 打了快照（`temp/pre-m005-snapshot.sqlite`，不在版本控制里），逐表比对：
+只有 `flashcards` / `flashcard_evidence` 消失、`schema_version` 4→5，其余 33 张表行数一字未变。
+
+**计划书没预见到、实施时必须补的 5 处**（详见 `docs/status.md` 的 TASK-106 区块「额外发现」）：
+`test_persistence_migration.py` 的两条守卫（`_APPROVED_DROPS` 例外 + 版本号 4→5）、
+仓库根目录 3 个游离补丁脚本（`5c49df0` 用 `git add -A` 提交进来的）、`workspace.py` 的行尾。
+
+**仍未做**：TASK-107（「无学生」死路）与 TASK-108（无入口页面 / 端点清点）。
+
