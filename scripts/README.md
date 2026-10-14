@@ -24,9 +24,10 @@
 | 脚本 | 作用 |
 |---|---|
 | `ui_render_check.js` | 真实执行各页面渲染函数，对渲染出的 HTML 字符串做断言（含 `esc()` 转义、证据原文逐字渲染）。`node scripts/ui_render_check.js` → `UI RENDER CHECK: OK (N checks)`。 |
-| `ui_audit.js` | 更大范围的 UI 审计：多页面 × zh/es/ca 渲染、未翻译 CJK 检测、空态 / 加载态 / 错误态、长 token 原样渲染、大数据量渲染耗时与请求数上界。`node scripts/ui_audit.js` → `UI audit OK (N checks)`；`--dump <lang>` 可导出渲染快照用于改动前后逐字节比对；`--preview <lang> --out <file.html>` 输出一份**可直接在浏览器打开**的静态 HTML 快照（真实 index.html 骨架 + 内联 `styles.css` + 真实渲染结果，剥掉全部 `<script>`），用于视觉比对 —— 该路径不参与断言、不影响门禁。 |
+| `ui_audit.js` | 更大范围的 UI 审计：多页面 × zh/es/ca 渲染、未翻译 CJK 检测、空态 / 加载态 / 错误态、长 token 原样渲染、大数据量渲染耗时与请求数上界，以及 **设计系统守卫**（token 齐全、深色覆写完整、引用即定义、焦点环、`prefers-reduced-motion`、卡片无投影、顶栏高亮、**WCAG 对比度逐对实算**）。`node scripts/ui_audit.js` → `UI audit OK (N checks)`；`--dump <lang>` 可导出渲染快照用于改动前后逐字节比对；`--preview <lang> [--page <name>] --out <file.html>` 输出一份**可直接在浏览器打开**的静态 HTML 快照（真实 index.html 骨架 + 内联 `styles.css` + 真实渲染结果，剥掉全部 `<script>`），用于视觉比对 —— 该路径不参与断言、不影响门禁。`--page` 取 `ui_audit.js` 里 `PAGES` 的名字（`dashboard` / `course` / `materials` / `knowledgeMap` / …），名字写错会**当场报错并列出可选值**（静默退回 dashboard 会让人对着一张“以为是课程页”的快照改半天 CSS）。 |
 | `ui_stress_check.js` | 大数据量（1000 KP / 500 students / 5000 exercises）下的渲染耗时与请求数上界检查，抓 N+1 与渲染崩溃。 |
 | `e2e_session_picker.js` | 真实 HTTP 层面的端到端探针，覆盖 `ui_audit.js` / `ui_render_check.js` 测不到的一支（如 session 选择器）。 |
+| `ui_mutation_check.py` | **变异测试**（Python）：故意改坏 `styles.css` / `app.js` 的 18 处视觉不变量（删掉焦点环、卡片加回投影、token 拼错、对比度调淡、sticky 偏移写死…），逐条断言 `ui_audit.js` 必须**报红且报对**。断言通过不等于断言有效 —— 2026-10-14 就有过一条“焦点环”断言被画布规则意外满足、整条删掉仍全绿。它会临时改写 `src/web/` 下的真实文件（try/finally 还原），**不要与其它检查同时跑**。 |
 
 ## 运行方式
 
@@ -35,8 +36,12 @@ node scripts/ui_render_check.js
 node scripts/ui_audit.js
 node scripts/ui_stress_check.js
 
-rem 视觉比对: 生成可打开的静态快照 (不启动服务)
+rem 视觉比对: 生成可打开的静态快照 (不启动服务), --page 选页面
 node scripts/ui_audit.js --preview zh --out cache/preview-dashboard-zh.html
+node scripts/ui_audit.js --preview es --page course --out cache/preview-course-es.html
+
+rem 断言有效性: 故意改坏 18 处视觉不变量, 看审计是否精准报红
+python scripts/ui_mutation_check.py
 ```
 
 Node 解释器用 `C:/Users/Rafae/.workbuddy-ai/binaries/node/versions/22.22.2-2/node.exe`

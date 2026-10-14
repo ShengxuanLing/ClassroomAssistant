@@ -54,6 +54,8 @@
  *                                           # 输出可直接打开的静态 HTML 快照
  *                                           # (真实骨架 + 内联 CSS + 真实渲染,
  *                                           #  剥掉 <script>; 不参与断言)
+ *   node scripts/ui_audit.js --preview es --page course --out cache/course-es.html
+ *                                           # 同一张快照, 换成课程页 / 西语
  */
 
 'use strict';
@@ -1988,6 +1990,10 @@ async function dump(lang) {
  *   --preview 输出完整 HTML 文件 —— 真实 index.html 骨架 + 内联 styles.css
  *             + 真实渲染出的侧边栏与主视图。它不启动服务、不连数据库、
  *             不执行任何 JS, 只是一张静态快照 (页面顶部有明确标注)。
+ *   --page    指定快照渲染哪一页 (默认 dashboard), 取值 = PAGES 里的名字,
+ *             例如 `--preview es --page course`。视觉复审常要一次看多页
+ *             (概览的指标块 / 课程页的课堂行 / 材料页的说明行), 逐页起服务
+ *             太重; 快照路径零依赖, 一页一个文件。
  *
  * 为什么默认夹具是"dashboard + D1/D4 警告材料": 概览页的知识健康度分组
  * 与材料表的 warning / 零证据提示正是视觉改动的对象。用最坏情况
@@ -1996,7 +2002,7 @@ async function dump(lang) {
  *
  * 这条路径**不参与** audit 的断言, 不影响门禁。
  */
-async function preview(lang, outfile) {
+async function preview(lang, outfile, pageName) {
   const warn = material({
     processing_status: 'COMPLETED',
     warning: 'NO_TEXT_EXTRACTED',
@@ -2007,7 +2013,8 @@ async function preview(lang, outfile) {
   table['/api/dashboard'] = Object.assign(dashboard(), { materials: [warn] });
   table['/api/materials'] = { materials: [warn] };
 
-  const sandbox = await renderPage(pageByName('dashboard'), table, lang, true);
+  const named = pageByName(pageName || 'dashboard');
+  const sandbox = await renderPage(named, table, lang, true);
   const viewHtml = html(sandbox);
   const sidebarEl = sandbox.__elements.get('course-list');
   const sidebarHtml = sidebarEl ? sidebarEl.innerHTML : '';
@@ -2029,7 +2036,7 @@ async function preview(lang, outfile) {
   shell = shell.replace(
     '<body>',
     '<body>\n  <div class="banner" style="background:var(--info-soft);color:var(--info)">' +
-    '静态渲染快照（非实时应用）· 页面：dashboard · 语言：' + lang +
+    '静态渲染快照（非实时应用）· 页面：' + named.name + ' · 语言：' + lang +
     ' · 由 scripts/ui_audit.js --preview 生成</div>'
   );
 
@@ -3181,6 +3188,189 @@ async function audit() {
       /\.session-months\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/.test(CSS));
     check('css lets a session row wrap on narrow screens instead of scrolling',
       /@media\s*\(max-width:\s*560px\)[\s\S]{0,160}\.session-row\s*\{[^}]*flex-wrap:\s*wrap/.test(CSS));
+  }
+
+  // ---- 设计系统: token 层与视觉不变量 (2026-10-14 视觉重构) ---------------
+  //
+  // 为什么这些要有断言: 视觉规则最容易"悄悄退化" —— 删掉一个 token、把卡片
+  // 改回带投影、去掉焦点环, 页面都还能渲染, 三语检查也照样全绿。这一节把
+  // 重构时立下的几条**刻意**决定钉住, 让回退变成一次明确的红灯。
+  {
+    // 间距 / 字号 / 圆角 / 高度 / 动效各成一套刻度 —— 它们是
+    // "组件里不再写魔数"的前提。
+    const tokenNames = ['--sp-1', '--sp-2', '--sp-3', '--sp-4', '--sp-5', '--sp-6',
+      '--fs-xs', '--fs-sm', '--fs-base', '--fs-lg', '--fs-xl',
+      '--radius-sm', '--radius', '--radius-lg', '--radius-pill',
+      '--shadow-1', '--shadow-2', '--shadow-3', '--dur-1', '--dur-2', '--ease'];
+    const missingTokens = tokenNames.filter(
+      (name) => !new RegExp(name + '\\s*:').test(CSS));
+    check('css defines the design-token layer',
+      missingTokens.length === 0, missingTokens.join(','));
+
+    // 深色主题必须覆写**表面与分隔线**这几档。只覆写前景色是最常见的漏项:
+    // 深色下三档表面挤在同一个亮度上, 卡片与行悬停就分不出来了。
+    const darkBlock = /@media\s*\(prefers-color-scheme:\s*dark\)\s*\{([\s\S]*?)\n\}/.exec(CSS);
+    const darkCss = darkBlock ? darkBlock[1] : '';
+    const darkTokens = ['--surface-3', '--topbar-bg', '--accent-line', '--shadow-2'];
+    const missingDark = darkTokens.filter((name) => !new RegExp(name + '\\s*:').test(darkCss));
+    check('css keeps a full dark-theme token block',
+      darkBlock !== null && missingDark.length === 0, missingDark.join(','));
+
+    // var(--x) 引用了却没定义: 浏览器不报错, 只是那条声明整条失效。这条
+    // 纯字符串检查不需要浏览器, 就能抓住 token 改名后漏改的引用。
+    const cssNoComments = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+    const definedProps = new Set();
+    const defRe = /(--[a-z0-9-]+)\s*:/g;
+    let dm;
+    while ((dm = defRe.exec(cssNoComments)) !== null) definedProps.add(dm[1]);
+    const usedProps = new Set();
+    const useRe = /var\((--[a-z0-9-]+)/g;
+    let um;
+    while ((um = useRe.exec(cssNoComments)) !== null) usedProps.add(um[1]);
+    // 先证明两侧都不是空集, 否则"没有未定义变量"永远成立。
+    check('css defines custom properties', definedProps.size > 30, 'only ' + definedProps.size);
+    check('css references custom properties', usedProps.size > 20, 'only ' + usedProps.size);
+    const undefinedProps = [...usedProps].filter((v) => !definedProps.has(v)).sort();
+    check('every custom property referenced in css is defined there',
+      undefinedProps.length === 0, undefinedProps.join(','));
+
+    // 键盘焦点可见 (WCAG 2.4.7)。本轮新增: 之前只有图谱画布有焦点环,
+    // 其余靠浏览器默认的细虚线 —— 浅色卡片上基本看不见。
+    // 选择器必须**裸写** (行首的 `:focus-visible`), 不能是 ".km-graph canvas:focus-visible"
+    // 这种挂在某个组件上的规则 —— 否则只要**任何一处**有焦点环这条就绿, 而它
+    // 本该回答的是"全局每个可聚焦元素都有环吗"。第一版就写成了后者, 变异
+    // 测试里"删掉全局规则"竟然全绿, 才发现判据被画布那条规则满足了。
+    check('css gives focus a visible ring (WCAG 2.4.7)',
+      /^:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\)/m.test(CSS));
+    check('css never removes the focus outline without a replacement',
+      !/outline:\s*none/.test(cssNoComments));
+
+    // 减少动态: docs/knowledge-map-design-system.md §7.2 把它列为禁止项,
+    // 而 .task-spin 是**无限循环**动画。
+    const reduceBlock = /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*?)\n\}/.exec(CSS);
+    check('css honours prefers-reduced-motion', reduceBlock !== null);
+    check('reduced motion neutralises animations and transitions',
+      reduceBlock !== null && /animation-duration/.test(reduceBlock[1]) &&
+      /transition-duration/.test(reduceBlock[1]));
+
+    // 顶栏当前分区的高亮。
+    //
+    // 这里有一个**真实缺失**: markActiveNav() 一直在给匹配的导航项加 .active,
+    // 而 styles.css 里从来没有 .topnav a.active —— 于是"我在哪一页"在界面上
+    // 完全不可见。它之所以躲过了既有检查: 那个检查只扫 class="..." 字面量,
+    // 而这个类名是 classList.add('active') 加上去的。两侧一起断言。
+    check('css styles the active top-nav item', /\.topnav a\.active\s*\{/.test(CSS));
+    check('the active top-nav class is still emitted by app.js',
+      APP_JS.includes("link.classList.add('active')"));
+
+    // 高度层级: 卡片是平的 (靠边框分界), 只有真的浮在内容之上的层才带投影。
+    const cardRule = /\.card\s*\{([^}]*)\}/.exec(CSS);
+    check('cards stay flat (elevation reserved for floating layers)',
+      cardRule !== null && !/box-shadow/.test(cardRule[1]),
+      cardRule ? cardRule[1].replace(/\s+/g, ' ') : 'no .card rule');
+    check('overlays carry the top elevation token',
+      /\.modal\s*\{[^}]*box-shadow:\s*var\(--shadow-3\)/.test(CSS) &&
+      /\.toast\s*\{[^}]*box-shadow:\s*var\(--shadow-3\)/.test(CSS));
+
+    // 按钮悬停不再靠 filter: brightness() —— 它会把文字一起提亮,
+    // 深色模式下主按钮上的文字对比度会掉下来。
+    check('css never lightens controls with a brightness filter',
+      !/filter:\s*brightness/.test(cssNoComments));
+
+    // 状态 chip = 软底 + 同色系**细线** + 饱和文字 (细线不是饱和色本身)。
+    check('status chips use the soft line tokens, not the saturated state colour',
+      /\.pill-ok\s*\{[^}]*border-color:\s*var\(--ok-line\)/.test(CSS) &&
+      /\.pill-bad\s*\{[^}]*border-color:\s*var\(--bad-line\)/.test(CSS));
+
+    // 表头是一道底色带 —— 长表里它是唯一的列定位锚点。
+    check('table headers render as a tinted band',
+      /table\.data th\s*\{[^}]*background:\s*var\(--surface-2\)/.test(CSS));
+
+    // ---- 对比度: 按 WCAG 2.1 相对亮度公式**算**每一个 token 组合 -------------
+    //
+    // 为什么值得在这里写十几行数学: 颜色是本项目里唯一"改了不报错、也不会
+    // 被任何渲染断言发现"的东西。上一轮就真的掉进去一次 —— 顶栏当前分区用
+    // --accent 压在 --accent-soft 上只有 4.42:1 (低于 AA), 而三语渲染、
+    // 路由、转义全部照旧全绿。手工算一次只能保证当时对。
+    //
+    // 读值方式: 从 CSS 里解析 token (而不是在脚本里再拄一份颜色常量) ——
+    // 后者会在有人改了颜色时变成谎话。
+    const hexOf = (block, name) => {
+      const m = new RegExp(name + '\\s*:\\s*(#[0-9a-fA-F]{3,8})').exec(block);
+      return m ? m[1] : null;
+    };
+    const channels = (hex) => {
+      let h = hex.replace('#', '');
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+    };
+    const relLum = (hex) => {
+      const [r, g, b] = channels(hex).map((v) =>
+        v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (fg, bg) => {
+      const a = relLum(fg), b = relLum(bg);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    };
+    // 每一对都是"界面上真实一起出现的前景 / 背景", 不是凭空配的。
+    const contrastPairs = [
+      ['正文 / 页面底', '--text', '--bg'],
+      ['正文 / 卡片', '--text', '--surface'],
+      ['次级文字 / 卡片', '--text-muted', '--surface'],
+      ['次级文字 / 次级面', '--text-muted', '--surface-2'],
+      ['次级文字 / 悬停面', '--text-muted', '--surface-3'],
+      ['占位文字 / 卡片', '--text-soft', '--surface'],
+      ['链接 / 页面底', '--accent', '--bg'],
+      ['链接 / 卡片', '--accent', '--surface'],
+      ['选中态文字 / 强调软底', '--accent-ink', '--accent-soft'],
+      ['ok chip', '--ok', '--ok-soft'],
+      ['warn chip', '--warn', '--warn-soft'],
+      ['bad chip', '--bad', '--bad-soft'],
+      ['info chip', '--info', '--info-soft'],
+      ['主按钮文字 / 强调色', '--on-accent', '--accent'],
+      ['完成对勾 / 成功色', '--on-ok', '--ok'],
+    ];
+    const rootBlock = /:root\s*\{([\s\S]*?)\n\}/.exec(CSS);
+    const lightCss = rootBlock ? rootBlock[1] : '';
+    // 真源查找也走 CSS 自己的层叠规则: 深色块覆写了就取深色的值, 没覆写才
+    // 从 :root 继承。第一版把两块字符串拼起来再取"第一个匹配", 于是深色
+    // 表读到的其实是浅色的值 —— 断言看着绿, 实际没验过深色。
+    const lookup = (name, block) => hexOf(block, name) || hexOf(lightCss, name);
+    const themes = [
+      ['浅色', (name) => lookup(name, lightCss), 4.5],
+      ['深色', (name) => lookup(name, darkCss), 4.5],
+    ];
+    let contrastPairsChecked = 0;
+    for (const [themeName, readToken, minRatio] of themes) {
+      for (const [label, fgName, bgName] of contrastPairs) {
+        const fg = readToken(fgName);
+        const bg = readToken(bgName);
+        // token 没写成 #hex (例如用了 rgba) —— 不算失败, 但也不能静默:“
+        // 数一数真正算过的对数”那条断言会跟着变小。
+        if (!fg || !bg) continue;
+        contrastPairsChecked += 1;
+        const ratio = contrast(fg, bg);
+        check(`contrast ${themeName}: ${label} ≥ ${minRatio}`,
+          ratio >= minRatio - 0.005,
+          fgName + ' ' + fg + ' on ' + bgName + ' ' + bg + ' = ' + ratio.toFixed(2));
+      }
+    }
+    // 非空跑证明: 上面那两个循环真算到了足够多的对数 (两张表 × 15 对)。
+    check('contrast audit actually evaluated the token pairs',
+      contrastPairsChecked >= 28, 'checked=' + contrastPairsChecked);
+
+    // 侧边栏的 sticky 偏移必须跟着**实测**顶栏高度走。
+    // 页眉是两行且会随视口折行 (实测 1440 上 101px, 控件折行时更高), 写死
+    // 像素值的后果不是"差几个像素", 而是滚下去之后侧栏顶端缩进页眉底下、
+    // 被 z-index: 20 的页眉盖住。两侧一起断言: 只改 CSS 或只改 JS 都不成立。
+    check('css drives the sticky sidebar offset from the measured header height',
+      /\.sidebar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--sticky-top\)/.test(CSS) &&
+      /--sticky-top:\s*calc\(var\(--topbar-h\)/.test(CSS) &&
+      /--topbar-h:\s*\d+px/.test(CSS));
+    check('app.js writes the measured header height into --topbar-h',
+      APP_JS.includes("setProperty('--topbar-h'") &&
+      APP_JS.includes("addEventListener('resize'"));
   }
 
   // ---- 静态检查: app.js 写出的每个 class 都在 styles.css 里有定义 ----
@@ -4369,7 +4559,17 @@ async function main() {
     const langArg = args[previewAt + 1];
     const lang = langArg && langArg.indexOf('--') !== 0 ? langArg : 'zh';
     const outAt = args.indexOf('--out');
-    await preview(lang, outAt >= 0 ? args[outAt + 1] : null);
+    const pageAt = args.indexOf('--page');
+    const pageName = pageAt >= 0 ? args[pageAt + 1] : 'dashboard';
+    // 名字拼错时**当场报错并列出可选值** —— 静默退回 dashboard 会让人
+    // 对着一张"以为是课程页"的快照改半天 CSS。
+    if (PAGES.every((p) => p.name !== pageName)) {
+      console.error('unknown --page ' + pageName + '; use one of: ' +
+        PAGES.map((p) => p.name).join(', '));
+      process.exitCode = 2;
+      return;
+    }
+    await preview(lang, outAt >= 0 ? args[outAt + 1] : null, pageName);
     return;
   }
 

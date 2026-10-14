@@ -1378,6 +1378,47 @@ function markActiveNav(hash) {
   });
 }
 
+/**
+ * 把**实测**顶栏高度写进 ``--topbar-h``, 供侧边栏的 sticky 偏移使用。
+ *
+ * 为什么不能写死一个像素值: 顶栏是两行 (品牌+导航 / 控件+状态), 而它的高度
+ * 随视口折行——用户数据里的课程名与状态文案长度会决定"那一行放不放得下",
+ * 所以同一份代码在 1440 上是 101px, 在 1000 上会变成两行控件 (~121px)。
+ * 写死偏移的后果不是"差几个像素", 而是滚下去之后侧栏顶端**缩进页眉下面**
+ * (页眉是 sticky + z-index: 20, 会把侧栏的标题一起盖住)。
+ *
+ * 读不到几何量 (脚本/审计用的 DOM 桩没有真实布局) 时**什么都不做**: CSS 侧
+ * 的 ``var(--topbar-h, 72px)`` 有兜底值, 不会把桩环境弄崩。
+ */
+function syncTopbarHeight() {
+  const bar = document.querySelector('.topbar');
+  const root = document.documentElement;
+  if (!bar || !root || !root.style ||
+      typeof bar.getBoundingClientRect !== 'function' ||
+      typeof root.style.setProperty !== 'function') return;
+  const height = Math.round(bar.getBoundingClientRect().height || 0);
+  if (height > 0) root.style.setProperty('--topbar-h', height + 'px');
+}
+
+/**
+ * 盯住顶栏的尺寸变化。
+ *
+ * 为什么不能只在启动时量一次 (真实教训): 顶栏里那三个状态 pill 的文案是
+ * ``loadChrome()`` 异步填进来的, 而它们撑宽了控件组、把控件挤到第二行 ——
+ * 启动瞬间量到的 49px 会是**折行之前**的高度, 于是侧栏的 sticky 偏移仍偏小
+ * (实测 61px vs 真实 97px, 滚下去侧栏顶端就被页眉盖住)。
+ *
+ * ResizeObserver 覆盖所有"内容变了导致折行变了"的情况 (含语言切换、状态
+ * 文案变长), 比在每条异步路径后面手动补一次量更可靠。桩环境没有它 —— 用
+ * typeof 守卫跳过, 而不是 try/catch 掩盖。
+ */
+function watchTopbarHeight() {
+  if (typeof ResizeObserver !== 'function') return;
+  const bar = document.querySelector('.topbar');
+  if (!bar) return;
+  new ResizeObserver(() => { syncTopbarHeight(); }).observe(bar);
+}
+
 // ------------------------------------------------------------------- 渲染
 
 function view() { return document.getElementById('view'); }
@@ -1595,6 +1636,8 @@ async function route() {
 }
 
 window.addEventListener('hashchange', () => { route(); });
+// 顶栏折行后的真实高度会变, 侧边栏的 sticky 偏移跟着它走 (见 syncTopbarHeight)。
+window.addEventListener('resize', () => { syncTopbarHeight(); });
 window.addEventListener('DOMContentLoaded', () => {
   const picker = document.getElementById('ui-language');
   if (picker) {
@@ -1609,6 +1652,10 @@ window.addEventListener('DOMContentLoaded', () => {
   // 网络往返, 不能挡在首屏渲染前面; 坞是挂在 #view 之外的, 晚一点出现不影响
   // 页面本身。
   restoreTaskDock();
+  // 顶栏高度: 量一次 + 盯住后续变化 (状态 pill 的文案是异步填进去的,
+  // 它们会改变折行) —— 先接线, 再渲染路由。
+  syncTopbarHeight();
+  watchTopbarHeight();
   route();
 });
 

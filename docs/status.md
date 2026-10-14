@@ -8908,3 +8908,103 @@ i18n `manual.*` 三语各 45 键（键集完全一致）。
 测试替身与用户自带 provider 会 `TypeError`；管线侧新增按类缓存的签名探测
 `_provider_accepts_request_key()`，只在 provider 接受时才传。旧 provider 拿不到
 「回放定位」能力（手动导入如实报 `missing`），但材料分析链不崩。
+
+## 界面设计重构（token 化设计系统）— 2026-10-14
+
+- 范围：`src/web/styles.css`（重写为 token 化设计系统）、`src/web/app.js`（实测顶栏高度）、
+  `scripts/ui_audit.js`（+49 条守卫、`--preview --page`）、**新文件** `scripts/ui_mutation_check.py`、
+  新文件 `docs/ui-design-refresh.md`
+- 基线：`ui_audit.js` **627 → 676 OK**；`ui_render_check.js` **312/314**（与 HEAD 逐字相同）
+- 变更记录另见 `AGENTS.md` 同名条目；设计取向与逐项证据见 `docs/ui-design-refresh.md`
+
+### 参考清单怎么用（不是照搬皮肤）
+
+用户给的 `VoltAgent/awesome-design-md` 是 DESIGN.md **目录**（每个条目 = 某产品的设计语言
+拆解），README 本身**不给**统一规范。所以取的是**做法**：层级靠字号/间距而非颜色、
+卡片是「一张纸」而非「浮起来的盒子」（去掉每卡一投影）、状态 chip = 软底 + 同色系细线 +
+饱和文字、顶栏半透明 + 背景模糊、焦点态属于设计。Stitch 体例（9 节）成为
+`docs/ui-design-refresh.md` 的组织方式。**不采纳**渐变 / 玻璃拟态 / 发光边框 / 胶囊化 ——
+项目自己的 `docs/knowledge-map-design-system.md` §1 早已把这些列为禁止项。
+
+### 顺带修掉两处「看不见的缺失」
+
+`ui_audit.js` 的 class 守卫只扫 `app.js` 里的 `class="…"` **字面量**，于是
+（a）由 `classList.add()` 加上的类名、（b）写在 `index.html` 骨架里的类名，都不在视野里：
+
+| 缺失 | 症状 |
+|---|---|
+| `.topnav a.active` 从未定义 | `markActiveNav()` 一直在给当前导航项加 `.active`，样式表里却没有这条规则 —— **「我在哪一页」在界面上完全不可见**，用户只能从 `#view` 的标题反推 |
+| `.lang-picker` 从未定义 | 顶栏两个 `<select>` 的标签壳是块级：标签文字与下拉框各占一行，控件组高度凭空翻倍 |
+
+两条都已进入守卫（CSS 侧 / JS 侧各一条）。
+
+### 被测量抓出来的三个真问题
+
+1. **sticky 偏移写死** → 页眉会随视口与**用户数据**折行（1440 上 85 / 101 / 123px 三档），
+   写死 66px 会让侧栏顶端缩进页眉（`z-index: 20`）底下。改为 `app.js::syncTopbarHeight()`
+   把**实测**高度写进 `--topbar-h`；只在 `DOMContentLoaded` 量一次也不行 —— 状态 pill 文案由
+   `loadChrome()` 异步填，量到的是折行前的 **49px**（实测偏移 61 vs 真实 97），改用
+   `ResizeObserver` 盯页眉尺寸。
+2. **对比度回归**：`--accent` 压 `--accent-soft` 只有 **4.42:1**（低于 AA）。而「软底 +
+   强调色文字」正是既有选中语言（侧栏当前课程 / 课表当前月份 / 图谱视图按钮，**本轮之前
+   就如此**，只是没人算过），本轮又新增顶栏高亮 → 新增 `--accent-ink`（浅色 #245ac7 =
+   **5.45:1**；深色下 `--accent` 已 5.85:1 故同值），只用于有软底的那几处；链接 / 主按钮 /
+   焦点环 / 左侧竖线仍用 `--accent`。
+3. **窄屏横向溢出（既有缺陷）**：520px + 真实数据，页眉控件组最小内容宽 **917px**。
+   **对照实验**：换回提交版 `styles.css` 同样溢出 **417px** ⇒ 非本轮引入；本轮降到 323 后
+   仍不合格，最终修到 **0**。根因：三个状态 pill 的文案由服务端给、**无长度上界**
+   （实测一个 249px），控件组是 flex 行默认 nowrap。修法：控件组内部换行 +
+   页眉内长 pill 允许折行 + 下拉框可收缩 + 窄屏导航收紧一档。**不截断文字** —— 状态文案属于
+   「必须让人看见的原始事实」。代价：520px 页眉 213px → 238px（已记录为取舍）。
+
+### 守卫与变异测试
+
+`ui_audit.js` 627 → **676**：token 齐备、深色覆写完整、`var()` 引用 ⊆ 定义、**裸**
+`:focus-visible` 焦点环 + 全表无 `outline: none`、`prefers-reduced-motion`、顶栏高亮
+（CSS/JS 两侧）、卡片无投影 + 浮层用 `--shadow-3`、无 `filter: brightness`、chip 细线、
+表头底色带、sticky 偏移（CSS/JS 两侧）、**WCAG 对比度 2 张主题表 × 15 对逐对实算**
+（从 CSS 解析 token 取值，按 CSS 自己的层叠规则查表；浅色与深色**分别**求值）。
+
+新 harness `python scripts/ui_mutation_check.py`：**18 个变异全部精准捕获**。它抓出了两个
+「断言其实无效」的真问题：
+
+- 「删掉全局焦点环」第一次是 **MISS** —— 判据被 `.km-graph canvas:focus-visible` 意外满足。
+  改成要求**行首裸选择器**才有分辨力。**通过 ≠ 有效**。
+- 对比度一节第一版把两块主题字符串拼起来取「第一个匹配」，于是**深色表读的是浅色值**
+  （断言看着绿，实际没验过深色）。现在按 CSS 层叠规则查表。
+
+### 真实浏览器验证（真实服务 + 真实课程 `course-32dde014868219be`）
+
+- 顶栏高亮：10 条中文路由 + 5 条西语路由，每条的高亮文字与 `#view` 标题**逐条一致**
+  （课程内深链按既有归属表清空 —— 设计行为）。
+- 几何：1440 下 `--topbar-h` 85px == 实测 85px、侧栏 `top: 97px`；西语折行下 123 ↔ 135。
+- 焦点：`select` 聚焦后 `matches(':focus-visible')` 为真，`outline: 2px solid rgb(122,167,255)`。
+  （页面/窗口必须先获得文档焦点，否则 `document.hasFocus()` 为 false、`:focus-visible` 不成立 ——
+  这一步也记录在案，免得下一个人误判成「焦点环没生效」。）
+- 对比度（真实渲染读值）：浅色最小 **4.72**（warn chip）/ 深色最小 **5.85**（选中态）。
+- 溢出：1440 / 1280 / 520 × zh/es/ca 全部 `scrollWidth ≤ innerWidth`。
+- 知识地图：canvas 945×520 **真有像素**（非透明采样 9000）、底色 = `--graph-bg` 深色值；
+  课程页 4 个月份 tab、恰 1 个 `aria-current`、10 张日卡 / 10 行。
+
+### 测试
+
+前端子集 9 个文件 **544 passed / 3 failed**。3 条失败**逐条对照实验证明是既有红**
+（把 `app.js` / `styles.css` 换回 `HEAD` 版本后同样失败，随后已还原）：
+
+- `test_multi_course.py::TestUi::test_every_persisted_ui_choice_has_exactly_one_write_entry`
+  （`views/materials.js:703` 直接写 `state.courseId`，HEAD 里同样是 2 处写入点）——
+  这条**此前未被记录**，本轮首次记录。
+- `test_exercise_ui.py::TestUiRenderExecution::test_ui_render_harness_passes` 与
+  `test_student_ui.py::TestTheLiveSessionPickerEndToEnd::test_the_live_script_passes`
+  （前者因 `ui_render_check.js` 312/314 的既有路由红；后者因 `.gitignore` 内的可携带
+  `Python/` 解释器缺失 ⇒ ENOENT）—— 与上一区块记录的基线一致。
+
+### 明确未改 / 遗留
+
+- `--graph-*` 画布 token 与 `knowledge-graph.js` 取色逻辑、文案、i18n key、路由、
+  `.km-*` / `.session-*` / `.material-*` 结构与行为，**一字未改**。
+- 520px 页眉 238px（sticky）：进一步压缩需要在窄屏隐藏诊断 pill，而「不隐藏状态事实」
+  是铁律，故不做，作为取舍记录。
+- `views/*.js` 里 5 处 `style="margin-bottom:16px"` 内联魔数未动（属「JS 里写版式魔数」
+  的欠账，会带来既有间距漂移）。
+- `#/students` 的既有路由红（期望重定向到「我的课程」）未修 —— 属路由行为，不在本轮范围。
