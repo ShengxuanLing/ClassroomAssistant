@@ -401,6 +401,46 @@ def build_router(workspace: Workspace) -> Router:
             )
         )
 
+    # ---- 手动 AI (阶段 2/3): 导出任务包 / 导入响应 ----
+    #
+    # 导出是**只读**的 (零 AI 调用、零写入); 导入走与网络路径**同一条**管线
+    # (ReplayAIProvider + 既有 grounding/去重/幂等入库), 只是 provider 换成了
+    # 用户粘贴的响应。两条都不需要 API Key。
+
+    def export_manual_ai_bundle(request: Request) -> ApiResponse:
+        course_id = request.require_q("course_id")
+        body = request.json_body() if request.body else {}
+        if body and not isinstance(body, dict):
+            raise InvalidInputError("request body must be a JSON object")
+        language = (body or {}).get("content_language") or request.q("content_language")
+        return success(
+            workspace.export_manual_ai_bundle(
+                course_id,
+                request.params["material_id"],
+                content_language=(str(language).strip() or None) if language else None,
+            )
+        )
+
+    def import_manual_ai_responses(request: Request) -> ApiResponse:
+        course_id = request.require_q("course_id")
+        body = request.json_body() if request.body else {}
+        if not isinstance(body, dict):
+            raise InvalidInputError(
+                "request body must be the response bundle: "
+                "{protocol_version, bundle_id, responses: [{request_id, content}]}"
+            )
+        # 响应包整体交给解析层校验 (协议版本 / bundle_id / 逐条形状);
+        # 这里不再预先信任任何字段。content_language 只在拓扑上不影响包。
+        language = body.pop("content_language", None) or request.q("content_language")
+        return success(
+            workspace.import_manual_ai_responses(
+                course_id,
+                request.params["material_id"],
+                body,
+                content_language=(str(language).strip() or None) if language else None,
+            )
+        )
+
     def analyze_material(request: Request) -> ApiResponse:
         """一键完整分析 (材料页「AI分析」按钮): 摄取 → 证据 → 知识 → AI。
 
@@ -427,6 +467,12 @@ def build_router(workspace: Workspace) -> Router:
         )
 
     router.post("/api/materials/{material_id}/ai-analyze", ai_analyze_material)
+    router.post(
+        "/api/materials/{material_id}/manual-ai/export", export_manual_ai_bundle
+    )
+    router.post(
+        "/api/materials/{material_id}/manual-ai/import", import_manual_ai_responses
+    )
     router.get("/api/materials/{material_id}/ai-summary", ai_material_summary)
 
     router.get("/api/materials", list_materials)

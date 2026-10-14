@@ -482,6 +482,9 @@ const KM_STATE = {
   clusters: {},      // material_id -> [knowledge_id]
   orphans: [],       // 无证据的知识点
   conflicts: [],
+  relations: [],     // 已登记的有向关系 (权威; 图表两处都读它)
+  topics: [],        // 课程自己登记的主题 (真实为空就是空)
+  memberships: [],   // topic_id -> knowledge_point_id
   stats: {},
   graph: null,       // 图谱投影 (nodes/edges/concepts), 见 views/knowledge-graph.js
   courseId: '',
@@ -508,6 +511,13 @@ function kmBuildViewModel(payload) {
   KM_STATE.knowledge = Array.isArray(data.knowledge_points) ? data.knowledge_points.slice() : [];
   KM_STATE.materials = Array.isArray(data.materials) ? data.materials.slice() : [];
   KM_STATE.conflicts = Array.isArray(data.conflicts) ? data.conflicts.slice() : [];
+  // 已登记关系 / 主题 / 成员: 后端自 2026-10-13 起给真实读投影 (以前这三项
+  // 分别是 PREREQUISITE-only 的依赖出边、写死的 [] 和写死的 [])。前端从
+  // 不读 relations 的话, 权威关系就白算了 —— 现在图谱详情面板直接读它。
+  KM_STATE.relations = Array.isArray(data.relations) ? data.relations.slice() : [];
+  KM_STATE.topics = Array.isArray(data.topics) ? data.topics.slice() : [];
+  KM_STATE.memberships = Array.isArray(data.knowledge_memberships)
+    ? data.knowledge_memberships.slice() : [];
   KM_STATE.stats = data.stats || {};
   // 图谱投影 (后端 src/knowledge_graph.py): 节点/边/未归类概念/未匹配术语。
   // 缺字段时置 null —— 图谱视图会给出明确空态, 而不是画一张假图。
@@ -594,6 +604,10 @@ function kmDistinctEvidenceTotal() {
 function kmStatsBar() {
   const stats = KM_STATE.stats || {};
   const kpTotal = KM_STATE.knowledge.length;
+  // 后端新字段优先; 旧 payload / 单测 mock 无该字段时用本地计数回退。
+  const relTotal = (stats.relation_count != null)
+    ? stats.relation_count
+    : (KM_STATE.relations || []).length;
   const clustered = KM_STATE.knowledge.length - KM_STATE.orphans.length;
   // 后端新字段优先; 旧 payload / 单测 mock 无该字段时回退本地计算。
   const evTotal = (stats.evidence_count != null) ? stats.evidence_count : kmDistinctEvidenceTotal();
@@ -607,6 +621,10 @@ function kmStatsBar() {
     '<span class="km-stat"><b>' + esc(evTotal) + '</b>' + esc(t('km.statEvidence')) + '</span>' +
     '<span class="km-stat"><b>' + esc(refTotal) + '</b>' + esc(t('km.statEvidenceRefs')) + '</span>' +
     '<span class="km-stat"><b>' + esc(stats.material_count || KM_STATE.materials.length) + '</b>' + esc(t('km.statMaterials')) + '</span>' +
+    // 已登记关系: 这一项只数 ``knowledge_relations`` 里的一等事实, 由正文
+    // "关联:" 行推断出的边**不算** (它们无向、无类型, 不是已登记的知识关系)。
+    // 两个数字在图例里分别解释, 不合成一个模糊的"关系数"。
+    '<span class="km-stat"><b>' + esc(relTotal) + '</b>' + esc(t('km.statRelations')) + '</span>' +
     '</div>';
 }
 
@@ -921,6 +939,11 @@ function kmLegend() {
       '<h2>' + esc(t('km.legendTitle')) + '</h2>' +
       '<p class="small">' + esc(t('km.graph.legendKp')) + '</p>' +
       '<p class="small">' + esc(t('km.graph.legendConcept')) + '</p>' +
+      // 两种边分开说明。不合并成一句"边 = 关联": 它们一个是权威事实 (有向、
+      // 有类型、可审核), 一个是文本推断 (无向、仅供参照), 混为一谈就把
+      // 推断升格成事实了。
+      '<p class="small">' + esc(t('km.graph.legendRegistered')) + '</p>' +
+      '<p class="small">' + esc(t('km.graph.legendInferred')) + '</p>' +
       '<p class="small">' + esc(t('km.graph.legendEdge')) + '</p>' +
       '</div>';
   }

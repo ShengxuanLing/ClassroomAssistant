@@ -42,6 +42,7 @@ __all__ = [
     "build_course_overview_prompt",
     "build_image_analysis_prompt",
     "build_audio_analysis_prompt",
+    "build_chunk_prompt",
 ]
 
 #: 各提示词版本 (进入 processing identity; 改任一 prompt 文本必须 bump 对应版本)。
@@ -156,6 +157,43 @@ def build_chunk_extraction_prompt(
         + '"type": str, "importance": "high"|"medium"|"low", '
         + '"confidence": number, "evidence_refs": [chunk ids], '
         + '"relations": [str], "examples": [str], "original_terms": [str]}]}'
+    )
+
+
+def build_chunk_prompt(
+    *,
+    kind: str,
+    chunk_id: str,
+    chunk_text: str,
+    material_label: str = "",
+    content_language: Optional[str] = None,
+) -> str:
+    """按材料类型选提示词 (text / image / audio 的唯一分派处)。
+
+    为什么要有这个函数: 手动 AI 导出包必须发**与真实调用逐字相同**的提示词,
+    否则用户拿到的任务包与管线以为用户在回答的东西就不是一回事。分派写在
+    两处必然漂移, 所以由本模块持有唯一一份, 管线与导出模块都调它。
+    """
+    normalized = str(kind or "text").strip().lower()
+    if normalized == "image":
+        return build_image_analysis_prompt(
+            ocr_text=chunk_text,
+            chunk_id=chunk_id,
+            material_label=material_label,
+            content_language=content_language,
+        )
+    if normalized == "audio":
+        return build_audio_analysis_prompt(
+            transcript_text=chunk_text,
+            chunk_id=chunk_id,
+            material_label=material_label,
+            content_language=content_language,
+        )
+    return build_chunk_extraction_prompt(
+        chunk_id=chunk_id,
+        chunk_text=chunk_text,
+        material_label=material_label,
+        content_language=content_language,
     )
 
 

@@ -109,6 +109,7 @@ class AIAnalysisService:
         content_language: Optional[str] = None,
         provider: Optional[AIProvider] = None,
         timeout_seconds: Optional[int] = None,
+        tolerate_chunk_failures: bool = False,
     ) -> AIAnalysisReport:
         # TASK-82: 超时不再是硬编码 60s —— 未显式传入时读
         # `load_ai_config().timeout_seconds` (env `CLASSROOM_AI_TIMEOUT_SECONDS`),
@@ -184,6 +185,9 @@ class AIAnalysisService:
                 content_language=content_language,
                 timeout_seconds=timeout_seconds,
                 image_bytes=image_blob,
+                # 手动导入需要部分成功 (逐请求可重试); 真实 API 路径保持
+                # "任一 chunk 失败即整体失败" 的原有语义 (默认 False)。
+                tolerate_chunk_failures=tolerate_chunk_failures,
             )
         except AIAnalysisFailure:
             raise
@@ -421,6 +425,9 @@ class AIAnalysisService:
                     "reason": g.reject_reason,
                     "confidence": g.candidate.confidence,
                     "evidence_ids": list(g.evidence_ids or []),
+                    # 候选来自哪个 chunk: 手动导入要按请求归因被拒的候选,
+                    # 否则"这条请求什么都没入库"就查不出来源。
+                    "chunk_id": str(getattr(g.candidate, "chunk_id", "") or ""),
                 }
                 for g in classification["rejected"]
             ],
@@ -428,6 +435,8 @@ class AIAnalysisService:
             chunk_succeeded=int(stats["chunk_succeeded"]),
             chunk_failed=int(stats["chunk_failed"]),
             chunk_ids=[c.chunk_id for c in chunks],
+            failed_chunks=dict(stats.get("failed_chunks") or {}),
+            chunk_candidate_counts=dict(stats.get("chunk_candidate_counts") or {}),
             truncated=bool(stats["truncated"]),
             provider=pipeline.provider_name,
             model=pipeline.model_id,

@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
@@ -43,7 +44,7 @@ from src.application.ai.prompts import (
     GLOSSARY_PROMPT_VERSION,
     KP_ZH_PROMPT_VERSION,
     COURSE_OVERVIEW_PROMPT_VERSION,
-    build_chunk_extraction_prompt,
+    build_chunk_prompt,
     build_merge_prompt,
     build_summary_prompt,
     build_summary_zh_prompt,
@@ -94,6 +95,40 @@ KP_TRANSLATION_FAILED = "KP_TRANSLATION_FAILED"
 
 #: AI 分析失败的统一错误码 (processing failure, Evidence 安全)。
 AI_ANALYSIS_FAILED = "AI_ANALYSIS_FAILED"
+
+#: provider 类 -> 它的 ``generate_structured`` 是否接受 ``request_key``。
+#: 按**类**缓存: 每个 chunk 都 introspect 一次签名没有意义。
+_REQUEST_KEY_SUPPORT: dict[type, bool] = {}
+
+
+def _provider_accepts_request_key(provider: Any) -> bool:
+    """provider 是否接受调用方自报的 ``request_key``。
+
+    ``AIProvider.generate_structured`` 从 2026-10-13 起把 ``request_key`` 声明为
+    **可选关键字参数** (离线回放 provider 靠它把粘贴回来的响应定到具体请求上;
+    网络 provider 忽略它, 绝不进请求体)。
+
+    但**已有的 provider 子类**可能仍是旧签名 (仓库内 3 个测试替身 + 任何用户
+    自带的 provider 都是)。这样的 provider 只是拿不到"回放定位"这一项能力
+    —— 手动导入时那条请求会被如实报成"缺少响应" —— **不该**因为一个
+    ``TypeError`` 让整条材料分析链崩掉: 分析本身与它无关, 且证据安全、可重试。
+
+    ``**kwargs`` 形态也算接受 (很多替身用 ``**kwargs`` 吞掉全部关键字)。
+    """
+    cls = type(provider)
+    cached = _REQUEST_KEY_SUPPORT.get(cls)
+    if cached is not None:
+        return cached
+    try:
+        parameters = inspect.signature(provider.generate_structured).parameters
+    except (TypeError, ValueError):  # 内建/装饰过的可调用对象: 保守地不传
+        parameters = {}
+    accepted = "request_key" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    _REQUEST_KEY_SUPPORT[cls] = accepted
+    return accepted
 
 
 class AIAnalysisFailure(ProcessingError):
@@ -148,6 +183,11 @@ class AIAnalysisReport:
     chunk_succeeded: int = 0
     chunk_failed: int = 0
     chunk_ids: list[str] = field(default_factory=list)
+    #: 手动导入专用: chunk_id -> 失败原因, 以及每个成功 chunk 解析出多少候选。
+    #: 逐请求反馈靠它区分"应用了" / "应用了但 0 候选" / "这条没答对"。
+    #: 真实 API 路径上任一 chunk 失败即整体报错, 所以这两个字段通常为空。
+    failed_chunks: dict[str, str] = field(default_factory=dict)
+    chunk_candidate_counts: dict[str, int] = field(default_factory=dict)
     truncated: bool = False
     provider: str = ""
     model: str = ""
@@ -196,6 +236,8 @@ class AIAnalysisReport:
             "chunk_succeeded": self.chunk_succeeded,
             "chunk_failed": self.chunk_failed,
             "chunk_ids": list(self.chunk_ids),
+            "failed_chunks": dict(self.failed_chunks),
+            "chunk_candidate_counts": dict(self.chunk_candidate_counts),
             "truncated": self.truncated,
             "provider": self.provider,
             "model": self.model,
@@ -330,31 +372,15 @@ class AIUnderstandingPipeline:
             and bool(image_bytes)
             and bool(self._provider.capabilities.supports_image_bytes)
         )
-        if kind == "image":
-            from src.application.ai.prompts import build_image_analysis_prompt
-
-            prompt = build_image_analysis_prompt(
-                ocr_text=chunk.text,
-                chunk_id=chunk.chunk_id,
-                material_label=material_label,
-                content_language=content_language,
-            )
-        elif kind == "audio":
-            from src.application.ai.prompts import build_audio_analysis_prompt
-
-            prompt = build_audio_analysis_prompt(
-                transcript_text=chunk.text,
-                chunk_id=chunk.chunk_id,
-                material_label=material_label,
-                content_language=content_language,
-            )
-        else:
-            prompt = build_chunk_extraction_prompt(
-                chunk_id=chunk.chunk_id,
-                chunk_text=chunk.text,
-                material_label=material_label,
-                content_language=content_language,
-            )
+        # 提示词分派只有一处 (``prompts.build_chunk_prompt``): 手动 AI 导出包
+        # 发的必须是同一段文本, 否则用户回答的不是管线以为的问题。
+        prompt = build_chunk_prompt(
+            kind=kind,
+            chunk_id=chunk.chunk_id,
+            chunk_text=chunk.text,
+            material_label=material_label,
+            content_language=content_language,
+        )
         try:
             if use_vision:
                 # vision 失败直接记 chunk 失败 (可重试; 关掉开关即回 OCR)——
@@ -368,9 +394,13 @@ class AIUnderstandingPipeline:
                     timeout_seconds=timeout_seconds,
                 )
             else:
-                raw_text = self._provider.generate_structured(
-                    prompt, timeout_seconds=timeout_seconds
-                )
+                # ``request_key`` = 本 chunk 的确定性 ID: 离线回放 provider
+                # (手动 AI 导入) 靠它把粘贴回来的响应定到具体请求上。
+                # 网络 provider 忽略它 (绝不进请求体)。
+                call_kwargs: dict[str, Any] = {"timeout_seconds": timeout_seconds}
+                if _provider_accepts_request_key(self._provider):
+                    call_kwargs["request_key"] = chunk.chunk_id
+                raw_text = self._provider.generate_structured(prompt, **call_kwargs)
         except AIRequestError as exc:
             raise AIAnalysisFailure(
                 "AI analysis failed; evidence is safe and the material can be retried",
@@ -414,12 +444,19 @@ class AIUnderstandingPipeline:
         timeout_seconds: int = 60,
         policy: Optional[Mapping[str, float]] = None,
         image_bytes: Optional[bytes] = None,
+        tolerate_chunk_failures: bool = False,
     ) -> tuple[MaterialAIResult, dict[str, str], list[TextChunk], dict[str, Any]]:
         """两级理解: chunk (Level 1) -> merge (Level 2)。
 
         返回 ``(merged_result, chunk_to_evidence, chunks, stats)``。
-        任一 chunk 失败 -> 抛 ``AIAnalysisFailure`` (stats 含成功/失败计数,
-        已成功 chunk 留在缓存, retry 只重跑失败的)。
+        默认 ``tolerate_chunk_failures=False``: 任一 chunk 失败 -> 抛
+        ``AIAnalysisFailure`` (stats 含成功/失败计数, 已成功 chunk 留在缓存,
+        retry 只重跑失败的)。
+
+        ``tolerate_chunk_failures=True`` (手动 AI 导入专用): 只要**至少一个**
+        chunk 成功就继续合并, 并把每个失败 chunk 的 reason 记进
+        ``stats["failed_chunks"]`` —— 任务要求部分成功可单独重试。全部失败
+        仍然报错 (没有任何可入库的内容, 不该假装成功)。
 
         ``image_bytes``: 单份图片材料的原始字节 (仅 ``kind == "image"`` 且
         provider 声明 ``supports_image_bytes`` 时发 vision, 否则忽略)。
@@ -435,27 +472,33 @@ class AIUnderstandingPipeline:
         policy = dict(policy) if policy else dict(self._policy)
         chunk_results: list[ChunkAIResult] = []
         failed: dict[str, str] = {}
+        #: 每个成功 chunk 解析出多少候选 (手动导入要按请求报"应用了但 0 候选",
+        #: 与"没应用"是两件事; 报告层不再重新推断)。
+        candidate_counts: dict[str, int] = {}
         for chunk in chunks:
             try:
-                chunk_results.append(
-                    self.analyze_chunk(
-                        chunk,
-                        material_label=material_label,
-                        kind=kind,
-                        content_language=content_language,
-                        timeout_seconds=timeout_seconds,
-                        image_bytes=image_bytes,
-                    )
+                result = self.analyze_chunk(
+                    chunk,
+                    material_label=material_label,
+                    kind=kind,
+                    content_language=content_language,
+                    timeout_seconds=timeout_seconds,
+                    image_bytes=image_bytes,
                 )
             except AIAnalysisFailure as exc:
                 failed[chunk.chunk_id] = str(exc)
+                continue
+            chunk_results.append(result)
+            candidate_counts[chunk.chunk_id] = len(result.candidates)
         stats = {
             "chunk_total": len(chunks),
             "chunk_succeeded": len(chunk_results),
             "chunk_failed": len(failed),
             "truncated": truncated,
+            "failed_chunks": dict(failed),
+            "chunk_candidate_counts": candidate_counts,
         }
-        if failed:
+        if failed and not (tolerate_chunk_failures and chunk_results):
             self._failed_chunks.update(failed)
             raise AIAnalysisFailure(
                 "AI analysis failed for %d of %d chunks; evidence is safe" % (

@@ -1768,6 +1768,11 @@ function makeElement(id) {
       return null;
     },
     scrollIntoView() {},
+    // 画布交互 (拾取 / 缩放焦点) 需要真实几何。棒里给零矩形, 于是缩放
+    // 路径能被**真正执行**, 而不是"因为棒缺方法所以整段跳过"。
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+    },
   };
 }
 
@@ -4003,8 +4008,12 @@ async function audit() {
       out.indexOf('<b>3</b>' + refLabel) >= 0, out.slice(0, 500));
     check('km stats never label the ref sum as evidence',
       out.indexOf('<b>3</b>' + evLabel) === -1, out.slice(0, 500));
-    check('km stats bar has six stats',
-      (out.match(/class="km-stat"/g) || []).length === 6, out.slice(0, 500));
+    // 2026-10-13: 第七项 = 已登记关系 (knowledge_relations 里的一等事实)。
+    // 它**不是**画出来的边数 —— 那两个数字口径不同, 分开报。
+    check('km stats bar has seven stats',
+      (out.match(/class="km-stat"/g) || []).length === 7, out.slice(0, 500));
+    check('km stats report the registered relation count from the backend',
+      out.indexOf('<b>0</b>' + t_zh(sandbox, 'km.statRelations')) >= 0, out.slice(0, 500));
 
     // 分组: 按真实材料分簇, 标题非空, 每个点都能进详情。
     check('km explore groups by the real materials',
@@ -4078,6 +4087,138 @@ async function audit() {
     const gEmpty = await renderPage(pageByName('knowledgeMap'), emptyRoutes(), 'zh');
     check('km graph view states an explicit empty state without a graph payload',
       html(gEmpty).indexOf(t_zh(gEmpty, 'km.graph.empty')) >= 0, html(gEmpty).slice(0, 500));
+
+    // ---- 2026-10-13: 权威关系 vs 推断关联 ---------------------------------
+    //
+    // 后端自本日起回传真实的 ``relations`` (knowledge_relations 读投影), 而
+    // 图谱的边多了一个 ``origin`` 字段。这一节钉死四件事, 每件都是"看起来差不多、
+    // 实质上完全不同"的那类区分:
+    //   ① 统计条数的是**已登记**关系, 不是画出来的边数;
+    //   ② 图例把两种边分开说 (合并成一句“边 = 关联”就把推断升格成事实);
+    //   ③ 只有已登记边带方向 (缺 origin 的边**不**算已登记);
+    //   ④ 布局指纹认得出"数量没变但身份变了"。
+    const reg = routes();
+    const regPayload = knowledgeMap();
+    regPayload.relations = [
+      { relation_id: 'rel-1', source_knowledge_point_id: 'kp-1',
+        target_knowledge_point_id: 'kp-2', relation_type: 'PREREQUISITE' },
+      { relation_id: 'rel-2', source_knowledge_point_id: 'kp-2',
+        target_knowledge_point_id: 'kp-3', relation_type: 'RELATED' },
+    ];
+    regPayload.stats = Object.assign({}, regPayload.stats, { relation_count: 2 });
+    // 3 条边: 1 条已登记 (有向) + 2 条推断 (无向) —— 边数 3 与关系数 2 不等,
+    // 正好用来证明统计条数的不是边数。
+    regPayload.graph.edges = [
+      Object.assign({}, regPayload.graph.edges[2],
+        { origin: 'registered', directed: true, relation_type: 'PREREQUISITE' }),
+      Object.assign({}, regPayload.graph.edges[0], { origin: 'concept', directed: false }),
+      Object.assign({}, regPayload.graph.edges[1], { origin: 'concept', directed: false }),
+    ];
+    regPayload.graph.stats = Object.assign({}, regPayload.graph.stats,
+      { registered_relation_count: 1, content_hint_edge_count: 0 });
+    reg['/api/courses/' + COURSE_ID + '/knowledge-map'] = regPayload;
+    const rs = await renderPage(pageByName('knowledgeMap'), reg, 'zh');
+    const rout = html(rs);
+    const relLabel = t_zh(rs, 'km.statRelations');
+    check('km stats count registered relations, not drawn edges',
+      rout.indexOf('<b>2</b>' + relLabel) >= 0 &&
+      rout.indexOf('<b>3</b>' + relLabel) === -1, rout.slice(0, 500));
+    check('km legend explains registered and inferred edges separately',
+      rout.indexOf(t_zh(rs, 'km.graph.legendRegistered')) >= 0 &&
+      rout.indexOf(t_zh(rs, 'km.graph.legendInferred')) >= 0, rout.slice(0, 900));
+    // 画布自述: 数字取自后端 stats (4 点 / 1 已登记 / 0 推断 / 1 概念)。
+    const summary = t_zh(rs, 'km.graph.a11ySummary')
+      .replace('{nodes}', '4').replace('{registered}', '1')
+      .replace('{inferred}', '0').replace('{concepts}', '1');
+    check('km canvas describes itself with real counts',
+      rout.indexOf('aria-label="' + summary + '"') >= 0, rout.slice(0, 500));
+    check('km canvas is keyboard reachable',
+      rout.indexOf('role="img"') >= 0 && rout.indexOf('tabindex="0"') >= 0 &&
+      rout.indexOf('id="km-graph-canvas"') >= 0, rout.slice(0, 500));
+    check('km treats only registered edges as directed',
+      vm.runInContext("kmGraphEdgeDirected({origin:'registered'})", rs) === true &&
+      vm.runInContext("kmGraphEdgeDirected({origin:'content_hint'})", rs) === false &&
+      vm.runInContext("kmGraphEdgeDirected({origin:'concept'})", rs) === false &&
+      vm.runInContext('kmGraphEdgeDirected({})', rs) === false &&
+      vm.runInContext('kmGraphEdgeDirected({directed:true})', rs) === true);
+    // 布局指纹: 同样的节点数/边数, 换了身份必须换指纹 (否则重分析后地图
+    // 接着画上一版的坐标 —— 节点是新标签, 位置是旧的)。
+    check('km layout fingerprint notices identity changes at constant counts',
+      vm.runInContext(
+        "kmGraphLayoutKey({nodes:[{id:'kp-1',kind:'kp',material_id:'m1'}," +
+        "{id:'kp-2',kind:'kp',material_id:'m1'}]," +
+        "edges:[{source:'kp-1',target:'kp-2',kind:'kp',origin:'content_hint'}]}) !== " +
+        "kmGraphLayoutKey({nodes:[{id:'kp-1',kind:'kp',material_id:'m1'}," +
+        "{id:'kp-9',kind:'kp',material_id:'m1'}]," +
+        "edges:[{source:'kp-1',target:'kp-9',kind:'kp',origin:'content_hint'}]})", rs) === true);
+    check('km layout fingerprint notices an edge becoming registered',
+      vm.runInContext(
+        "kmGraphLayoutKey({nodes:[{id:'kp-1',kind:'kp',material_id:'m1'}," +
+        "{id:'kp-2',kind:'kp',material_id:'m1'}]," +
+        "edges:[{source:'kp-1',target:'kp-2',kind:'kp',origin:'content_hint'}]}) !== " +
+        "kmGraphLayoutKey({nodes:[{id:'kp-1',kind:'kp',material_id:'m1'}," +
+        "{id:'kp-2',kind:'kp',material_id:'m1'}]," +
+        "edges:[{source:'kp-1',target:'kp-2',kind:'kp',origin:'registered',directed:true}]})", rs) === true);
+    check('km layout fingerprint is stable for unchanged data',
+      vm.runInContext(
+        "var __fpG = {nodes:[{id:'kp-1',kind:'kp',material_id:'m1'},{id:'kp-2',kind:'kp',material_id:'m2'}]," +
+        "edges:[{source:'kp-1',target:'kp-2',kind:'kp',origin:'content_hint'}]};" +
+        "kmGraphLayoutKey(__fpG) === kmGraphLayoutKey(__fpG)", rs) === true);
+    check('km layout fingerprint ignores non-topological fields',
+      vm.runInContext(
+        "kmGraphLayoutKey({nodes:[{id:'kp-1',kind:'kp',material_id:'m1',label:'A',degree:3}],edges:[]}) === " +
+        "kmGraphLayoutKey({nodes:[{id:'kp-1',kind:'kp',material_id:'m1',label:'B',degree:9}],edges:[]})", rs) === true);
+    // 键盘: 方向键选点 -> 回车开详情。概念节点没有详情页, 回车既不开也不吞键。
+    const arrowPick = vm.runInContext(
+      "KM_GRAPH_STATE.selected = -1;" +
+      "kmGraphKey(document.getElementById('km-graph-canvas'), kmGraph()," +
+      " {key:'ArrowRight', preventDefault(){}});" +
+      "KM_GRAPH_STATE.selected", rs);
+    check('km arrow keys select a node from an empty selection',
+      typeof arrowPick === 'number' && arrowPick >= 0 && arrowPick < 5, String(arrowPick));
+    const enterHash = vm.runInContext(
+      "KM_GRAPH_STATE.selected = kmGraph().nodes.findIndex(function(n){return n.id === 'kp-2';});" +
+      "kmGraphKey(document.getElementById('km-graph-canvas'), kmGraph()," +
+      " {key:'Enter', preventDefault(){}});" +
+      "window.location.hash", rs);
+    check('km Enter opens the selected knowledge point',
+      String(enterHash) === '#/courses/' + encodeURIComponent(COURSE_ID) + '/knowledge/kp-2',
+      String(enterHash));
+    const conceptEnter = vm.runInContext(
+      "window.location.hash = '#/keep';" +
+      "KM_GRAPH_STATE.selected = kmGraph().nodes.findIndex(function(n){return n.kind === 'concept';});" +
+      "var __handled = kmGraphKey(document.getElementById('km-graph-canvas'), kmGraph()," +
+      " {key:'Enter', preventDefault(){}});" +
+      "String(__handled) + '|' + window.location.hash", rs);
+    check('km Enter on a concept node neither navigates nor claims the key',
+      String(conceptEnter) === 'false|#/keep', String(conceptEnter));
+    const detail = String(vm.runInContext(
+      "KM_GRAPH_STATE.selected = kmGraph().nodes.findIndex(function(n){return n.id === 'kp-1';});" +
+      "kmGraphDrawDetail(kmGraph());" +
+      "document.getElementById('km-graph-detail').innerHTML", rs));
+    check('km detail lists the registered relation with direction and type',
+      detail.indexOf('→ ') >= 0 && detail.indexOf('kp-2') >= 0 &&
+      detail.indexOf('PREREQUISITE') >= 0, detail.slice(0, 400));
+    check('km detail links the selected point to its detail page',
+      detail.indexOf('#/courses/' + encodeURIComponent(COURSE_ID) + '/knowledge/kp-1') >= 0,
+      detail.slice(0, 400));
+    // 滚轮: 普通滚轮只滚页, Ctrl/⌘ + 滚轮才缩放 (两个方向都验)。
+    const plainWheel = vm.runInContext(
+      "var __prevented = false; var __kBefore = KM_GRAPH_STATE.view.k;" +
+      "var __handledW = kmGraphWheel(document.getElementById('km-graph-canvas'), kmGraph()," +
+      " {deltaY:-120, ctrlKey:false, metaKey:false, clientX:10, clientY:10," +
+      "  preventDefault(){ __prevented = true; }});" +
+      "[String(__handledW), String(__prevented), String(KM_GRAPH_STATE.view.k === __kBefore)].join('|')", rs);
+    check('km plain wheel scrolls the page instead of zooming',
+      String(plainWheel) === 'false|false|true', String(plainWheel));
+    const ctrlWheel = vm.runInContext(
+      "var __prevented2 = false; var __kBefore2 = KM_GRAPH_STATE.view.k;" +
+      "var __handledW2 = kmGraphWheel(document.getElementById('km-graph-canvas'), kmGraph()," +
+      " {deltaY:-120, ctrlKey:true, metaKey:false, clientX:10, clientY:10," +
+      "  preventDefault(){ __prevented2 = true; }});" +
+      "[String(__handledW2), String(__prevented2), String(KM_GRAPH_STATE.view.k > __kBefore2)].join('|')", rs);
+    check('km ctrl/cmd + wheel zooms the canvas',
+      String(ctrlWheel) === 'true|true|true', String(ctrlWheel));
 
     // 未知分组键 (旧后端曾发证据 ID): 不隐藏, 明确标注。
     const ghost = routes();

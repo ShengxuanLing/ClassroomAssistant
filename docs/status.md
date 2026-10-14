@@ -8842,3 +8842,69 @@ courses / knowledge_points / evidence   5 / 467 / 126      ← 未变
 - **风险**：代码侧 `git revert` 可回滚；**m005 的 DROP 不可逆**（快照在 `temp/`，不在版本控制里）。
 - **未做**：TASK-107（「无学生」死路）与 TASK-108（无入口页面 / 端点清点）**本次未实施** ——
   计划书 §4 / §5 的处置建议仍待用户拍板 D2 与 §5.3 处置表。
+
+---
+
+## 2026-10-13 知识地图修复 + 手动 AI 接入（阶段 0–4，COMPLETE）
+
+详细报告：[`reports/knowledge-map-manual-ai-analysis.md`](../reports/knowledge-map-manual-ai-analysis.md)（阶段 0/1）、
+[`reports/knowledge-map-manual-ai-acceptance.md`](../reports/knowledge-map-manual-ai-acceptance.md)（阶段 2–4 最终验收）。
+
+### 做了什么
+
+**阶段 1（知识地图结构正确性）**：知识关系不再以正文 `关联:` 行为唯一数据源；
+新增归一化规则（CJK / 全角冒号 / 大小写 / 重音 / 标点）、可观测诊断
+（`unresolved_terms` / `skipped_terms` / `dropped_relation_count`）；取消无依据的固定截断；
+地图三处硬编码空值改为**只读真实投影**（`relations` / `topics` / `knowledge_memberships`）；
+地图响应改为**精简投影**（7 字段，不含 `content`）；布局指纹纳入节点与边的身份；
+canvas 改为读 `--graph-*` 双主题 token + 键盘可达（`tabindex` / 方向键 / `aria-live` 详情）。
+
+**阶段 2/3（手动 AI）**：新增 `src/application/ai/manual.py`——内容寻址的
+`bundle_id` / `request_id`、与真实调用**逐字相同**的提示词、响应包结构校验、
+`ReplayAIProvider`（只按 `request_key` 精确取响应，找不到就报错）、逐请求状态。
+API：`POST /api/materials/{id}/manual-ai/export` 与 `.../import`。导入走
+**同一条** `AIAnalysisService.analyze` 管线（grounding / 去重 / 冲突 / 幂等入库 /
+报告落盘），**没有**任何直接写库的捷径；报告如实写 `provider=user-pasted`、`mode=manual`。
+`CLASSROOM_AI_MODE=manual` 进 config / bootstrap / health，且 `process_material`
+不自动分析。前端：材料页新增「手动 AI」按钮 + 面板（任务包、说明、粘贴区、逐请求状态表），
+i18n `manual.*` 三语各 45 键（键集完全一致）。
+
+### 实测（真实数据，非合成）
+
+- 精简 payload：KP 部分 **省 51.5%（61 点课）/ 65.3%（380 点课）**；地图端点耗时
+  32.9 / 68.9 ms（比裸列表慢——构图成本，优化目标是传输量）。
+- 绘制：380 点 / 255 边 **0.79 ms/帧**；61 点 / 23 边 2.09 ms/帧。
+- 主题：临时改写 `--graph-bg` 后画布像素随之变红 ⇒ 确认读 CSS token。
+- 端到端：`temp/accept_manual_ai_e2e.py` **53/53**（真实 HTTP + `socket.connect`
+  只放行 loopback 的零出站强制）。
+
+### 如实记录的边界
+
+- **真实库里 `knowledge_relations` / `topics` / `knowledge_memberships` 全为 0**。
+  地图 255 条边全部是 `content_hint` / `concept`（推断、无向）。本次交付的是
+  「关系存在时能正确有向可溯源地画出来」，**不是**「已建立真实关系体系」——
+  未伪造主题、未自动造边、未把正则结果认定为可信关系。
+- 未做：关系**写入**链路、真实 OCR/ASR 验收、浏览器 E2E 常态化、
+  手动导入 + 重启的持久化组合实测。
+
+### 测试
+
+受影响面 6 组共 **1060 条**：`test_manual_ai_bundle` 44、AI/地图组 292、
+知识/引导组 262（含 2 skip）、前端组 329、学生/产品门禁组 133。
+`ui_audit.js` **627 OK**（HEAD 610）、`ui_render_check.js` **312/314**（与 HEAD 逐字相同）。
+**未跑全量**（本机单次约 20 分钟，超本轮工具时限）—— 不声称全量通过。
+
+### 基线失败（HEAD 复现，非本次回归）
+
+`ui_render_check.js` 312/314（harness 期望 `#/students` 重定向到「我的课程」，
+而 `route()` 从来没有这条重定向；本次只给 `app.js` 加了 3 行 action 分派，未触碰路由）；
+`test_ui_render_harness_passes`（同上）；`test_production_gate` 的散落脚本
+`fix_ex.py`（`1cf14b1` 已提交，未删除）；`test_the_live_script_passes`
+（缺 `.gitignore` 内的可携带 `Python/` 解释器 ⇒ ENOENT）。
+
+### 接口变更（潜在破坏性，已缓解）
+
+`AIProvider.generate_structured` 新增可选关键字 `request_key`。仓库内 3 个旧签名
+测试替身与用户自带 provider 会 `TypeError`；管线侧新增按类缓存的签名探测
+`_provider_accepts_request_key()`，只在 provider 接受时才传。旧 provider 拿不到
+「回放定位」能力（手动导入如实报 `missing`），但材料分析链不崩。

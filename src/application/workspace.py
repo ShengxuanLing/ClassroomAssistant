@@ -42,6 +42,7 @@ from src.application.data_dirs import (
 from src.application.errors import (
     InvalidInputError,
     NotFoundError,
+    ProcessingError,
     StorageError,
 )
 from src.application.knowledge_service import KnowledgeService, ReviewService
@@ -93,6 +94,27 @@ AI_AUTO_FAILED = "failed"
 #: TASK-77: AI 报告在数据目录里的持久化位置 (相对于 ``materials/``)。
 #: 报告层可由 KP + Evidence 重新推导, 因此不新增数据库表 (与 TASK-76
 #: "零 DB migration" 一致); 文件落盘只解决"重启后总结消失"的体验问题。
+#: 知识地图返回的知识点字段白名单 (排序无关, 集合即契约)。
+#:
+#: 地图的四个视图只读这几项: 图谱 canvas 读 title/validation_status/
+#: generation_mode, 探索/列表读 title + evidence_refs + 两个状态, 搜索读
+#: title/original_terms。知识点正文与完整证据走
+#: ``GET /api/knowledge/{id}/trace``, 与地图接口无关。
+#:
+#: 实测 (2026-10-13, 真实数据): 完整 DTO 里 ``content`` 占地图载荷的
+#: 61–81% —— PAI 课程 380 个点共 576,117 B, 其中知识点部分 432,257 B, 而
+#: 这四个视图一个字节都不读。见 ``reports/knowledge-map-manual-ai-analysis.md``。
+KNOWLEDGE_MAP_KNOWLEDGE_FIELDS = (
+    "knowledge_id",
+    "title",
+    "generation_mode",
+    "validation_status",
+    "review_status",
+    "evidence_refs",
+    "original_terms",
+)
+
+
 AI_REPORT_SUBDIR = "ai-reports"
 AI_REPORT_VERSION = "ai-report-v2"
 COURSE_AI_OVERVIEW_FILENAME = "_course_overview.json"
@@ -1531,6 +1553,17 @@ class Workspace:
         """
         if not self._ai_enabled:
             return None
+        if self._ai_mode == "manual":
+            # manual 模式: 抽取靠导出/导入, 自动分析不发任何请求。
+            # 返回 skipped (而不是 None) —— 材料页要能看到"为什么没有自动分析"。
+            return {
+                "status": AI_AUTO_SKIPPED,
+                "reason": (
+                    "AI mode is 'manual': no request was sent; use the manual "
+                    "export/import panel to analyse this material"
+                ),
+                "retryable": False,
+            }
         if str(job.get("status") or "") != JOB_SUCCEEDED:
             return {
                 "status": AI_AUTO_SKIPPED,
@@ -1571,6 +1604,9 @@ class Workspace:
         """整节课处理完后, 对其中摄取成功的材料逐个自动 AI (受控串行)。"""
         if not self._ai_enabled:
             return None
+        if self._ai_mode == "manual":
+            return {}
+
         out: dict[str, Any] = {}
         jobs = report.get("jobs")
         if not isinstance(jobs, list):
@@ -2357,8 +2393,8 @@ class Workspace:
             self._ai_provider = provider
         if mode is not None:
             normalized_mode = str(mode).strip().lower()
-            if normalized_mode not in {"disabled", "fake", "real"}:
-                raise ValueError("AI mode must be disabled, fake or real")
+            if normalized_mode not in {"disabled", "fake", "real", "manual"}:
+                raise ValueError("AI mode must be disabled, fake, real or manual")
             self._ai_mode = normalized_mode
         elif not self._ai_enabled:
             self._ai_mode = "disabled"
@@ -2366,11 +2402,16 @@ class Workspace:
             name_hint = str(
                 getattr(self._ai_provider, "name", None) or "fake-deterministic"
             ).lower()
-            self._ai_mode = (
-                "fake"
-                if any(word in name_hint for word in ("fake", "mock", "deterministic"))
-                else "real"
-            )
+            if any(word in name_hint for word in ("user-pasted", "replay")):
+                # 手动 AI (用户粘贴) **绝不**算 real: 没有任何外部 API 调用
+                # 发生, 也没法验证模型身份。
+                self._ai_mode = "manual"
+            else:
+                self._ai_mode = (
+                    "fake"
+                    if any(word in name_hint for word in ("fake", "mock", "deterministic"))
+                    else "real"
+                )
         name = getattr(self._ai_provider, "name", None) or "fake-deterministic"
         return {
             "enabled": self._ai_enabled,
@@ -2460,6 +2501,247 @@ class Workspace:
         finally:
             self._record_op(
                 "analyze_material_with_ai",
+                course=course_id,
+                material=material_id,
+                success=ok,
+                failure=failure_reason,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+
+    # ------------------------------------------------------------------
+    # 手动 AI (阶段 2/3): 导出任务包 / 导入响应
+    # ------------------------------------------------------------------
+    #
+    # 同一条管线, 只换一个 provider: 导入走 ``AIAnalysisService.analyze`` +
+    # ``ReplayAIProvider``, 校验/grounding/去重/冲突/幂等入库全部复用。
+    # 本层只管"打包"与"把响应交给管线", 不写任何直接入库的代码。
+
+    def export_manual_ai_bundle(
+        self,
+        course_id: str,
+        material_id: str,
+        *,
+        content_language: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """生成手动 AI 任务包 (**只读**: 零 AI 调用、零写入)。
+
+        包里的提示词与真实调用逐字相同 (同一个 ``prompts.build_chunk_prompt``,
+        同一套分块)。材料还没有证据时返回 0 请求的包 + 明确 notes, 而不是
+        报错 —— 前端可以如实告诉用户"这份材料还没抽取到文本"。
+        """
+        from src.application.ai.manual import (
+            build_manual_bundle,
+            render_instructions_markdown,
+        )
+        from src.application.ai.pipeline import detect_material_kind
+        from src.application.ai.service import _material_hash
+
+        started = time.monotonic()
+        ok = False
+        failure_reason: Optional[str] = None
+        try:
+            ctx = self.context(course_id)
+            record = ctx.workflow.get_material(material_id)
+            evidences = list(ctx.workflow.store.get_by_source(material_id))
+            kind = detect_material_kind(
+                filename=str(record.get("filename") or ""),
+                source_type=str(record.get("source_type") or ""),
+                material_type=str(record.get("material_type") or ""),
+            )
+            if kind == "unknown":
+                kind = "text"
+            bundle = build_manual_bundle(
+                course_id=course_id,
+                material=record,
+                evidences=evidences,
+                material_hash=_material_hash(record),
+                kind=kind,
+                content_language=content_language,
+            )
+            payload = bundle.to_dict()
+            payload["instructions_markdown"] = render_instructions_markdown(bundle)
+            payload["evidence_count"] = len(evidences)
+            payload["material_has_evidence"] = bool(evidences)
+            payload["material_kind"] = kind
+            payload["analysis_mode"] = self._ai_mode
+            ok = True
+            return payload
+        except Exception as exc:  # noqa: BLE001 - 记录失败原因后照常上抛
+            failure_reason = "%s: %s" % (type(exc).__name__, exc)
+            raise
+        finally:
+            self._record_op(
+                "export_manual_ai_bundle",
+                course=course_id,
+                material=material_id,
+                success=ok,
+                failure=failure_reason,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+
+    def import_manual_ai_responses(
+        self,
+        course_id: str,
+        material_id: str,
+        payload: Mapping[str, Any],
+        *,
+        content_language: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """导入用户粘贴的模型响应 (逐请求状态, 部分成功可单独重试)。
+
+        安全语义 (逐条对应任务书 §6):
+
+        1. ``bundle_id`` 不信任包里自报的值: 按材料**当前**内容重算并逐字比对,
+           不一致直接 400 (错材料 / 材料变了 / 旧协议)。
+        2. ``request_id`` 同样是重算的 —— 用户或模型自报的 ID 不作数。
+        3. 每条响应先过长度上限与**与网络路径同一套** schema 校验, 再交给管线。
+        4. 入库全部经既有 ``analyze`` (grounding / 去重 / 冲突 / 幂等键)。
+        5. 报告如实写 ``provider=user-pasted`` / ``mode=manual``, 不冒充真实 API。
+
+        不需要 API Key, 也不会发起任何网络请求。
+        """
+        from src.application.ai.manual import (
+            LLM_STAGES_IN_SCOPE,
+            LLM_STAGES_OUT_OF_SCOPE,
+            MANUAL_PROTOCOL_VERSION,
+            STATUS_APPLIED,
+            STATUS_EMPTY,
+            SUCCESS_STATUSES,
+            USER_PASTED_PROVIDER_NAME,
+            ReplayAIProvider,
+            build_manual_bundle,
+            build_request_report,
+            parse_response_payload,
+            responses_by_chunk,
+        )
+        from src.application.ai.pipeline import AIAnalysisFailure, detect_material_kind
+        from src.application.ai.service import AIAnalysisService, _material_hash
+
+        started = time.monotonic()
+        ok = False
+        failure_reason: Optional[str] = None
+        analysis_payload: Optional[dict[str, Any]] = None
+        try:
+            with self._atomic():
+                ctx = self.context(course_id)
+                record = ctx.workflow.get_material(material_id)
+                evidences = list(ctx.workflow.store.get_by_source(material_id))
+                kind = detect_material_kind(
+                    filename=str(record.get("filename") or ""),
+                    source_type=str(record.get("source_type") or ""),
+                    material_type=str(record.get("material_type") or ""),
+                )
+                if kind == "unknown":
+                    kind = "text"
+                bundle = build_manual_bundle(
+                    course_id=course_id,
+                    material=record,
+                    evidences=evidences,
+                    material_hash=_material_hash(record),
+                    kind=kind,
+                    content_language=content_language,
+                )
+                if not bundle.requests:
+                    raise ProcessingError(
+                        "this material has no analysable text yet; process it first, "
+                        "then export the manual bundle again",
+                        detail={"material_id": material_id, "evidence_count": len(evidences)},
+                    )
+                # 结构性错误 (版本 / bundle / responses 形状) 在这里抛 400。
+                parsed = parse_response_payload(payload, bundle=bundle)
+                responses = responses_by_chunk(parsed, bundle=bundle)
+                provider = ReplayAIProvider(responses, bundle_id=bundle.bundle_id)
+
+                analysis: Optional[dict[str, Any]] = None
+                analysis_error = ""
+                if responses:
+                    try:
+                        report = AIAnalysisService().analyze(
+                            ctx,
+                            record,
+                            course_id=course_id,
+                            material_id=material_id,
+                            content_language=content_language,
+                            provider=provider,
+                            # 部分成功必须能落库 (失败的那几条单独重试)。
+                            tolerate_chunk_failures=True,
+                        )
+                        self._sync_learning_knowledge(ctx)
+                        self._flush_knowledge(course_id)
+                        self._flush_organization(course_id)
+                        analysis = report.to_dict()
+                    except AIAnalysisFailure as exc:
+                        # 全部 chunk 都答错之类: 没有任何东西可入库, 但逐请求
+                        # 状态仍要如实报 (哪个请求错、为什么)。
+                        analysis_error = self._sanitize_ai_error(exc)
+
+                rows = build_request_report(
+                    bundle=bundle, parsed=parsed, analysis=analysis
+                )
+                applied = [row for row in rows if row["status"] == STATUS_APPLIED]
+                empty = [row for row in rows if row["status"] == STATUS_EMPTY]
+                retryable = [
+                    row["request_id"] for row in rows if row["status"] not in SUCCESS_STATUSES
+                ]
+                result: dict[str, Any] = {
+                    "course_id": course_id,
+                    "material_id": material_id,
+                    "mode": "manual",
+                    "provider": USER_PASTED_PROVIDER_NAME,
+                    #: 用户自报的模型名 —— 只记录, **不作为已验证身份**。
+                    "model_reported": parsed.model_reported,
+                    "bundle_id": bundle.bundle_id,
+                    "protocol_version": MANUAL_PROTOCOL_VERSION,
+                    "prompt_version": bundle.prompt_version,
+                    "requests_total": len(rows),
+                    "requests_applied": len(applied),
+                    "requests_empty": len(empty),
+                    "requests_failed": len(rows) - len(applied) - len(empty),
+                    "retryable_request_ids": retryable,
+                    "unknown_request_ids": list(parsed.unknown),
+                    "duplicate_request_ids": list(parsed.duplicates),
+                    "requests": rows,
+                    "llm_stages_in_scope": list(LLM_STAGES_IN_SCOPE),
+                    "llm_stages_not_in_scope": list(LLM_STAGES_OUT_OF_SCOPE),
+                    "analysis_status": str((analysis or {}).get("status") or ""),
+                    "analysis_error": analysis_error,
+                    "knowledge_points_total": int(
+                        (analysis or {}).get("knowledge_points_total") or 0
+                    ),
+                    "auto_accepted_count": len((analysis or {}).get("auto_accepted") or []),
+                    "needs_review_count": len((analysis or {}).get("needs_review") or []),
+                    "conflicts_count": len((analysis or {}).get("conflicts") or []),
+                    "rejected_count": len((analysis or {}).get("rejected") or []),
+                    "chunk_total": int((analysis or {}).get("chunk_total") or 0),
+                    "chunk_succeeded": int((analysis or {}).get("chunk_succeeded") or 0),
+                    "summary_zh_status": str((analysis or {}).get("summary_zh_status") or ""),
+                    "glossary_status": str((analysis or {}).get("glossary_status") or ""),
+                }
+                if analysis is not None:
+                    # 报告里额外标来源: 事后看一份报告就能分辨它是 API 调用
+                    # 还是粘贴回来的 (不能只靠 provider 字段被人记住)。
+                    analysis["source"] = {
+                        "mode": "manual",
+                        "provider": USER_PASTED_PROVIDER_NAME,
+                        "model_reported": parsed.model_reported,
+                        "bundle_id": bundle.bundle_id,
+                        "protocol_version": MANUAL_PROTOCOL_VERSION,
+                        "requests_total": len(rows),
+                        "requests_failed": result["requests_failed"],
+                    }
+                    self._ai_reports[(course_id, material_id)] = analysis
+                    analysis_payload = analysis
+                ok = True
+            # 落盘在事务之外: 衍生缓存写失败绝不回滚已提交的知识点。
+            if analysis_payload is not None:
+                self._persist_ai_report(course_id, material_id, analysis_payload)
+            return result
+        except Exception as exc:  # noqa: BLE001 - 记录失败原因, 然后照常向上抛
+            failure_reason = "%s: %s" % (type(exc).__name__, exc)
+            raise
+        finally:
+            self._record_op(
+                "import_manual_ai_responses",
                 course=course_id,
                 material=material_id,
                 success=ok,
@@ -2734,13 +3016,57 @@ class Workspace:
     # 返回**空数组**, 绝不返回 null 或省略键 —— 前端按"暂无关联证据"
     # 展示, 而不是按"数据缺失"报错。
 
+    @staticmethod
+    def _knowledge_map_point(point: Mapping[str, Any]) -> dict[str, Any]:
+        """知识地图的**精简**知识点投影 (只含地图视图真正读的字段)。
+
+        自己拼而不是切片原 DTO: 键集合固定且每个键都有确定类型, 前端与
+        测试不会因为上游多/少一个字段而改变行为。
+        """
+        return {
+            "knowledge_id": str(point.get("knowledge_id") or ""),
+            "title": str(point.get("title") or ""),
+            "generation_mode": str(point.get("generation_mode") or ""),
+            "validation_status": str(point.get("validation_status") or ""),
+            "review_status": str(point.get("review_status") or ""),
+            "evidence_refs": list(point.get("evidence_refs") or []),
+            "original_terms": [
+                str(term) for term in (point.get("original_terms") or [])
+            ],
+        }
+
     def knowledge_map(self, course_id: str) -> dict[str, Any]:
         ctx = self.context(course_id)
-        kps = ctx.knowledge_service.get_knowledge_points(course_id=course_id)
+        #: 图谱投影需要正文 (兼容路径的 "关联:" 行住在 content 里), 但**响应**
+        #: 只发精简投影 —— 两者是同一次读取的两种视图, 不是两次读取。
+        kps_full = ctx.knowledge_service.get_knowledge_points(course_id=course_id)
+        kps = [self._knowledge_map_point(point) for point in kps_full]
         materials = self.list_materials(course_id)
         summary = ctx.knowledge_service.get_course_knowledge(course_id)
-        deps = ctx.knowledge_service.get_dependencies(course_id)
         conflicts = ctx.knowledge_service.get_conflicts(course_id)
+
+        # 组织层的**只读**投影 (2026-10-13)。
+        #
+        # 这里以前是三个硬编码空值/错源:
+        #   topics: [] / knowledge_memberships: [] / topic_count: 0  ← 写死的
+        #   relations = get_dependencies().outgoing               ← 只含 PREREQUISITE
+        # 而前端从不读 relations, 图谱画的是从正文正则抠出来的无向边 —— 同一个
+        # 概念三套表示, 被画的那套最弱。现在三处都改成本课程真实登记的读投影;
+        # 真实为空就是空数组 (诚实), 不伪造层级、不做传递闭包。
+        #
+        # 单次读取失败不应把只读 GET 变成 500 (与上面证据解析同口径)。
+        try:
+            registered_relations = ctx.knowledge_service.get_relations(course_id)
+        except Exception:  # noqa: BLE001 - 关系投影失败时按"无关系"处理, 不充数
+            registered_relations = []
+        try:
+            topics = ctx.knowledge_service.get_topics(course_id)
+        except Exception:  # noqa: BLE001 - 同上
+            topics = []
+        try:
+            memberships = ctx.knowledge_service.get_topic_memberships(course_id)
+        except Exception:  # noqa: BLE001 - 同上
+            memberships = []
 
         # 每个知识点的 evidence_refs 直接取自 KP 记录, 不再逐个 trace:
         # 画布需要的是"这个点有多少来源", 而不是每条证据的正文。
@@ -2754,7 +3080,7 @@ class Workspace:
         # 只有 6 条独立证据 (11/9/6/11/12/12 共享), 所以 61 vs 6 都是对的,
         # 只是口径不同 —— 以前只报 61 并标"条证据"是错的。
         evidence_counts: dict[str, int] = {}
-        for kp in kps:
+        for kp in kps_full:
             evidence_counts[str(kp.get("knowledge_id"))] = len(
                 kp.get("evidence_refs") or []
             )
@@ -2765,7 +3091,7 @@ class Workspace:
             return str(ref or "")
 
         distinct_evidence_ids: set[str] = set()
-        for kp in kps:
+        for kp in kps_full:
             for ref in kp.get("evidence_refs") or []:
                 eid = _ref_evidence_id(ref)
                 if eid:
@@ -2795,7 +3121,7 @@ class Workspace:
                 unresolved_evidence_ids.add(eid)
         # dict 形状 ref 自带 material_id 时 (旧 AI 路径) 仅作回退, 且只在
         # store 解析失败时用 —— store 永远优先。
-        for kp in kps:
+        for kp in kps_full:
             for ref in kp.get("evidence_refs") or []:
                 if not isinstance(ref, Mapping):
                     continue
@@ -2807,7 +3133,7 @@ class Workspace:
                         unresolved_evidence_ids.discard(eid)
 
         material_to_kps: dict[str, list[str]] = {}
-        for kp in kps:
+        for kp in kps_full:
             kid = str(kp.get("knowledge_id"))
             for ref in kp.get("evidence_refs") or []:
                 mid = evidence_to_material.get(_ref_evidence_id(ref), "")
@@ -2826,14 +3152,19 @@ class Workspace:
             "material_to_knowledge": material_to_kps,
             "unresolved_evidence_ids": sorted(unresolved_evidence_ids),
             # 图谱投影 (只读、确定性): 节点/边/未归类概念/未匹配术语。
-            # 关系数据一直存在于知识点正文的 "关联: …" 行里, 这里做的是
-            # EDC 的 Canonicalize 那一步 —— 把自由文本术语解析成图上的边。
+            # 边的**首选**来源是本课程已登记的关系 (有向 + 有类型); 正文
+            # "关联: …" 行只作兼容回退, 并标 origin="content_hint" (推断, 无向);
             # 解析不到的不造边, 被 >=2 个知识点引用的物化成 concept 节点
             # (绝不写进 knowledge_points)。见 src/knowledge_graph.py。
-            "graph": build_knowledge_graph(kps, materials, material_to_kps),
-            "topics": [],
-            "knowledge_memberships": [],
-            "relations": deps.get("outgoing", []) if isinstance(deps, dict) else [],
+            "graph": build_knowledge_graph(
+                kps_full, materials, material_to_kps, relations=registered_relations
+            ),
+            "topics": topics,
+            "knowledge_memberships": memberships,
+            #: 本课程的**全部**已登记有向关系 (不再是 PREREQUISITE-only 的
+            #: ``get_dependencies().outgoing`` —— 那个口径让其他类型的关系
+            #: 在地图上凭空消失)。
+            "relations": registered_relations,
             "conflicts": conflicts or [],
             "stats": {
                 "knowledge_point_count": len(kps),
@@ -2842,8 +3173,8 @@ class Workspace:
                 # 断链引用只进 evidence_ref_count 与 unresolved, 不充数。
                 "evidence_count": len(evidence_to_material),
                 "evidence_ref_count": sum(evidence_counts.values()),
-                "topic_count": 0,
-                "relation_count": len(deps.get("outgoing", [])) if isinstance(deps, dict) else 0,
+                "topic_count": len(topics),
+                "relation_count": len(registered_relations),
                 "conflict_count": len(conflicts or []),
             },
             "summary": summary,

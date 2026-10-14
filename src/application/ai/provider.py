@@ -158,8 +158,15 @@ class AIProvider(ABC):
         *,
         timeout_seconds: int = 60,
         max_output_chars: int = 8000,
+        request_key: Optional[str] = None,
     ) -> str:
-        """给定提示词返回**结构化 JSON 文本** (调用方再做 schema 校验)。"""
+        """给定提示词返回**结构化 JSON 文本** (调用方再做 schema 校验)。
+
+        ``request_key`` 是**调用方自报的请求身份** (目前是确定性 ``chunk_id``),
+        仅供离线回放类 provider (``ReplayAIProvider``) 把"粘贴回来的响应"定位到
+        具体请求。网络 provider 忽略它: 它绝不进请求体、绝不进提示词, 也就
+        不会把内部标识泄露给外部模型。
+        """
 
     def analyze_text(
         self,
@@ -343,7 +350,12 @@ class FakeAIProvider(AIProvider):
         *,
         timeout_seconds: int = 60,
         max_output_chars: int = 8000,
+        request_key: Optional[str] = None,
     ) -> str:
+        # ``request_key`` 是回放 provider 的定位依据; fake 不需要它 (它的输出由
+        # 提示词内容决定), 但仍然接受该参数以保持接口一致。
+        void_key = request_key
+        _ = void_key
         # Derived report stages have their own closed schemas.  Keep the fake
         # deterministic and useful in tests without making it pretend to be a
         # real translation model.
@@ -680,7 +692,11 @@ class OpenAICompatibleAIProvider(AIProvider):
         *,
         timeout_seconds: int = 60,
         max_output_chars: int = 8000,
+        request_key: Optional[str] = None,
     ) -> str:
+        # 网络 provider 明确忽略 request_key: 它是内部请求身份, 不该出境。
+        void_key = request_key
+        _ = void_key
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],

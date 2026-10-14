@@ -283,6 +283,47 @@ class KnowledgeService:
         report: DependencyAnalysis = analyzer.analyze_course()
         return report.to_dict()
 
+    def get_relations(self, course_id: str) -> List[dict[str, Any]]:
+        """课程**已登记**的有向关系 (只读; 没有就是空列表)。
+
+        这些是 ``KnowledgeOrganizationService`` 里的一等事实 (有向 + 有类型 +
+        可审核), 不是从知识点正文正则抠出来的提示。实现里没有任何写入、
+        没有传递闭包 —— ``list_relations()`` 本身已按 course 过滤并按
+        ``relation_id`` 排序。
+
+        为什么要有这个入口 (2026-10-13): 知识地图以前把 ``relations`` 填成
+        ``get_dependencies().outgoing`` (只含 PREREQUISITE 一种类型), 而前端
+        从不读它; 真正被画出来的边来自正文文本。同一个概念在三处有三套表示,
+        而**被画的那套最弱** (无向、无类型)。地图现在优先读这里。
+        """
+        cid = _require_nonempty_str(course_id, "course_id")
+        out: List[dict[str, Any]] = []
+        for relation in self._service.list_relations():
+            payload = relation.to_dict()
+            payload.setdefault("course_id", cid)
+            out.append(payload)
+        return out
+
+    def get_topics(self, course_id: str) -> List[dict[str, Any]]:
+        """课程主题 DTO 列表 (只读)。
+
+        真实为空就返回空列表 —— 主题是课程自己登记的结构, 不在这里伪造
+        层级, 也不为了让图更密集而自动造主题。
+        """
+        _require_nonempty_str(course_id, "course_id")
+        return [topic.to_dict() for topic in self._service.list_topics()]
+
+    def get_topic_memberships(self, course_id: str) -> List[dict[str, Any]]:
+        """主题 ↔ 知识点成员关系 (只读, 按主题确定性展开)。"""
+        _require_nonempty_str(course_id, "course_id")
+        out: List[dict[str, Any]] = []
+        for topic in self._service.list_topics():
+            for kid in self._service.get_topic_knowledge_points(topic.topic_id):
+                out.append(
+                    {"topic_id": topic.topic_id, "knowledge_point_id": str(kid)}
+                )
+        return out
+
     def get_conflicts(self, course_id: str) -> List[dict[str, Any]]:
         """返回指定课程的冲突记录 DTO 列表 (按 conflict_id 升序)。
 

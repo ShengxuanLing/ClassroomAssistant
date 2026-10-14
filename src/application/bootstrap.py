@@ -215,14 +215,17 @@ def _build_ai_provider(notes: list[str]) -> tuple[Any, str, Any]:
     """按 ``CLASSROOM_AI_*`` 环境装配 AI 语义理解提供方 (TASK-77 §16)。
 
     返回 ``(provider, ai_mode)``, 其中 ``ai_mode`` 为 ``disabled`` /
-    ``fake`` / ``real`` 之一 (进 ``/api/health`` 的可观测状态, 绝不静默):
+    ``fake`` / ``real`` / ``manual`` 之一 (进 ``/api/health`` 的可观测状态,
+    绝不静默):
 
     - ``CLASSROOM_AI_ENABLED`` 未开 -> ``(None, "disabled")``: 旧确定性
       链路, ``process_material`` 不触发任何 AI 调用;
     - 已开且有真实凭证 (``CLASSROOM_AI_API_KEY`` + https base URL, 未配时
       回落 ``CLASSROOM_LLM_*``) -> OpenAI-compatible provider, ``"real"``;
     - 已开但无凭证 -> 确定性 ``FakeAIProvider``, ``"fake"`` (记一条
-      runtime_note, 与 ASR/OCR 的"诚实回落"同口径)。
+      runtime_note, 与 ASR/OCR 的"诚实回落"同口径);
+    - ``CLASSROOM_AI_MODE=manual`` -> 空的 ``ReplayAIProvider``, ``"manual"``:
+      只有用户粘贴的响应会被处理, 进程内零出站, 且不自动分析材料。
 
     Key 只读进程环境 (``src/application/ai/config.get_api_key``), 绝不进
     日志 / 描述 / 异常 (``notes`` 里只出现"有/无", 无明文)。
@@ -235,6 +238,18 @@ def _build_ai_provider(notes: list[str]) -> tuple[Any, str, Any]:
     config = load_ai_config()
     if not config.enabled:
         return None, "disabled", config
+    if config.manual:
+        # 手动模式: 抽取走"导出 → 网页模型 → 导入", 进程内**不发任何请求**。
+        # 这里装一个空的 ReplayAIProvider: 万一有人走自动路径, 它会报可诊断
+        # 的错误 (而不是悄悄调用真实 API —— 用户明确表达了不出站),
+        # 同时 ``_maybe_auto_ai`` 在 manual 模式下已经跳过自动分析。
+        from src.application.ai.manual import ReplayAIProvider
+
+        notes.append(
+            "CLASSROOM_AI_MODE=manual: knowledge extraction uses the manual "
+            "export/import panel; no AI request is sent from this process"
+        )
+        return ReplayAIProvider({}), "manual", config
     if config.has_credentials:
         from src.application.ai.provider import OpenAICompatibleAIProvider
 

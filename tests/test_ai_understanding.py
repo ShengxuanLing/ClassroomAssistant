@@ -569,6 +569,52 @@ class TestValidators:
         assert kp.evidence_refs == ["ev-1"]
         assert kp.validation_status == "unverified"
 
+    def test_every_relation_reaches_the_content_not_just_five(self):
+        """2026-10-13: ``relations`` 不再被 ``[:5]`` 静默截断。
+
+        为什么重要: 知识点正文的 ``关联:`` 行是知识地图（兼容路径）产边的
+        唯一来源 (``src/knowledge_graph.py::_relation_terms``)。旧写法
+        ``candidate.relations[:5]`` 直接丢掉第 6 条以后的关联, 而且没有任何
+        计数能看出丢了 —— 图里少一条边, 原因根本查不到。
+        """
+        terms = ["terme un", "terme dos", "terme tres", "terme quatre",
+                 "terme cinc", "terme sis", "terme set", "terme vuit",
+                 "terme nou", "desanau terme"]
+        candidate = KnowledgeCandidate(
+            title="Associacions",
+            description="descripcio",
+            confidence=0.95,
+            evidence_refs=["chunk-ok"],
+            relations=list(terms),
+        )
+        payload = map_candidate_to_kp_payload(
+            GroundedCandidate(candidate=candidate, evidence_ids=["ev-1"], decision="review"),
+            course_id="c",
+            material_id="m",
+        )
+        assert all(term in payload["content"] for term in terms), payload["content"]
+        assert payload["metadata"]["content_truncated"] is False
+        assert payload["metadata"]["content_original_chars"] == len(payload["content"])
+
+    def test_content_truncation_is_recorded_not_silent(self):
+        """正文长度的硬上限仍在, 但超限必须可观测 (以前完全静默)。"""
+        from src.application.ai.schemas import MAX_KNOWLEDGE_CONTENT_CHARS
+
+        candidate = KnowledgeCandidate(
+            title="Llarg",
+            description="x" * (MAX_KNOWLEDGE_CONTENT_CHARS + 500),
+            confidence=0.95,
+            evidence_refs=["chunk-ok"],
+        )
+        payload = map_candidate_to_kp_payload(
+            GroundedCandidate(candidate=candidate, evidence_ids=["ev-1"], decision="review"),
+            course_id="c",
+            material_id="m",
+        )
+        assert len(payload["content"]) == MAX_KNOWLEDGE_CONTENT_CHARS
+        assert payload["metadata"]["content_truncated"] is True
+        assert payload["metadata"]["content_original_chars"] > MAX_KNOWLEDGE_CONTENT_CHARS
+
     def test_only_auto_candidates_land_confirmed(self):
         """TASK-81 §B: auto 候选自动确认, review / 冲突候选仍 pending。
 

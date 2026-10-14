@@ -8,6 +8,9 @@ AI 管线时读取, 默认关闭 (``CLASSROOM_AI_ENABLED``), 不影响旧链路�
 环境变量 (全部可选, 文档只写 placeholder)::
 
     CLASSROOM_AI_ENABLED=true|false        (默认 false: 旧确定性链路)
+    CLASSROOM_AI_MODE=auto|real|fake|manual|disabled
+                                           (默认 auto: 按凭证推导;
+                                            manual = 导出/导入, 不发请求、不自动分析)
     CLASSROOM_AI_BASE_URL=<YOUR_API_BASE>  (默认沿用 CLASSROOM_LLM_API_BASE)
     CLASSROOM_AI_API_KEY=<YOUR_API_KEY>    (默认沿用 CLASSROOM_LLM_API_KEY)
     CLASSROOM_AI_MODEL=<YOUR_MODEL>        (默认沿用 CLASSROOM_LLM_MODEL)
@@ -41,6 +44,7 @@ __all__ = [
     "DEFAULT_AI_TIMEOUT_SECONDS",
     "DEFAULT_AI_MAX_RETRIES",
     "AIEnvNames",
+    "AI_MODES",
     "AIConfig",
     "load_ai_config",
 ]
@@ -55,6 +59,9 @@ class AIEnvNames:
     """AI 配置的环境变量名 (唯一真相, 测试据此断言文档与实现一致)。"""
 
     ENABLED = "CLASSROOM_AI_ENABLED"
+    #: 显式模式开关 (默认 auto = 按凭证推导)。``manual`` 表示"用导出/导入做
+    #: 抽取, 不发任何请求" —— 材料摄取后也不会自动分析。
+    MODE = "CLASSROOM_AI_MODE"
     BASE_URL = "CLASSROOM_AI_BASE_URL"
     API_KEY = "CLASSROOM_AI_API_KEY"
     MODEL = "CLASSROOM_AI_MODEL"
@@ -75,6 +82,9 @@ class AIEnvNames:
     FALLBACK_API_KEY = "CLASSROOM_LLM_API_KEY"
     FALLBACK_MODEL = "CLASSROOM_LLM_MODEL"
 
+
+#: 显式 AI 模式的白名单 (auto = 按凭证推导, 与历史行为逐字一致)。
+AI_MODES = ("auto", "real", "fake", "manual", "disabled")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on", "y", "t"})
 
@@ -115,6 +125,8 @@ class AIConfig:
     """
 
     enabled: bool = False
+    #: 显式模式 (auto/real/fake/manual/disabled); ``auto`` = 按凭证推导。
+    mode: str = "auto"
     base_url: Optional[str] = None
     text_model: Optional[str] = None
     vision_model: Optional[str] = None
@@ -132,6 +144,11 @@ class AIConfig:
         object.__setattr__(self, "sources", dict(self.sources or {}))
 
     @property
+    def manual(self) -> bool:
+        """是否显式要求手动模式 (导出/导入, 零出站)。"""
+        return self.mode == "manual"
+
+    @property
     def model(self) -> Optional[str]:
         """主文本模型 (vision/audio 未配时回落到它)。"""
         return self.text_model
@@ -145,6 +162,7 @@ class AIConfig:
         """可安全展示/写日志的视图 (key 只有有/无, 绝无明文)。"""
         return {
             "enabled": self.enabled,
+            "mode": self.mode,
             "base_url_configured": bool((self.base_url or "").strip()),
             "api_key_present": bool(self.api_key_present),
             "text_model": self.text_model,
@@ -183,6 +201,12 @@ def load_ai_config(
     get = lambda name: source.get(name) if isinstance(source, Mapping) else None
 
     enabled = _as_bool_text(get(AIEnvNames.ENABLED))
+    mode = str(get(AIEnvNames.MODE) or "").strip().lower() or "auto"
+    if mode not in AI_MODES:
+        raise ConfigurationError(
+            "%s must be one of: %s" % (AIEnvNames.MODE, ", ".join(AI_MODES)),
+            detail={"key": AIEnvNames.MODE, "received": mode},
+        )
 
     base_url = _first_nonempty(get(AIEnvNames.BASE_URL), get(AIEnvNames.FALLBACK_BASE_URL))
     text_model = _first_nonempty(
@@ -230,6 +254,7 @@ def load_ai_config(
     _ = SECRET_PLACEHOLDER  # 占位符的唯一真相仍在 config 模块, 这里只复用。
     return AIConfig(
         enabled=enabled,
+        mode=mode,
         base_url=base_url,
         text_model=text_model,
         vision_model=vision_model,

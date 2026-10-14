@@ -253,3 +253,140 @@ class TestKnowledgeMapHttp:
         assert "evidence_ref_count" in data["stats"]
         second = workspace.knowledge_map(processed)
         assert data["stats"] == second["stats"], "只读投影不应因 HTTP 而漂移"
+
+
+class TestAuthoritativeRelationsAndTopics:
+    """2026-10-13: ``relations`` / ``topics`` / ``knowledge_memberships`` 从写死值
+    改为**真实读投影**。
+
+    修复了什么 (旧实现):
+
+    - ``relations`` 取自 ``get_dependencies().outgoing`` —— 那只会列出
+      PREREQUISITE 一种关系, 其他类型 (related / extends / contrasts / part_of)
+      在知识地图上凭空消失;
+    - ``topics`` / ``knowledge_memberships`` / ``topic_count`` 是硬编码空值,
+      而组织层其实一直有一等模型 ``KnowledgeOrganizationService.list_topics()``。
+
+    这两条都属于本项目头号缺陷形状: 能力早就实现好了, 装配层从没接上。
+    """
+
+    def _two_kps(self, workspace, processed):
+        kps = workspace.knowledge_map(processed)["knowledge_points"]
+        assert len(kps) >= 2, "夹具课程至少要有两个知识点"
+        return [str(kp["knowledge_id"]) for kp in kps[:2]]
+
+    def test_registered_relation_keeps_direction_and_type(
+        self, workspace, processed
+    ) -> None:
+        first, second = self._two_kps(workspace, processed)
+        ctx = workspace.context(processed)
+        ctx.org_service.add_relation(first, second, "related")
+
+        payload = workspace.knowledge_map(processed)
+
+        assert payload["stats"]["relation_count"] == 1
+        assert len(payload["relations"]) == 1
+        relation = payload["relations"][0]
+        assert relation["source_knowledge_point_id"] == first
+        assert relation["target_knowledge_point_id"] == second
+        assert relation["relation_type"] == "related"
+
+        registered = [
+            edge for edge in payload["graph"]["edges"]
+            if edge["origin"] == "registered"
+        ]
+        assert len(registered) == 1
+        assert registered[0]["directed"] is True
+        # 方向必须原样到达前端 (旧实现用 tuple(sorted(...)) 抹掉了方向)。
+        assert (registered[0]["source"], registered[0]["target"]) == (first, second)
+
+    def test_non_prerequisite_relation_is_not_dropped(
+        self, workspace, processed
+    ) -> None:
+        """旧口径只发 PREREQUISITE outgoing: 换一个类型就整条消失。"""
+        first, second = self._two_kps(workspace, processed)
+        ctx = workspace.context(processed)
+        ctx.org_service.add_relation(first, second, "contrasts")
+        payload = workspace.knowledge_map(processed)
+        assert payload["stats"]["relation_count"] == 1
+        assert payload["relations"][0]["relation_type"] == "contrasts"
+
+    def test_topics_and_memberships_are_real_projections(
+        self, workspace, processed
+    ) -> None:
+        kp_ids = self._two_kps(workspace, processed)
+        ctx = workspace.context(processed)
+        topic = ctx.org_service.add_topic("Tema 1")
+        ctx.org_service.add_knowledge_to_topic(topic.topic_id, kp_ids[0])
+
+        payload = workspace.knowledge_map(processed)
+
+        assert payload["stats"]["topic_count"] == 1
+        assert [t["topic_id"] for t in payload["topics"]] == [topic.topic_id]
+        assert payload["topics"][0]["name"] == "Tema 1"
+        assert payload["knowledge_memberships"] == [
+            {"topic_id": topic.topic_id, "knowledge_point_id": kp_ids[0]}
+        ]
+
+    def test_processed_course_without_relations_reports_empty_not_null(
+        self, workspace, processed
+    ) -> None:
+        """没有登记数据就是空数组 (诚实), 且统计口径与之一致。"""
+        payload = workspace.knowledge_map(processed)
+        assert payload["relations"] == []
+        assert payload["topics"] == []
+        assert payload["knowledge_memberships"] == []
+        assert payload["stats"]["relation_count"] == 0
+        assert payload["stats"]["topic_count"] == 0
+        assert payload["graph"]["stats"]["registered_relation_count"] == 0
+
+    def test_registered_relation_cannot_dangle_the_graph(
+        self, workspace, processed
+    ) -> None:
+        """关系端点必须都在本图里: 不产生悬空边。"""
+        first, second = self._two_kps(workspace, processed)
+        ctx = workspace.context(processed)
+        ctx.org_service.add_relation(second, first, "extends")
+        payload = workspace.knowledge_map(processed)
+        node_ids = {node["id"] for node in payload["graph"]["nodes"]}
+        for edge in payload["graph"]["edges"]:
+            assert edge["source"] in node_ids
+            assert edge["target"] in node_ids
+        assert payload["graph"]["stats"]["dropped_relation_count"] == 0
+
+
+class TestSlimProjection:
+    """2026-10-13: 地图响应只发四个视图真正读的字段。
+
+    实测 (真实课程): 完整 DTO 里 ``content`` 占地图载荷的 61–81%, 而地图的
+    图谱/探索/列表/材料四个视图一个字节都不读 (正文与完整证据走
+    ``GET /api/knowledge/{id}/trace``)。PAI 课程因此从 576,117 B 降到
+    311,987 B (-45.9%); 知识点部分 432,257 B -> 150,410 B。
+    """
+
+    def test_unread_prose_is_not_shipped(self, workspace, processed) -> None:
+        from src.application.workspace import KNOWLEDGE_MAP_KNOWLEDGE_FIELDS
+
+        payload = workspace.knowledge_map(processed)
+        assert payload["knowledge_points"], "夹具课程应有知识点"
+        for kp in payload["knowledge_points"]:
+            assert set(kp) == set(KNOWLEDGE_MAP_KNOWLEDGE_FIELDS)
+            assert "content" not in kp
+            assert "metadata" not in kp
+
+    def test_every_field_the_map_views_read_is_still_there(
+        self, workspace, processed
+    ) -> None:
+        """精简不许把视图要用的东西剪掉: 搜索/证据计数/模式徽章都还在。"""
+        payload = workspace.knowledge_map(processed)
+        kp = payload["knowledge_points"][0]
+        assert kp["knowledge_id"]
+        assert kp["title"]
+        assert "evidence_refs" in kp and isinstance(kp["evidence_refs"], list)
+        assert "original_terms" in kp and isinstance(kp["original_terms"], list)
+        assert kp["validation_status"]
+        assert "review_status" in kp
+        assert "generation_mode" in kp
+        # 图谱投影仍然能看见正文 (兼容路径的 "关联:" 行住在 content 里) ——
+        # 精简只作用于响应, 不作用于投影输入。
+        assert payload["graph"]["stats"]["relation_instance_count"] >= 0

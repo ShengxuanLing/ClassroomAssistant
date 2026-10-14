@@ -87,6 +87,7 @@ async function pageMaterials() {
         '<th scope="col">' + t('操作') + '</th></tr></thead><tbody>' + rows + '</tbody></table>'
       : emptyState(t('该课程还没有材料。'))) +
     '</div>' +
+    '<div id="manual-ai-panel"></div>' +
     '<div id="ai-panel"></div>'
   );
   // 有进行中的分析才轮询 (1.2s, 与任务坞同量级); 全部终态时一次都不定时。
@@ -167,6 +168,9 @@ function materialActionButtons(courseId, m, analysis) {
   } else {
     html += '<button data-action="analyze-material" ' + base + '>' + esc(t('ai.analyze')) + '</button> ';
   }
+  // 手动 AI (阶段 2/3): 与「AI 分析」并列的独立入口 —— 它不需要 API Key,
+  // 也不调用任何外部服务。按钮永远可点 (与当前 AI 模式无关)。
+  html += '<button data-action="manual-ai-open" ' + base + '>' + esc(t('manual.open')) + '</button> ';
   html += '<button class="danger" data-action="delete-material" ' + base + '>' + esc(t('mat.delete')) + '</button>';
   return html;
 }
@@ -511,6 +515,206 @@ async function actionDeleteMaterial(courseId, materialId, button) {
     toast(t('mat.deleteFailed') + ' [' + err.code + '] ' + err.message, 'bad');
   }
   await route();
+}
+
+// ---- 手动 AI 分析 (阶段 2/3): 导出任务包 -> 网页模型 -> 导入响应 -------
+//
+// 零出站、零密钥: 导出只把"同一套提示词 + 同一套分块"打包给用户, 导入走与
+// 网络路径**同一条**管线 (ReplayAIProvider), 校验/grounding/去重/幂等全部复用。
+// 前端只做两件事: 画出任务包与逐请求状态, 把用户粘贴的响应原样交给后端。
+
+//: 当前面板状态 (按 material_id 记): 导出过的 bundle + 最近一次导入结果。
+//: 只放内存 —— 它描述"这一次会话里贴了什么", 不是跨会话偏好。
+const __manualAi = {};
+
+//: 逐请求状态的展示口径。未知状态原样显示 (绝不猜一个好看的词)。
+const MANUAL_STATUS_KEYS = {
+  applied: 'manual.status.applied',
+  empty: 'manual.status.empty',
+  grounding_failed: 'manual.status.grounding_failed',
+  missing: 'manual.status.missing',
+  unknown_request: 'manual.status.unknown_request',
+  duplicate_request: 'manual.status.duplicate_request',
+  malformed_json: 'manual.status.malformed_json',
+  schema_error: 'manual.status.schema_error',
+  too_large: 'manual.status.too_large',
+  failed: 'manual.status.failed',
+};
+
+const MANUAL_STATUS_PILLS = {
+  applied: 'pill-ok',
+  empty: 'pill-warn',
+  grounding_failed: 'pill-bad',
+  missing: 'pill-warn',
+  unknown_request: 'pill-bad',
+  duplicate_request: 'pill-warn',
+  malformed_json: 'pill-bad',
+  schema_error: 'pill-bad',
+  too_large: 'pill-bad',
+  failed: 'pill-bad',
+};
+
+function manualStatusLabel(status) {
+  const key = MANUAL_STATUS_KEYS[status];
+  if (!key) return status || '';
+  const label = t(key);
+  return label === key ? status : label;
+}
+
+function manualStatusPill(status) {
+  const cls = MANUAL_STATUS_PILLS[status] || 'pill-warn';
+  return '<span class="pill ' + cls + '">' + esc(manualStatusLabel(status)) + '</span>';
+}
+
+function manualRequestRows(result) {
+  const rows = (result && result.requests) || [];
+  if (!rows.length) return '<p class="small muted">' + esc(t('manual.noRequests')) + '</p>';
+  const cells = rows.map((row) => {
+    return '<tr><td class="tiny mono">' + esc(row.request_id || '') + '</td>' +
+      '<td>' + manualStatusPill(row.status) + '</td>' +
+      '<td class="tiny muted">' + esc(row.detail || '') + '</td>' +
+      '<td class="tiny">' + esc(String(row.candidates === undefined ? '' : row.candidates)) + '</td></tr>';
+  }).join('');
+  return '<table class="data">' + tableCaption(t('manual.requestsTitle')) +
+    '<thead><tr><th scope="col">' + esc(t('manual.colRequest')) + '</th>' +
+    '<th scope="col">' + esc(t('common.status')) + '</th>' +
+    '<th scope="col">' + esc(t('manual.colDetail')) + '</th>' +
+    '<th scope="col">' + esc(t('manual.colCandidates')) + '</th></tr></thead>' +
+    '<tbody>' + cells + '</tbody></table>';
+}
+
+function manualImportSummary(result) {
+  if (!result) return '';
+  return '<p class="small">' +
+    '<span class="pill pill-ok">' + esc(t('manual.applied')) + ' ' + esc(result.requests_applied) + '</span> ' +
+    '<span class="pill pill-warn">' + esc(t('manual.emptyCount')) + ' ' + esc(result.requests_empty || 0) + '</span> ' +
+    '<span class="pill pill-bad">' + esc(t('manual.failedCount')) + ' ' + esc(result.requests_failed || 0) + '</span> ' +
+    '<span class="tiny muted">' + esc(t('manual.autoAccepted')) + ' ' + esc(result.auto_accepted_count || 0) +
+    ' · ' + esc(t('manual.needsReview')) + ' ' + esc(result.needs_review_count || 0) +
+    ' · ' + esc(t('manual.conflicts')) + ' ' + esc(result.conflicts_count || 0) +
+    ' · ' + esc(t('manual.rejected')) + ' ' + esc(result.rejected_count || 0) + '</span></p>' +
+    // 来源标识如实画出来: 这份导入**不是**真实 API 调用, 也绝不冒充。
+    '<p class="tiny muted">' + esc(t('manual.sourceNote')) + ' ' +
+    '<span class="mono">' + esc(result.provider || '') + '</span>' +
+    (result.model_reported ? ' · ' + esc(result.model_reported) : '') +
+    (result.bundle_id ? ' · ' + esc(result.bundle_id) : '') + '</p>';
+}
+
+function renderManualAiPanel(state) {
+  const panel = document.getElementById('manual-ai-panel');
+  if (!panel) return;
+  const bundle = state && state.bundle;
+  if (!bundle) {
+    panel.innerHTML = '<div class="card"><div class="card-head"><h2>' + esc(t('manual.title')) + '</h2></div>' +
+      '<p class="small muted">' + esc(t('manual.intro')) + '</p></div>';
+    return;
+  }
+  const requests = bundle.requests || [];
+  const bundleJson = JSON.stringify(bundle, null, 2);
+  let html = '<div class="card"><div class="card-head"><h2>' + esc(t('manual.title')) + '</h2>' +
+    '<span class="tiny muted mono">' + esc(bundle.bundle_id || '') + ' · ' + esc(bundle.protocol_version || '') + '</span></div>' +
+    '<p class="small muted">' + esc(t('manual.exportNotice')) + '</p>' +
+    '<p class="small"><strong>' + esc(t('manual.materialLabel')) + '</strong> ' +
+    esc((bundle.material || {}).filename || '') + ' · ' +
+    esc(t('manual.requestCount')) + ' ' + esc(String(requests.length)) + ' · ' +
+    esc(t('manual.promptVersion')) + ' <span class="mono tiny">' + esc(bundle.prompt_version || '') + '</span></p>' +
+    (bundle.notes || []).map((note) => '<p class="tiny muted">' + esc(note) + '</p>').join('') +
+    '<div class="actions">' +
+    '<button type="button" class="small" data-action="manual-ai-copy" data-course="' + esc(state.courseId) + '" data-material="' + esc(state.materialId) + '">' + esc(t('manual.copyBundle')) + '</button>' +
+    '<button type="button" class="small" data-action="manual-ai-import" data-course="' + esc(state.courseId) + '" data-material="' + esc(state.materialId) + '">' + esc(t('manual.importBtn')) + '</button>' +
+    '</div>';
+  if (!requests.length) {
+    html += '<p class="small muted">' + esc(t('manual.noRequests')) + '</p></div>';
+    panel.innerHTML = html;
+    return;
+  }
+  html += '<label class="field"><span>' + esc(t('manual.bundleTitle')) + '</span>' +
+    '<textarea id="manual-ai-bundle" class="mono" rows="8" readonly>' + esc(bundleJson) + '</textarea></label>';
+  html += '<details><summary class="small">' + esc(t('manual.instructionsTitle')) + '</summary>' +
+    '<pre class="mono tiny">' + esc(bundle.instructions_markdown || t('manual.instructionsMissing')) + '</pre></details>';
+  html += '<label class="field"><span>' + esc(t('manual.responsesTitle')) + '</span>' +
+    '<textarea id="manual-ai-responses" class="mono" rows="8" placeholder="' + esc(t('manual.responsesPlaceholder')) + '"></textarea></label>';
+  html += manualImportSummary(state.result);
+  if (state.result) html += manualRequestRows(state.result);
+  html += '</div>';
+  panel.innerHTML = html;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function actionManualAiOpen(courseId, materialId, button) {
+  if (!courseId || !materialId) return;
+  if (button) button.disabled = true;
+  try {
+    const bundle = await api(
+      '/materials/' + encodeURIComponent(materialId) + '/manual-ai/export',
+      { method: 'POST', query: { course_id: courseId }, body: {} }
+    );
+    __manualAi[materialId] = { courseId, materialId, bundle, result: null };
+    renderManualAiPanel(__manualAi[materialId]);
+  } catch (err) {
+    const panel = document.getElementById('manual-ai-panel');
+    if (panel) {
+      panel.innerHTML = '<div class="card"><p class="tiny"><span class="pill pill-bad">' +
+        esc(err.code) + '</span> <span class="small">' + esc(err.message) + '</span></p></div>';
+    }
+    toast(t('manual.exportFailed') + ' [' + err.code + '] ' + err.message, 'bad');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function actionManualAiCopy(courseId, materialId) {
+  const area = document.getElementById('manual-ai-bundle');
+  if (!area) return;
+  area.select();
+  // 有剪贴板 API 就真复制; 没有就只选中, 让用户自己按 Ctrl+C —— 不静默失败。
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(area.value).then(
+      () => toast(t('manual.copied'), 'ok'),
+      () => toast(t('manual.copyManual'), 'warn')
+    );
+  } else {
+    toast(t('manual.copyManual'), 'warn');
+  }
+}
+
+async function actionManualAiImport(courseId, materialId, button) {
+  if (!courseId || !materialId) return;
+  const state = __manualAi[materialId] || { courseId, materialId, bundle: null, result: null };
+  const area = document.getElementById('manual-ai-responses');
+  const raw = area ? String(area.value || '').trim() : '';
+  if (!raw) { toast(t('manual.emptyPaste'), 'bad'); return; }
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (err) {
+    // 非法 JSON 在网络请求之前就拦下 (后端同样会拒, 但没必要发这一趟)。
+    toast(t('manual.invalidJson'), 'bad');
+    return;
+  }
+  if (button) button.disabled = true;
+  const taskId = startTask(t('manual.importTask') + ' · ' + materialId);
+  try {
+    const result = await api(
+      '/materials/' + encodeURIComponent(materialId) + '/manual-ai/import',
+      { method: 'POST', query: { course_id: courseId }, body: payload }
+    );
+    state.result = result;
+    state.courseId = courseId;
+    state.materialId = materialId;
+    __manualAi[materialId] = state;
+    finishTask(taskId, (result.requests_failed || 0) === 0,
+      t('manual.applied') + ' ' + result.requests_applied + ' / ' + result.requests_total);
+    toast(t('manual.imported') + ' ' + result.requests_applied + '/' + result.requests_total, 'ok');
+    // 入库成功 -> 重绘列表 (知识点计数/状态) 后再把面板画回去。
+    await route();
+    renderManualAiPanel(state);
+  } catch (err) {
+    finishTask(taskId, false, err.code + ' ' + err.message);
+    toast(t('manual.importFailed') + ' [' + err.code + '] ' + err.message, 'bad');
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 // ------------------------------------------------------------ 事件与路由

@@ -62,6 +62,12 @@ MAX_KP_ZH_CHARS = 200
 MAX_KP_ZH_TERM_CHARS = 120
 MAX_KP_ZH_TERMS = 8
 
+#: ``KnowledgePoint.content`` 的字符上限。它是给人/报告读的 prose, 不该无界
+#: 增长; 超限会被截断, 但**不再静默** —— ``validators.map_candidate_to_kp_payload``
+#: 会同时写 ``metadata.content_truncated`` / ``content_original_chars``。
+#: 关联术语 (知识地图兼容路径的边的来源) 不再另设 ``[:5]`` 截断。
+MAX_KNOWLEDGE_CONTENT_CHARS = 4000
+
 
 def _as_str(value: Any, default: str = "") -> str:
     if isinstance(value, str):

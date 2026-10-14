@@ -19,7 +19,12 @@ from difflib import SequenceMatcher
 from typing import Any, Mapping, Optional, Sequence
 
 from src.application.ai.prompts import ALLOWED_KNOWLEDGE_TYPES
-from src.application.ai.schemas import GlossaryEntry, KnowledgeCandidate, KpZhResult
+from src.application.ai.schemas import (
+    MAX_KNOWLEDGE_CONTENT_CHARS,
+    GlossaryEntry,
+    KnowledgeCandidate,
+    KpZhResult,
+)
 from src.knowledge_validation import knowledge_score_from_counts
 
 __all__ = [
@@ -141,12 +146,22 @@ def evidence_copy_similarity(candidate_text: str, evidence_text: str) -> float:
 
 
 def _candidate_knowledge_content(candidate: KnowledgeCandidate) -> str:
-    """The exact prose mapped to ``KnowledgePoint.content`` (without evidence)."""
+    """The exact prose mapped to ``KnowledgePoint.content`` (without evidence).
+
+    2026-10-13: ``relations`` **不再截断**。以前这里写的是
+    ``candidate.relations[:5]``, 于是第 6 条以后的关联被静默丢掉 —— 而正文的
+    ``关联:`` 行是知识地图（兼容路径）唯一的边的来源, 丢一条就是图里少一条边,
+    且没有任何计数或报告能看出丢了。``examples`` 保留上限: 它们是供人阅读的
+    例子 prose, 不是结构数据; 关联术语才是边上的一等输入。
+
+    长度上限仍由调用方的 ``content[:4000]`` 把守, 但那条截断现在是**可观测**的
+    （见 ``map_candidate_to_kp_payload`` 的 ``content_truncated`` 元数据）。
+    """
     parts = [candidate.description] if candidate.description else []
     if candidate.examples:
         parts.append("例子: " + " / ".join(candidate.examples[:5]))
     if candidate.relations:
-        parts.append("关联: " + " / ".join(candidate.relations[:5]))
+        parts.append("关联: " + " / ".join(candidate.relations))
     return "\n".join(parts)
 
 
@@ -687,12 +702,15 @@ def map_candidate_to_kp_payload(
     evidence_refs = list(dict.fromkeys(str(ref) for ref in grounded.evidence_ids if str(ref)))
     support_count = len(evidence_refs)
     knowledge_score = knowledge_score_from_counts(support_count)
+    #: 正文被 4000 字符上限截断时如实记录 (以前是静默的)。content 长度上限本身
+    #: 保留: KnowledgePoint.content 是要进 UI/报告的 prose, 不该无界增长。
+    content_truncated = len(content) > MAX_KNOWLEDGE_CONTENT_CHARS
     return {
         "knowledge_id": candidate_knowledge_id(
             course_id=course_id, title=candidate.title, kp_type=kp_type
         ),
         "title": candidate.title[:80] if candidate.title else kp_type,
-        "content": content[:4000],
+        "content": content[:MAX_KNOWLEDGE_CONTENT_CHARS],
         "original_terms": original_terms[:20],
         "importance": importance,
         "confidence": confidence,
@@ -713,6 +731,8 @@ def map_candidate_to_kp_payload(
             ),
             "material_id": material_id,
             "content_language": content_language,
+            "content_truncated": content_truncated,
+            "content_original_chars": len(content),
             "knowledge_score_source": {
                 "kind": "grounding_evidence_count",
                 "formula": "knowledge_score_from_counts",

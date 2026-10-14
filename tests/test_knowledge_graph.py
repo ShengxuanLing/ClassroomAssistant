@@ -269,3 +269,211 @@ def test_missing_relation_lines_produce_no_edges():
     result = graph([a, b])
     assert result["edges"] == []
     assert result["stats"]["edge_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 5. 文本兼容路径: 中文 / 全角标点 / 短术语诊断 / 无静默截断
+#     (2026-10-13 修复; 每一条都对应一个曾经静默丢失的形状)
+# ---------------------------------------------------------------------------
+
+def test_cjk_term_matches_cjk_title():
+    """中文术语以前被词字符类整体删空 (canonical_key -> "") -> 永远无边。"""
+    a = kp("kp-a", "Concepte base", relations=["函数定义"])
+    b = kp("kp-b", "函数定义")
+    result = graph([a, b])
+    assert edge_pairs(result) == {("kp-a", "kp-b")}
+
+
+def test_cjk_term_matches_cjk_original_terms():
+    a = kp("kp-a", "甲", relations=["标签根元素"])
+    b = kp("kp-b", "乙", terms=["标签根元素"])
+    assert ("kp-a", "kp-b") in edge_pairs(graph([a, b]))
+
+
+def test_cjk_fuzzy_overlap_creates_edge():
+    """汉字逐字成 token 后, 前缀关系 (集合论 vs 集合论基础) 可连。"""
+    a = kp("kp-a", "集合论", relations=["集合论基础"])
+    b = kp("kp-b", "集合论基础")
+    assert ("kp-a", "kp-b") in edge_pairs(graph([a, b]))
+
+
+def test_cjk_short_term_is_reported_and_never_matched():
+    """两字术语过短 -> 不连边, 但必须出现在诊断里 (以前连诊断都没有)。"""
+    a = kp("kp-a", "甲", relations=["函数"])
+    result = graph([a])
+    assert result["edges"] == []
+    assert result["concepts"] == []
+    assert result["skipped_terms"] == [
+        {"term": "函数", "count": 1, "reason": "too_short"}
+    ]
+    assert result["unresolved_terms"] == []  # 过短不是 unresolved, 不许混进去
+    assert result["stats"]["skipped_term_count"] == 1
+
+
+def test_full_width_colon_and_slash_are_equivalent_to_ascii():
+    """中文模型爱写全角冒号/斜杠; 旧分割只认 ASCII ``:``/``/``。"""
+    # 同一个 kp-a, 只换标点写法 —— 结果必须逐项相同。
+    full = kp("kp-a", "Nucli", content="text\n关联：Model de caixa／Selectors CSS")
+    ascii_ = kp("kp-a", "Nucli", content="text\n关联: Model de caixa / Selectors CSS")
+    b = kp("kp-b", "Model de caixa")
+    c = kp("kp-c", "Selectors CSS")
+    assert edge_pairs(graph([full, b, c])) == edge_pairs(graph([ascii_, b, c]))
+    assert edge_pairs(graph([full, b, c])) == {("kp-a", "kp-b"), ("kp-a", "kp-c")}
+
+
+def test_four_character_term_is_indexed_and_matched():
+    """索引用 ``>`` 而解析用 ``<`` 的 off-by-one: 恰好 4 字符的术语永不命中。"""
+    a = kp("kp-a", "Document", relations=["HTML"])
+    b = kp("kp-b", "HTML")
+    assert ("kp-a", "kp-b") in edge_pairs(graph([a, b]))
+
+
+def test_three_character_term_still_refused():
+    """红线: 修 4 字符不等于放开短缩写 —— "CSS" 仍必须拒绝。"""
+    a = kp("kp-a", "Selectors", relations=["CSS"])
+    b = kp("kp-b", "CSS")
+    result = graph([a, b])
+    assert result["edges"] == []
+    assert result["stats"]["skipped_term_count"] >= 1
+
+
+def test_self_reference_is_reported_not_silently_dropped():
+    a = kp("kp-a", "函数定义", relations=["函数定义"])
+    result = graph([a])
+    assert result["edges"] == []  # 自环仍不画
+    assert result["skipped_terms"] == [
+        {"term": "函数定义", "count": 1, "reason": "self_reference"}
+    ]
+
+
+def test_many_relations_are_not_truncated():
+    """8 条关联 = 8 次关联实例、8 条边 (旧写入侧 ``[:5]`` 会丢 3 条)。"""
+    other = ["kp-%d" % i for i in range(1, 9)]
+    titles = ["Ter" + "me%d" % i for i in range(1, 9)]
+    a = kp("kp-a", "Punt central", relations=titles)
+    points = [a] + [kp(other[i], titles[i]) for i in range(8)]
+    result = graph(points)
+    assert result["stats"]["relation_instance_count"] == 8
+    assert result["stats"]["edge_count"] == 8
+
+
+def test_skipped_terms_never_become_concept_nodes():
+    """被跳过 (过短) 的术语即使被多个点引用, 也不能物化成概念节点。"""
+    a = kp("kp-a", "甲", relations=["函数"])
+    b = kp("kp-b", "乙", relations=["函数"])
+    result = graph([a, b])
+    assert result["concepts"] == []
+    assert result["edges"] == []
+    assert result["skipped_terms"] == [
+        {"term": "函数", "count": 2, "reason": "too_short"}
+    ]
+
+
+def test_skipped_terms_are_deterministic():
+    a = kp("kp-a", "甲", relations=["函数", "CSS"])
+    b = kp("kp-b", "乙", relations=["CSS"])
+    first = json.dumps(graph([a, b])["skipped_terms"], ensure_ascii=False, sort_keys=True)
+    second = json.dumps(graph([a, b])["skipped_terms"], ensure_ascii=False, sort_keys=True)
+    assert first == second
+
+
+# ---------------------------------------------------------------------------
+# 6. 权威关系 (已登记) 优先; 文本推断边降级为兼容回退
+#     (2026-10-13: 以前地图只有文本边, 权威的 knowledge_relations 无人消费)
+# ---------------------------------------------------------------------------
+
+def rel(source, target, relation_type="prerequisite"):
+    return {
+        "relation_id": "krel-" + source + target,
+        "course_id": "c",
+        "source_knowledge_point_id": source,
+        "target_knowledge_point_id": target,
+        "relation_type": relation_type,
+    }
+
+
+def test_registered_relation_is_directed_and_typed():
+    a = kp("kp-a", "Alfa", content="sense associacions")
+    b = kp("kp-b", "Beta", content="sense associacions")
+    result = graph([a, b], relations=[rel("kp-a", "kp-b", "prerequisite")])
+    assert len(result["edges"]) == 1
+    edge = result["edges"][0]
+    assert (edge["source"], edge["target"]) == ("kp-a", "kp-b")  # 方向不丢
+    assert edge["origin"] == "registered"
+    assert edge["directed"] is True
+    assert edge["relation_type"] == "prerequisite"
+    assert result["stats"]["registered_relation_count"] == 1
+    assert result["stats"]["content_hint_edge_count"] == 0
+    # 权威边同样进度数与孤立点统计。
+    assert result["stats"]["linked_knowledge_point_count"] == 2
+    assert result["stats"]["isolated_knowledge_point_count"] == 0
+
+
+def test_reverse_direction_is_a_distinct_registered_edge():
+    a = kp("kp-a", "Alfa", content="x")
+    b = kp("kp-b", "Beta", content="x")
+    result = graph([a, b], relations=[rel("kp-a", "kp-b"), rel("kp-b", "kp-a")])
+    assert [(e["source"], e["target"]) for e in result["edges"]] == [
+        ("kp-a", "kp-b"), ("kp-b", "kp-a"),
+    ]
+
+
+def test_registered_pair_suppresses_the_content_hint_edge():
+    """同一对子既有权威关系又有正文提示 -> 只画权威那条 (不重复报同一件事)。"""
+    a = kp("kp-a", "Alfa", relations=["Beta"])
+    b = kp("kp-b", "Beta")
+    without = graph([a, b])
+    assert without["stats"]["content_hint_edge_count"] == 1
+    with_relation = graph([a, b], relations=[rel("kp-a", "kp-b", "related")])
+    assert with_relation["stats"]["registered_relation_count"] == 1
+    assert with_relation["stats"]["content_hint_edge_count"] == 0
+    assert len(with_relation["edges"]) == 1
+    assert with_relation["edges"][0]["origin"] == "registered"
+
+
+def test_unknown_relation_endpoint_is_counted_not_drawn():
+    """端点不在本图 (跨课 / 已注销) -> 不画, 但计入 dropped, 不静默。"""
+    a = kp("kp-a", "Alfa", content="x")
+    result = graph([a], relations=[rel("kp-a", "kp-inexistent")])
+    assert result["edges"] == []
+    assert result["stats"]["dropped_relation_count"] == 1
+    assert result["stats"]["registered_relation_count"] == 0
+
+
+def test_self_relation_from_outside_is_counted_not_drawn():
+    a = kp("kp-a", "Alfa", content="x")
+    result = graph([a], relations=[rel("kp-a", "kp-a")])
+    assert result["edges"] == []
+    assert result["stats"]["dropped_relation_count"] == 1
+
+
+def test_relations_input_does_not_mutate_the_caller_data():
+    """只读投影: 输入列表与其中字典都不许被原地改。"""
+    import copy
+
+    a = kp("kp-a", "Alfa", content="x")
+    b = kp("kp-b", "Beta", content="x")
+    passed = [rel("kp-a", "kp-b")]
+    snapshot = copy.deepcopy(passed)
+    graph([a, b], relations=passed)
+    assert passed == snapshot
+
+
+def test_output_stays_deterministic_with_registered_relations():
+    points = [kp("kp-a", "Alfa", relations=["Beta"]), kp("kp-b", "Beta")]
+    relations = [rel("kp-a", "kp-b", "contrasts")]
+    first = json.dumps(graph(points, relations=relations), ensure_ascii=False, sort_keys=True)
+    second = json.dumps(graph(points, relations=relations), ensure_ascii=False, sort_keys=True)
+    assert first == second
+
+
+def test_content_hints_and_concepts_still_work_without_any_registered_relation():
+    """兼容路径的红线: 没有任何权威关系时, 旧行为一个字节不变。"""
+    term = "concepte compartit"
+    a = kp("kp-a", "Alfa", relations=[term, "Beta"])
+    b = kp("kp-b", "Beta", relations=[term])
+    result = graph([a, b], relations=[])
+    assert result["stats"]["registered_relation_count"] == 0
+    assert result["stats"]["content_hint_edge_count"] == 1
+    assert result["stats"]["concept_edge_count"] == 2
+    assert result["stats"]["linked_knowledge_point_count"] == 2

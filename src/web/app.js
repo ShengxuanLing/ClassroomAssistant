@@ -1470,6 +1470,10 @@ document.addEventListener('click', (event) => {
   else if (action === 'retry-material') actionRetryMaterial(courseId, materialId, target);
   else if (action === 'analyze-material') actionAnalyzeMaterial(courseId, materialId, target);
   else if (action === 'show-all-glossary') actionShowAllGlossary(target, courseId, materialId);
+  // 手动 AI (阶段 2/3): 导出任务包 / 导入响应 —— 零出站、零密钥。
+  else if (action === 'manual-ai-open') actionManualAiOpen(courseId, materialId, target);
+  else if (action === 'manual-ai-copy') actionManualAiCopy(courseId, materialId);
+  else if (action === 'manual-ai-import') actionManualAiImport(courseId, materialId, target);
   else if (action === 'delete-material') actionDeleteMaterial(courseId, materialId, target);
   else if (action === 'process-session') actionProcessSession(courseId, sessionId, target);
   else if (action === 'course-ai-overview') actionCourseAiOverview(target);

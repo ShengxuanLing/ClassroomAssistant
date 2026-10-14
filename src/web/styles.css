@@ -47,6 +47,40 @@
   --radius-sm: 6px;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.05);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* 知识图谱画布专用 token (2026-10-13)。
+   *
+   * 为什么给画布单开一组: 画布上的颜色是 **canvas 画上去的像素**, 不跟随
+   * CSS 继承 —— 以前它们硬编码在 knowledge-graph.js 里 (深色底 #101219 +
+   * 浅色字), 浅色模式就是"白页面里嵌一块黑板", 而卡片边框还是浅色的。
+   * 现在两种主题各给一份值, JS 侧只读取不自己决定 (kmGraphTheme)。
+   *
+   * 对比度: 文字/节点/选中态均按 AA 选取 —— 浅色底 (#f7f9fc) 上正文色
+   * #1c2024 (16.5:1)、未选/概念色 #5c6570 (5.7:1)、强调 #0f7a53 (4.9:1);
+   * 深色底 (#101219) 上分别是 14.9:1 / 7.0:1 / 11.2:1。 */
+  --graph-bg: #f7f9fc;
+  --graph-text: #1c2024;
+  --graph-muted: #5c6570;
+  --graph-node: #6b7482;
+  --graph-edge: rgba(28, 32, 36, .22);
+  --graph-edge-registered: rgba(44, 104, 223, .85);
+  --graph-edge-concept: rgba(92, 101, 112, .35);
+  --graph-edge-focus: rgba(44, 104, 223, .95);
+  --graph-edge-dim: rgba(28, 32, 36, .06);
+  --graph-select: #1c2024;
+  --graph-search: #0f7a53;
+  --graph-conflict: #b02a2a;
+  --graph-unverified: #96601a;
+  --graph-concept: #5c6570;
+  --graph-concept-fill: rgba(92, 101, 112, .12);
+  --graph-c1: #2c68df;
+  --graph-c2: #c05621;
+  --graph-c3: #167a4a;
+  --graph-c4: #7a3fb8;
+  --graph-c5: #8a6d1f;
+  --graph-panel-bg: rgba(255, 255, 255, .92);
+  --graph-tip-bg: #ffffff;
+  --graph-panel-border: var(--border);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -72,6 +106,30 @@
      * 上面的前景必须转深, 否则对比度只有 1.67:1 / 2.39:1。 */
     --on-accent: #16181c;
     --on-ok: #16181c;
+    /* 画布 token 的深色版 (见 :root 里的说明)。 */
+    --graph-bg: #101219;
+    --graph-text: #dfe4f2;
+    --graph-muted: #9aa3b8;
+    --graph-node: #8c95ac;
+    --graph-edge: rgba(255, 255, 255, .13);
+    --graph-edge-registered: rgba(122, 162, 255, .95);
+    --graph-edge-concept: rgba(140, 149, 172, .16);
+    --graph-edge-focus: rgba(122, 162, 255, .95);
+    --graph-edge-dim: rgba(255, 255, 255, .04);
+    --graph-select: #ffffff;
+    --graph-search: #7affc9;
+    --graph-conflict: #ff6b6b;
+    --graph-unverified: #f2c14b;
+    --graph-concept: #9aa3b8;
+    --graph-concept-fill: rgba(154, 163, 184, .14);
+    --graph-c1: #5b8cff;
+    --graph-c2: #ff9a5b;
+    --graph-c3: #3ecf8e;
+    --graph-c4: #c98bff;
+    --graph-c5: #f2c14b;
+    --graph-panel-bg: rgba(23, 26, 35, .92);
+    --graph-tip-bg: #0b0d13;
+    --graph-panel-border: var(--border);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
   }
 }
@@ -844,9 +902,14 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
  * 不引入新颜色; 卡片、pill、kv 都沿用全局形态。唯一的增量是"分簇卡 + 工具栏
  * + 统计条"这三个新容器。
  *
- * 不画 canvas/SVG 节点图 —— 真实数据 (0 relations / 0 topics / 0 memberships)
- * 支撑不起层级, 61 个节点挤一屏只会变成一排小矩形。真正的空间化是"按材料
- * 分簇", 即下面 .km-cluster 这个语义。
+ * 2026-10-12 / 2026-10-13: 这一节已经**不止**探索器一个视图了 ——
+ * ``.km-cluster`` 是探索视图的"按材料分簇", 而 ``.km-graph*`` 是图谱视图的
+ * canvas。旧注释里那句"不画 canvas/SVG 节点图, 真实数据 0 relations / 0 topics
+ * 支撑不起层级"已经不成立 (后端图谱投影一直有边, relations 也已是真实读投影),
+ * 留着只会让下一个读代码的人以为画布根本不该存在。
+ *
+ * 画布配色不进这一节, 而是走 ``--graph-*`` token (见文件头的 :root 与深色
+ * 媒体查询): 画上去的像素不会继承 CSS, 只能显式读。
  */
 
 /* 统计条: 一行只读计数, 数字用 tabular-nums 对齐, 不参与交互。 */
@@ -910,10 +973,11 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
 /* 图谱视图 (views/knowledge-graph.js): canvas + 浮动控件 + 提示。 */
 .km-graph {
   position: relative;
-  border: 1px solid var(--border, #2b3145);
+  border: 1px solid var(--graph-panel-border);
   border-radius: 10px;
   overflow: hidden;
-  background: #101219;
+  background: var(--graph-bg);
+  color: var(--graph-text);
 }
 .km-graph canvas {
   display: block;
@@ -923,6 +987,11 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
   touch-action: none;
 }
 .km-graph canvas:active { cursor: grabbing; }
+/* 画布是键盘可达的 (Tab 进去用方向键选点) —— 没有可见焦点环就等于没有键盘入口。 */
+.km-graph canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .km-graph-toolbar {
   position: absolute;
   top: 8px;
@@ -931,18 +1000,18 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
   gap: 6px;
   flex-wrap: wrap;
   padding: 6px 8px;
-  border: 1px solid var(--border, #2b3145);
+  border: 1px solid var(--graph-panel-border);
   border-radius: 9px;
-  background: rgba(23, 26, 35, .92);
+  background: var(--graph-panel-bg);
 }
 .km-graph-tip {
   position: absolute;
   z-index: 4;
   max-width: 320px;
   padding: 6px 9px;
-  border: 1px solid var(--border, #2b3145);
+  border: 1px solid var(--graph-panel-border);
   border-radius: 8px;
-  background: #0b0d13;
+  background: var(--graph-tip-bg);
   font-size: 12px;
   pointer-events: none;
 }
@@ -953,21 +1022,31 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
   left: 8px;
   max-width: min(720px, calc(100% - 16px));
   padding: 6px 9px;
-  border: 1px solid var(--border, #2b3145);
+  border: 1px solid var(--graph-panel-border);
   border-radius: 8px;
-  background: rgba(16, 18, 25, .88);
+  background: var(--graph-panel-bg);
   font-size: 11px;
-  color: var(--muted, #8c95ac);
+  color: var(--graph-muted);
 }
 .km-graph-detail .km-graph-title { font-size: 14px; }
+/* 已登记关系列表 (图谱详情卡): 与上面的"相连的节点"区分开 —— 这层是有向事实。 */
+.km-graph-relations li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.km-graph-relations .mono,
+.km-graph-relations a { overflow-wrap: anywhere; }
 .km-graph-unresolved ul.plain li {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   padding: 3px 0;
-  border-bottom: 1px dashed var(--border, #2b3145);
+  border-bottom: 1px dashed var(--border);
   font-size: 12px;
-  color: var(--muted, #8c95ac);
+  color: var(--text-muted);
 }
 
 @media (max-width: 560px) {
