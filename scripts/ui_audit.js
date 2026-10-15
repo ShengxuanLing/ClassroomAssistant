@@ -2089,12 +2089,15 @@ async function audit() {
     const navMatch = INDEX_HTML.match(/<nav class="topnav">([\s\S]*?)<\/nav>/);
     const nav = navMatch ? navMatch[1] : '';
     const disabled = nav.match(/class="[^"]*\bnav-disabled\b[^"]*"/g) || [];
-    check('top nav has zero disabled entries', disabled.length === 0,
+    check('top nav has exactly four disabled entries', disabled.length === 4,
       disabled.join(','));
     for (const href of ['#/review', '#/review-pack', '#/exercises', '#/mistakes']) {
-      check('top nav exposes enabled ' + href,
-        nav.includes('<a href="' + href + '"'), nav);
+      check('top nav does NOT expose enabled ' + href,
+        !nav.includes('<a href="' + href + '"'), nav);
     }
+    check('top nav keeps the four disabled spans with aria-disabled',
+      nav.split('class="nav-disabled"').length - 1 === 4 &&
+      nav.split('aria-disabled="true"').length - 1 === 4, nav);
   }
 
   // ---- 1) 每个页面在三种语言下都能渲染, 且 es/ca 界面文案里没有 CJK ----

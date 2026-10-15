@@ -1360,6 +1360,11 @@ function renderCourseSwitcher(courses) {
  *   #/mistakes          #/mistakes, #/mistakes/<c>/<k>
  *   #/review-pack       #/review-pack
  *
+ * 2026-10-15: 右侧四个页面（考前复习 / 复习包 / 练习 / 错题本）的**顶栏入口**
+ * 已改为无 href 的 <span class="nav-disabled">，不可点击、不发路由、不进 active。
+ * 但**路由分支与页面函数原样保留** —— 上面四行的归属关系不变，深链仍可达。
+ * 解禁时把四个 <span> 换回 <a href> 即可，本表无需改动。
+ *
  *   清空 ('')           #/courses/<c>, #/courses/<c>/sessions/<s>,
  *                       #/courses/<c>/knowledge/<k>, #/courses/<c>/knowledge-map
  *

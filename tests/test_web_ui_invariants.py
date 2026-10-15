@@ -375,23 +375,29 @@ class TestHashRoutesAreReachable:
                 unreachable.append(href)
         assert not unreachable, f"index.html 里的死链: {unreachable}"
 
-    def test_topnav_learning_entries_are_enabled_and_routable(self):
-        """四个学习入口必须是链接，不能悄悄退回 disabled span。"""
+    def test_topnav_learning_entries_are_disabled_and_routable(self):
+        """四个暂不开发的学习入口必须是禁用 span，不能是可点击的 <a href>。
+
+        2026-10-15 用户决定暂不开发考前复习 / 复习包 / 练习 / 错题本这四项内容，
+        顶栏入口退回为无 href 的 <span class="nav-disabled">。路由分支与页面函数
+        **原样保留**（深链仍可达），所以本条只断言顶栏形状，不断言可达性。
+        解禁时把四个 <span> 换回 <a href>，并把本条改回 enabled 版本即可。
+        """
         html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
         match = re.search(
             r'<nav class="topnav">(?P<body>.*?)</nav>', html, re.DOTALL
         )
         assert match is not None, "index.html 缺少 .topnav"
         nav = match.group("body")
-        assert "nav-disabled" not in nav
+        assert "nav-disabled" in nav
         expected = {"#/review", "#/review-pack", "#/exercises", "#/mistakes"}
         actual = set(re.findall(r'<a\s+href="(#/[^"]+)"', nav))
-        assert expected <= actual, f"缺少可用学习入口: {sorted(expected - actual)}"
-
-        branches = _route_branches()
-        for href in sorted(expected):
-            parts = [part for part in href.lstrip("#").split("/") if part]
-            assert _matches_any(branches, parts), f"顶栏死链: {href}"
+        assert not (expected & actual), f"顶栏里仍有可用学习入口: {sorted(expected & actual)}"
+        # 四个禁用 span 必须各出现一次，且带 aria-disabled
+        for key in ("nav.reviewMode", "nav.reviewPack", "nav.exercises", "nav.mistakes"):
+            assert f'data-i18n="{key}"' in nav, f"顶栏缺少 {key}"
+        assert nav.count('class="nav-disabled"') == 4, nav.count('class="nav-disabled"')
+        assert nav.count('aria-disabled="true"') == 4
 
     def test_branches_that_read_later_segments_pin_the_length(self):
         """读了 ``parts[1]`` 或更后面, 就必须把 ``parts.length`` 钉死。

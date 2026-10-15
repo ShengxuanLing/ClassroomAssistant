@@ -18,13 +18,14 @@
         <small>Classroom Assistant</small>
       </span>
     </a>
-    <!-- 四个学习入口全部是真实 <a href>；route() 分支与页面函数均保留。
-         双重门禁钉住"顶栏零禁用"：
-         tests/test_web_ui_invariants.py::test_topnav_learning_entries_are_enabled_and_routable
-         证明每个 href 都有可达分支且 nav 内零 nav-disabled；
-         scripts/ui_audit.js 的 "top nav has zero disabled entries" 同义。
-         2026-09-25: 零禁用已成不变量，styles.css 里的 .topnav .nav-disabled
-         规则随之删除（顶栏内已无禁用元素，改回 <span> 时需重新加样式）。 -->
+    <!-- 右侧四个页面（考前复习 / 复习包 / 练习 / 错题本）当前禁用：
+         顶栏入口是无 href 的 <span class="nav-disabled">，不可点击、不发路由、
+         不进 active（markActiveNav() 只扫 .topnav a）。
+         路由分支与页面函数**原样保留** —— 深链（#/review、#/review-pack、
+         #/exercises、#/mistakes/<c>/<kp>）仍可达，方便后续解禁时只改 HTML。
+         2026-10-15: 用户决定暂不开发这四项内容，入口禁用。
+         解禁时：把下面四个 <span> 换回 <a href> 即可，同时恢复
+         styles.css 的 .topnav .nav-disabled 规则与两处守卫的期望值。 -->
     <nav class="topnav">
       <a href="#/" data-i18n="nav.overview">概览</a>
       <a href="#/today" data-i18n="nav.today">今日</a>
@@ -33,10 +34,10 @@
       <a href="#/materials" data-i18n="nav.materials">材料</a>
       <a href="#/knowledge" data-i18n="nav.knowledge">知识地图</a>
       <span class="topnav-sep" aria-hidden="true"></span>
-      <a href="#/review" data-i18n="nav.reviewMode">考前复习</a>
-      <a href="#/review-pack" data-i18n="nav.reviewPack">复习包</a>
-      <a href="#/exercises" data-i18n="nav.exercises">练习</a>
-      <a href="#/mistakes" data-i18n="nav.mistakes">错题本</a>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewMode">考前复习</span>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewPack">复习包</span>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.exercises">练习</span>
+      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.mistakes">错题本</span>
     </nav>
     <div class="topbar-meta">
       <!-- 两个 <select> 都**不再**写 aria-label。

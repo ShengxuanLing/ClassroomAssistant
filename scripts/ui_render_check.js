@@ -1007,13 +1007,15 @@ function mistakeDetail(overrides) {
  * 顺序必须与 index.html 的 `<nav class="topnav">` **逐项相同** —— 2026-09-21
  * 按用途分了两组 (P3-3), 概览从第三位提到第一位, 中间多了一个纯装饰的
  * `<span class="topnav-sep">` (它不匹配 `.topnav a`, 所以不进这个数组)。
- * 四个学习入口 (#/review, #/review-pack, #/exercises, #/mistakes) 已恢复，
- * 因此也必须进入桩数组；否则 active 高亮测试会静默漏掉真实顶栏项。
+ * 2026-10-15: 右侧四个页面（考前复习 / 复习包 / 练习 / 错题本）暂不开发，
+ * 顶栏入口退回为无 href 的 <span class="nav-disabled">。它们不匹配
+ * ``querySelectorAll('.topnav a')``，所以**不进**这个桩数组 —— 否则
+ * markActiveNav() 会给禁用项也加上 .active，activeNav() 就会报出假的高亮。
+ * 解禁时把四个 <span> 换回 <a href>，并把下面四项加回本数组即可。
  */
 const TOPNAV = [
   '#/', '#/today', '#/reviews',
   '#/courses', '#/materials', '#/knowledge',
-  '#/review', '#/review-pack', '#/exercises', '#/mistakes',
 ];
 
 function makeNavLink(href) {

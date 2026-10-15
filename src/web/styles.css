@@ -397,6 +397,17 @@ html {
 }
 .topnav a.active:hover { background: var(--accent-soft); color: var(--accent-ink); }
 
+/* 当前禁用的顶栏入口 (2026-10-15 起)。用户决定暂不开发考前复习 / 复习包 / 练习 / 错题本
+ * 这四项内容, 顶栏入口退回为无 href 的 <span class="nav-disabled">: 不可点击、
+ * 不发路由、不进 active (markActiveNav() 只扫 .topnav a)。
+ * 与 2026-09-22 那版同一条样式, 只是这次是**刻意**恢复而非回归:
+ * 解禁时把四个 <span> 换回 <a href> 即可, 这条规则可以跟着删。 */
+.topnav .nav-disabled {
+  padding: 5px 10px; border-radius: var(--radius-sm);
+  font-size: var(--fs-md); color: var(--text-muted); opacity: 0.65;
+  cursor: default; white-space: nowrap;
+}
+
 /* 顶栏两组之间的分隔符 (P3-3)。刻意不是 `border-left` —— 它要参与 flex 的
    gap 计算, 而且折行后仍应贴在它右边那一组的前面。aria-hidden 见 index.html。 */
 .topnav-sep {
