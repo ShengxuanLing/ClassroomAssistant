@@ -36,6 +36,8 @@ from src.application.config import (
     ENV_VARS,
     LOG_LEVELS,
     OCR_KINDS,
+    RUNTIME_ENV_VARS,
+    UI_SHELL_ENV_VAR,
     AppConfig,
     ConfigSource,
     default_values,
@@ -45,6 +47,7 @@ from src.application.config import (
     normalise_overrides,
     read_config_file,
     read_environment,
+    resolve_ui_shell,
 )
 from src.application.errors import ConfigurationError
 
@@ -551,6 +554,39 @@ def test_read_environment_is_deterministic():
 
 def test_empty_environment_yields_nothing():
     assert read_environment({}) == ({}, ())
+
+
+def test_runtime_only_env_vars_are_known_but_never_become_config():
+    """``CLASSROOM_UI_SHELL`` 由运行时直接读 —— 既不报"未知变量", 也不进配置。"""
+    assert UI_SHELL_ENV_VAR in RUNTIME_ENV_VARS
+    assert UI_SHELL_ENV_VAR not in ENV_VARS
+    values, unknown = read_environment({UI_SHELL_ENV_VAR: "browser"})
+    assert values == {}
+    assert unknown == ()
+
+
+# ======================================================================
+# 界面外壳模式: CLASSROOM_UI_SHELL (TASK-111)
+# ======================================================================
+
+
+class TestResolveUiShell:
+    """外壳模式是纯客户端偏好: 非法值必须静默回退 ``app``, 而不是让服务起不来。"""
+
+    def test_defaults_to_app_when_unset(self) -> None:
+        assert resolve_ui_shell({}) == "app"
+
+    def test_accepts_browser(self) -> None:
+        assert resolve_ui_shell({UI_SHELL_ENV_VAR: "browser"}) == "browser"
+
+    def test_ignores_case_and_surrounding_whitespace(self) -> None:
+        assert resolve_ui_shell({UI_SHELL_ENV_VAR: "  BROWSER "}) == "browser"
+
+    def test_falls_back_to_app_on_an_unknown_value(self) -> None:
+        assert resolve_ui_shell({UI_SHELL_ENV_VAR: "nonsense"}) == "app"
+
+    def test_falls_back_to_app_on_an_empty_value(self) -> None:
+        assert resolve_ui_shell({UI_SHELL_ENV_VAR: ""}) == "app"
 
 
 # ======================================================================

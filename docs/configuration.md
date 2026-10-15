@@ -65,6 +65,19 @@ python -m src.application.cli --print-config --json
 | `debug` | `CLASSROOM_DEBUG` | `false` | 是否在错误响应里暴露 debug 细节 |
 | `allow_remote` | `CLASSROOM_ALLOW_REMOTE` | `false` | 允许绑定非回环地址 |
 
+### 界面外壳：`CLASSROOM_UI_SHELL`（不是配置项）
+
+| 环境变量 | 取值 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `CLASSROOM_UI_SHELL` | `app` / `browser` | `app` | `app`：用 Chromium 系浏览器的 `--app` 模式打开**无地址栏、无标签栏的独立窗口**；`browser`：交给系统默认浏览器开标签页 |
+
+它是**运行时开关，不是配置项**：只从进程环境变量读，不进配置文件、不出现在
+`--print-config` 里，也不参与上面那套「命令行 > 环境变量 > 配置文件 > 默认值」的优先级
+（它登记在 `RUNTIME_ENV_VARS` 里，所以不会被当成拼错的变量名）。
+
+取值未设或非法一律按 `app` 处理 —— 写错不会让服务起不来。`app` 模式找不到可用的
+Chromium 系浏览器（Edge / Chrome）时，自动回退系统默认浏览器。
+
 ### 未识别的环境变量
 
 出现未知的 `CLASSROOM_*` **不会报错**，但会被记入诊断信息。这样拼错

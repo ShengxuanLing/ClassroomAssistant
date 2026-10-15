@@ -32,10 +32,11 @@
 
 ### Windows 安装包（普通用户，推荐）
 
-不需要 Python。下载 `ClassroomAssistant-1.1.0-Setup.exe`（随 Release 发布），双击安装：
+不需要 Python。下载 `ClassroomAssistant-1.1.1-Setup.exe`（随 Release 发布），双击安装：
 
 - 装到当前用户目录 `%LOCALAPPDATA%\Programs\ClassroomAssistant`，**不弹 UAC、不需要管理员**；
-- 装完在开始菜单出现「课堂助手」，双击启动：托盘图标常驻、浏览器自动打开界面；
+- 装完在开始菜单出现「课堂助手」，双击启动：托盘图标常驻，界面以**独立窗口**打开
+  （Edge 的 `--app` 模式，没有地址栏和标签栏；找不到 Edge / Chrome 时回退默认浏览器）；
 - 会弹 SmartScreen 警告（安装包未做代码签名，属预期）：点「更多信息 → 仍要运行」；
 - 数据目录固定为 `%LOCALAPPDATA%\ClassroomAssistant\classroom-data`，**卸载不会删数据**。
 
@@ -105,6 +106,9 @@ JSON 模式等全部可调项见 [docs/configuration.md](docs/configuration.md) 
 **安装版**：开始菜单 →「课堂助手」。托盘图标常驻（双击托盘图标重新打开界面；
 右键菜单：打开界面 / 打开数据目录 / 退出）。双击第二次不会起第二个实例，而是直接
 把已有界面打开。退出走托盘菜单的「退出」—— 服务与端口标记会一并清理。
+
+界面默认用 Edge 的 `--app` 模式开**独立窗口**（无地址栏、无标签栏）；想改回浏览器
+标签页，设 `CLASSROOM_UI_SHELL=browser`（见 [docs/configuration.md](docs/configuration.md) §3）。
 
 **源码版**：Windows 下双击即可：
 

@@ -47,9 +47,9 @@ from src.application.cli import (
     build_config,
     parse_cli,
 )
-from src.application.config import AppConfig, is_frozen
+from src.application.config import AppConfig, is_frozen, resolve_ui_shell
 from src.application.errors import ApplicationError, PortInUseError
-from src.application.launcher import Launcher, LauncherError, is_our_service
+from src.application.launcher import Launcher, LauncherError, is_our_service, open_ui_window
 from src.application.logging_setup import get_logger, log_event
 from src.application.workspace import APPLICATION_NAME, APPLICATION_VERSION
 
@@ -94,12 +94,10 @@ def default_icon_path() -> str:
 
 
 def open_in_browser(url: str) -> None:
-    """用系统默认浏览器打开 URL; 失败只记日志, 绝不杀死托盘。"""
-    import webbrowser
-
+    """打开界面 (外壳模式见 ``CLASSROOM_UI_SHELL``); 失败只记日志, 绝不杀死托盘。"""
     try:
-        webbrowser.open(url)
-    except Exception as exc:  # noqa: BLE001 - 打不开浏览器不该让服务停掉
+        open_ui_window(url, shell=resolve_ui_shell())
+    except Exception as exc:  # noqa: BLE001 - 打不开界面不该让服务停掉
         log_event(
             get_logger("classroom.tray"),
             logging.WARNING,

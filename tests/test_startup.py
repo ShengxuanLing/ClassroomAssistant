@@ -635,5 +635,108 @@ def test_open_browser_swallows_failure(monkeypatch) -> None:
     def boom(url):  # noqa: ANN001
         raise RuntimeError("no display")
 
+    monkeypatch.setattr(launcher_mod, "find_app_shell_browser", lambda: None)
     monkeypatch.setattr(webbrowser, "open", boom)
     launcher_mod._open_browser("http://127.0.0.1:1/")
+
+
+# ----------------------------------------------------------------------
+# 界面外壳 (TASK-111): CLASSROOM_UI_SHELL=app 时用 --app 开独立窗口
+# ----------------------------------------------------------------------
+
+
+class TestUiShell:
+    """``app`` 模式必须真的用 ``--app`` 开窗口; 任何一步失败都要能回退浏览器。"""
+
+    URL = "http://127.0.0.1:8765/"
+
+    def test_app_mode_launches_the_shell_browser(self, monkeypatch) -> None:
+        import webbrowser
+
+        from src.application import launcher as launcher_mod
+
+        launched: list[list[str]] = []
+        monkeypatch.setattr(
+            launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
+        )
+        monkeypatch.setattr(launcher_mod.subprocess, "Popen", launched.append)
+
+        def forbidden(url):  # noqa: ANN001
+            raise AssertionError("app 模式不该回退到默认浏览器")
+
+        monkeypatch.setattr(webbrowser, "open", forbidden)
+
+        launcher_mod.open_ui_window(self.URL, shell="app")
+
+        assert len(launched) == 1
+        argv = launched[0]
+        assert argv[0] == r"C:\fake\msedge.exe"
+        assert "--app=" + self.URL in argv
+        assert any(part.startswith("--window-size=") for part in argv)
+
+    def test_app_mode_falls_back_when_no_shell_browser(self, monkeypatch) -> None:
+        import webbrowser
+
+        from src.application import launcher as launcher_mod
+
+        opened: list[str] = []
+        monkeypatch.setattr(launcher_mod, "find_app_shell_browser", lambda: None)
+        monkeypatch.setattr(webbrowser, "open", opened.append)
+
+        launcher_mod.open_ui_window(self.URL, shell="app")
+
+        assert opened == [self.URL]
+
+    def test_app_mode_falls_back_when_launch_fails(self, monkeypatch) -> None:
+        import webbrowser
+
+        from src.application import launcher as launcher_mod
+
+        opened: list[str] = []
+        monkeypatch.setattr(
+            launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
+        )
+
+        def boom(argv):  # noqa: ANN001
+            raise OSError("cannot start shell")
+
+        monkeypatch.setattr(launcher_mod.subprocess, "Popen", boom)
+        monkeypatch.setattr(webbrowser, "open", opened.append)
+
+        launcher_mod.open_ui_window(self.URL, shell="app")
+
+        assert opened == [self.URL]
+
+    def test_browser_mode_never_looks_for_the_shell_browser(self, monkeypatch) -> None:
+        import webbrowser
+
+        from src.application import launcher as launcher_mod
+
+        opened: list[str] = []
+
+        def forbidden():  # noqa: ANN001
+            raise AssertionError("browser 模式不该去找 --app 浏览器")
+
+        monkeypatch.setattr(launcher_mod, "find_app_shell_browser", forbidden)
+        monkeypatch.setattr(webbrowser, "open", opened.append)
+
+        launcher_mod.open_ui_window(self.URL, shell="browser")
+
+        assert opened == [self.URL]
+
+    def test_tray_uses_the_same_shell_logic(self, monkeypatch) -> None:
+        """托盘「打开界面」与 CLI ``start`` 必须走同一条外壳逻辑。"""
+        from src.application import launcher as launcher_mod
+        from src.application import tray as tray_mod
+
+        launched: list[list[str]] = []
+        monkeypatch.setattr(
+            launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
+        )
+        monkeypatch.setattr(launcher_mod.subprocess, "Popen", launched.append)
+        monkeypatch.setattr(tray_mod, "resolve_ui_shell", lambda env=None: "app")
+
+        tray_mod.open_in_browser(self.URL)
+
+        assert len(launched) == 1
+        assert "--app=" + self.URL in launched[0]

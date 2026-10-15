@@ -16,7 +16,7 @@
 #ifndef AppVersion
   ; 回退值必须与 src/application/workspace.py 的 APPLICATION_VERSION 一致
   ; (tests/test_packaging.py 钉住, 漂移会红)。
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.1.1"
 #endif
 
 #define AppName "课堂助手"

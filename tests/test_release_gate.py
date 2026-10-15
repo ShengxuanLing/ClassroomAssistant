@@ -526,7 +526,7 @@ class TestFreshInstall:
 
         _status, payload = _get(server, "/api/health")
         assert payload["data"]["version"] == APPLICATION_VERSION
-        assert APPLICATION_VERSION == "1.1.0", APPLICATION_VERSION
+        assert APPLICATION_VERSION == "1.1.1", APPLICATION_VERSION
 
 
 # =====================================================================
@@ -535,14 +535,14 @@ class TestFreshInstall:
 
 
 class TestVersionRelease:
-    """1.1.0 必须在**每一处**都是同一个值。
+    """1.1.1 必须在**每一处**都是同一个值。
 
     ``test_production_gate.py::TestVersionAndDocumentation`` 钉的是
     "与 EXPECTED_VERSION 一致"；这里钉的是"这个值就是 1.0.0"，并且列出
     全部真源，防止改了一处忘了另一处。
     """
 
-    EXPECTED = "1.1.0"
+    EXPECTED = "1.1.1"
 
     def test_every_version_source_agrees(self) -> None:
         import src

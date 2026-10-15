@@ -37,7 +37,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from src.application.config import AppConfig
+from src.application.config import AppConfig, UI_SHELL_APP, resolve_ui_shell
 from src.application.errors import ApplicationError, PortInUseError
 from src.application.workspace import APPLICATION_NAME, APPLICATION_VERSION
 
@@ -52,6 +52,8 @@ __all__ = [
     "is_port_free",
     "is_our_service",
     "validate_environment",
+    "find_app_shell_browser",
+    "open_ui_window",
     "main",
 ]
 
@@ -587,18 +589,72 @@ class Launcher:
 # ----------------------------------------------------------------------
 
 
-def _open_browser(url: str) -> None:
-    """用系统默认浏览器打开 URL。
+#: 支持 ``--app`` 模式的 Chromium 系浏览器候选路径 (Windows)。
+#: Edge 是系统自带, 命中率最高; Chrome 作为补充。
+_APP_SHELL_CANDIDATES: tuple[str, ...] = (
+    r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+    r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+    r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe",
+    r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+    r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+    r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
+)
 
-    打不开浏览器 (无图形环境 / 没有默认浏览器) 不该让服务起不来 —— 此时服务
-    已经绑定成功, 用户完全可以手动访问提示的地址。
+#: ``--app`` 窗口的初始尺寸 —— 没有地址栏, 浏览器默认尺寸会显得偏窄。
+_APP_SHELL_WINDOW_SIZE = "1400,900"
+
+
+def find_app_shell_browser() -> Optional[str]:
+    """找一个支持 ``--app`` 模式的浏览器可执行文件; 找不到返回 ``None``。
+
+    只在 Windows 上找 (那里 Edge 是系统自带, 命中率最高); 其它平台返回
+    ``None``, 调用方会回退到系统默认浏览器。
     """
+    if os.name != "nt":
+        return None
+    for pattern in _APP_SHELL_CANDIDATES:
+        candidate = os.path.expandvars(pattern)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def open_ui_window(url: str, shell: str = UI_SHELL_APP) -> None:
+    """把界面打开给用户 —— 尽力而为, 绝不抛异常。
+
+    ``shell="app"``: 优先用 Chromium 系浏览器的 ``--app`` 模式。开出来的窗口
+    没有地址栏和标签栏, 在任务栏里是独立条目, 观感与桌面应用一致; 找不到浏览器
+    或启动失败时**回退系统默认浏览器**。``shell="browser"``: 直接走默认浏览器。
+    """
+    if shell == UI_SHELL_APP:
+        executable = find_app_shell_browser()
+        if executable is not None:
+            try:
+                subprocess.Popen(
+                    [
+                        executable,
+                        "--app=" + url,
+                        "--window-size=" + _APP_SHELL_WINDOW_SIZE,
+                    ]
+                )
+                return
+            except OSError:
+                pass  # 启动外壳失败不该让界面打不开 —— 下面还有浏览器兜底
     import webbrowser
 
     try:
         webbrowser.open(url)
     except Exception:  # noqa: BLE001 - 尽力而为
         pass
+
+
+def _open_browser(url: str) -> None:
+    """``launcher start`` 打开界面 (外壳模式见 ``CLASSROOM_UI_SHELL``)。
+
+    打不开界面 (无图形环境 / 没有可用浏览器) 不该让服务起不来 —— 此时服务
+    已经绑定成功, 用户完全可以手动访问提示的地址。
+    """
+    open_ui_window(url, shell=resolve_ui_shell())
 
 
 def _emit_environment(report: EnvironmentReport) -> None:

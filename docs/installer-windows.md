@@ -1,6 +1,6 @@
 # Windows 安装包使用说明（TASK-110）
 
-适用版本：**1.1.0**（产物：`ClassroomAssistant-1.1.0-Setup.exe`，105.3 MB，
+适用版本：**1.1.1**（产物：`ClassroomAssistant-1.1.1-Setup.exe`，105.3 MB，
 Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物 370.7 MB）。
 
 ## 下载与安装
@@ -19,7 +19,10 @@ Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物 370.7 MB）�
 
 ## 启动与托盘
 
-开始菜单启动后：**托盘图标常驻 + 浏览器自动打开 `http://127.0.0.1:8765`**。
+开始菜单启动后：**托盘图标常驻 + 界面自动打开**。默认用 Edge 的 `--app` 模式开一个
+**无地址栏、无标签栏的独立窗口**（任务栏里是独立条目，观感与桌面应用一致）；找不到
+Edge / Chrome 时回退系统默认浏览器。想强制用浏览器标签页，设
+`CLASSROOM_UI_SHELL=browser`（见 [configuration.md](configuration.md) §3）。
 
 托盘右键菜单：
 

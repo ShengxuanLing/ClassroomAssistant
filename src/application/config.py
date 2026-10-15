@@ -92,6 +92,13 @@ __all__ = [
     "ASR_MODES",
     "OCR_KINDS",
     "LOOPBACK_HOSTS",
+    "UI_SHELL_ENV_VAR",
+    "UI_SHELL_APP",
+    "UI_SHELL_BROWSER",
+    "UI_SHELLS",
+    "DEFAULT_UI_SHELL",
+    "RUNTIME_ENV_VARS",
+    "resolve_ui_shell",
     "CONFIGURABLE_KEYS",
     # 密钥 / 隐私
     "SECRET_PLACEHOLDER",
@@ -172,6 +179,20 @@ OCR_KINDS: tuple[str, ...] = ("auto", "local", "mock")
 
 #: 允许默认监听的地址。其它地址必须显式 ``allow_remote=True``。
 LOOPBACK_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+
+#: 界面外壳模式 (TASK-111)。``app`` = 用 Chromium 系浏览器的 ``--app`` 模式开一个
+#: 无地址栏 / 无标签栏的独立窗口; ``browser`` = 交给系统默认浏览器开标签页。
+UI_SHELL_ENV_VAR = "CLASSROOM_UI_SHELL"
+UI_SHELL_APP = "app"
+UI_SHELL_BROWSER = "browser"
+UI_SHELLS: tuple[str, ...] = (UI_SHELL_APP, UI_SHELL_BROWSER)
+DEFAULT_UI_SHELL = UI_SHELL_APP
+
+#: 已知、但**不进入 AppConfig** 的 ``CLASSROOM_*`` 环境变量。
+#: 它们描述"界面怎么呈现"这类客户端偏好, 与数据目录 / 端口 / 模型无关, 由运行时
+#: 直接读取 (见 :func:`resolve_ui_shell`)。登记在这里是为了让 ``read_environment``
+#: 不把它们误报进 ``unknown_env_vars`` —— 那个列表专门用来抓拼错的变量名。
+RUNTIME_ENV_VARS: frozenset[str] = frozenset({UI_SHELL_ENV_VAR})
 
 #: 环境变量 -> 配置键 (唯一映射表)。
 ENV_VARS: dict[str, str] = {
@@ -808,6 +829,9 @@ def read_environment(
             continue
         if name == CONFIG_FILE_ENV_VAR:
             continue
+        if name in RUNTIME_ENV_VARS:
+            # 已知, 但由运行时直接读 —— 不进配置层 (见 resolve_ui_shell)。
+            continue
         key = ENV_VARS.get(name)
         if key is None:
             unknown.append(name)
@@ -817,6 +841,17 @@ def read_environment(
             continue
         values[key] = _coerce(key, raw, f"environment variable {name}")
     return values, tuple(unknown)
+
+
+def resolve_ui_shell(env: Optional[Mapping[str, str]] = None) -> str:
+    """解析界面外壳模式 (``CLASSROOM_UI_SHELL``)。
+
+    未设或取值非法一律回退 ``"app"`` —— 这是纯客户端偏好, 写错不该让服务起不来
+    (界面照样打得开, 只是回到浏览器标签页)。
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+    value = (source.get(UI_SHELL_ENV_VAR) or "").strip().lower()
+    return value if value in UI_SHELLS else DEFAULT_UI_SHELL
 
 
 def normalise_overrides(
