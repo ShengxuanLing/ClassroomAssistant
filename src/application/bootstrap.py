@@ -55,8 +55,19 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from src.application.config import AppConfig, load_local_environment
+from src.application.config import (
+    AppConfig,
+    ConfigSource,
+    legacy_data_dir,
+    load_local_environment,
+)
 from src.application.data_dirs import DataLayout, ensure_data_layout
+from src.application.data_migration import (
+    STATUS_COPIED,
+    STATUS_FAILED,
+    STATUS_MIGRATED,
+    migrate_legacy_data_dir,
+)
 from src.application.errors import ConfigurationError
 from src.application.logging_setup import (
     attach_file_logging,
@@ -82,7 +93,7 @@ __all__ = [
 ]
 
 #: 本项目自己的 logger 名 (``component`` 字段)。
-APPLICATION_LOGGER_NAME = "classroom"
+APPLICATION_LOGGER_NAME = "loomind"
 
 #: 真实 ASR 运行时对应的发行包名。
 WHISPER_RUNTIME_PACKAGE = "faster_whisper"
@@ -185,7 +196,7 @@ def _build_summarizer(
     """按显式 ``llm_mode`` 装配 LLM 总结提供方, 返回 ``(provider, 模式)``。
 
     - ``mock``: 永远 Mock (默认; 默认回归全绿、零出站)。
-    - ``real``: 缺 ``CLASSROOM_LLM_API_KEY`` 即 ``ConfigurationError``,
+    - ``real``: 缺 ``LOOMIND_LLM_API_KEY`` 即 ``ConfigurationError``,
       **禁静默降级** (要求真货却拿到 Mock 是最不该被容忍的"看起来在工作")。
     - ``auto``: 有 key 用 real, 没有 则回落 Mock 但**绝不静默**
       (记一条 runtime_note, health 的 ``llm.mode`` 标 ``mock``)。
@@ -198,13 +209,13 @@ def _build_summarizer(
     has_key = bool(config.llm_api_key)
     if llm_mode == "real" and not has_key:
         raise ConfigurationError(
-            "llm_mode='real' requires CLASSROOM_LLM_API_KEY to be set in the "
+            "llm_mode='real' requires LOOMIND_LLM_API_KEY to be set in the "
             "process environment; refusing to silently fall back to mock",
             detail={"llm_mode": "real"},
         )
     if not has_key:
         notes.append(
-            "llm_mode='auto' fell back to Mock summarizer: CLASSROOM_LLM_API_KEY "
+            "llm_mode='auto' fell back to Mock summarizer: LOOMIND_LLM_API_KEY "
             "is not set, so summaries are NOT from a real LLM"
         )
         return MockSummarizer(), "mock"
@@ -217,24 +228,24 @@ def _build_summarizer(
 
 
 def _build_ai_provider(notes: list[str]) -> tuple[Any, str, Any]:
-    """按 ``CLASSROOM_AI_*`` 环境装配 AI 语义理解提供方 (TASK-77 §16)。
+    """按 ``LOOMIND_AI_*`` 环境装配 AI 语义理解提供方 (TASK-77 §16)。
 
     返回 ``(provider, ai_mode)``, 其中 ``ai_mode`` 为 ``disabled`` /
     ``fake`` / ``real`` / ``manual`` 之一 (进 ``/api/health`` 的可观测状态,
     绝不静默):
 
-    - ``CLASSROOM_AI_ENABLED`` 未开 -> ``(None, "disabled")``: 旧确定性
+    - ``LOOMIND_AI_ENABLED`` 未开 -> ``(None, "disabled")``: 旧确定性
       链路, ``process_material`` 不触发任何 AI 调用;
-    - 已开且有真实凭证 (``CLASSROOM_AI_API_KEY`` + https base URL, 未配时
-      回落 ``CLASSROOM_LLM_*``) -> OpenAI-compatible provider, ``"real"``;
+    - 已开且有真实凭证 (``LOOMIND_AI_API_KEY`` + https base URL, 未配时
+      回落 ``LOOMIND_LLM_*``) -> OpenAI-compatible provider, ``"real"``;
     - 已开但无凭证 -> 确定性 ``FakeAIProvider``, ``"fake"`` (记一条
       runtime_note, 与 ASR/OCR 的"诚实回落"同口径);
-    - ``CLASSROOM_AI_MODE=manual`` -> 空的 ``ReplayAIProvider``, ``"manual"``:
+    - ``LOOMIND_AI_MODE=manual`` -> 空的 ``ReplayAIProvider``, ``"manual"``:
       只有用户粘贴的响应会被处理, 进程内零出站, 且不自动分析材料。
 
     Key 只读进程环境 (``src/application/ai/config.get_api_key``), 绝不进
     日志 / 描述 / 异常 (``notes`` 里只出现"有/无", 无明文)。
-    图片字节默认不出境 (``CLASSROOM_AI_ALLOW_IMAGE_BYTES`` 未开时 provider
+    图片字节默认不出境 (``LOOMIND_AI_ALLOW_IMAGE_BYTES`` 未开时 provider
     的 vision 门关闭, 图片走 OCR 文字)。
     """
     from src.application.ai.config import get_api_key, load_ai_config
@@ -251,7 +262,7 @@ def _build_ai_provider(notes: list[str]) -> tuple[Any, str, Any]:
         from src.application.ai.manual import ReplayAIProvider
 
         notes.append(
-            "CLASSROOM_AI_MODE=manual: knowledge extraction uses the manual "
+            "LOOMIND_AI_MODE=manual: knowledge extraction uses the manual "
             "export/import panel; no AI request is sent from this process"
         )
         return ReplayAIProvider({}), "manual", config
@@ -271,11 +282,42 @@ def _build_ai_provider(notes: list[str]) -> tuple[Any, str, Any]:
         )
         return provider, "real", config
     notes.append(
-        "CLASSROOM_AI_ENABLED=true but no API key is configured: "
+        "LOOMIND_AI_ENABLED=true but no API key is configured: "
         "using the deterministic FakeAIProvider, so knowledge points are "
         "NOT from a real model"
     )
     return FakeAIProvider(), "fake", config
+
+
+def _migrate_legacy_brand_data_dir(config: AppConfig) -> Optional[str]:
+    """品牌改名 (Loomind -> Loomind) 的一次性数据迁移。
+
+    返回一句可放进 runtime ``notes`` 的说明, 或 ``None`` (无需迁移)。
+
+    两道闸门, 都是"少一次便利"换"不出事故":
+
+    1. **只对默认路径生效。** 用户显式给的 ``--data-dir`` / ``LOOMIND_DATA_DIR``
+       是他自己选的位置, 不该由我们决定那里该放什么。
+    2. **测试环境整体跳过。** 测试的 cwd 是仓库根, 而 ``legacy_data_dir()`` 正好
+       指向仓库根下的真实 ``loomind-data`` —— 少了这道闸门, 某条走默认路径的
+       测试就会把用户的真实数据搬走。
+
+    迁移失败**不打断启动** (见 ``data_migration`` 模块说明), 只回报一句 note。
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
+    if config.sources.get("data_dir") != ConfigSource.DEFAULT.value:
+        return None
+    result = migrate_legacy_data_dir(
+        config.data_dir,
+        legacy=legacy_data_dir(),
+        logger=logging.getLogger(APPLICATION_LOGGER_NAME),
+    )
+    if result.status in (STATUS_MIGRATED, STATUS_COPIED):
+        return "previous brand layout migrated: " + result.message
+    if result.status == STATUS_FAILED:
+        return "data migration from the previous brand layout failed: " + result.message
+    return None
 
 
 def build_runtime(
@@ -309,6 +351,7 @@ def build_runtime(
         )
 
     resolved_clock: Clock = clock or utc_now_iso
+    migration_note = _migrate_legacy_brand_data_dir(config)
     layout = ensure_data_layout(config.data_dir)
     os.makedirs(config.database_dir, exist_ok=True)
 
@@ -321,6 +364,8 @@ def build_runtime(
             attach_file_logging(config.logs_dir, clock=resolved_clock)
 
     notes: list[str] = []
+    if migration_note:
+        notes.append(migration_note)
     asr_provider, asr_mode = _build_asr_provider(config, notes)
     ocr_engine, ocr_mode = _build_ocr_engine(config, notes)
     summarizer, resolved_llm_mode = _build_summarizer(config, llm_mode, notes)

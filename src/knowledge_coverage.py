@@ -1,4 +1,4 @@
-"""Course knowledge coverage and gap analysis for the Classroom Assistant.
+"""Course knowledge coverage and gap analysis for the Loomind.
 
 Task 27 - Course Knowledge Coverage & Gap Analysis Layer.
 

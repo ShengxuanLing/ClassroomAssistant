@@ -1,4 +1,4 @@
-"""Unified Evidence Ingestion service for the Classroom Assistant project (Task 24).
+"""Unified Evidence Ingestion service for the Loomind project (Task 24).
 
 Orchestrates extraction from all supported material sources (Note, Audio,
 OCR/Image, PDF, DOCX, PPTX) through the existing extractors and writes the

@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     配置文件里的 ``debug=true`` 悄悄压掉。
     """
     parser = argparse.ArgumentParser(
-        prog="classroom-assistant",
+        prog="loomind",
         description=f"{APPLICATION_NAME} —— 本地单机课堂材料助手",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -99,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config", dest="config_path", default=None, metavar="PATH",
         help="配置文件 (JSON); 未指定时在 data_dir 下查找 "
-             f"classroom-assistant.json",
+             f"loomind.json",
     )
     parser.add_argument(
         "--data-dir", dest="data_dir", default=None, metavar="DIR",
@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--database-path", dest="database_path", default=None, metavar="PATH",
-        help="SQLite 路径 (必须位于 data_dir 内; 默认 data_dir/database/classroom.sqlite)",
+        help="SQLite 路径 (必须位于 data_dir 内; 默认 data_dir/database/loomind.sqlite)",
     )
     parser.add_argument("--host", default=None, help="监听地址 (默认回环 127.0.0.1)")
     parser.add_argument("--port", type=int, default=None, help="监听端口 (0 = 由系统分配)")
@@ -268,7 +268,7 @@ def run(options: CliOptions, *, env: Optional[Mapping[str, str]] = None,
     from src.application.bootstrap import build_runtime, close_runtime, describe_runtime
 
     configure_logging(config)
-    logger = logging.getLogger("classroom")
+    logger = logging.getLogger("loomind")
 
     try:
         runtime = build_runtime(config, logger=logger)

@@ -1,4 +1,4 @@
-# 课堂助手 · Agent 交接上下文（动手前必读）
+# Loomind · Agent 交接上下文（动手前必读）
 
 > 本文件是给**任何**接手这个仓库的 agent（codex / cline / opencode / freebuff / workbuddy / …）
 > 看的「最小但完整」的现状说明。目的是让一个对这个项目**零记忆**的 agent，读完这一份，
@@ -11,7 +11,7 @@
 
 ## 0. 项目一句话
 
-**课堂助手（Classroom Assistant）**：面向 UAB 本科课程的**本地单机**学习助手。
+**Loomind（Loomind）**：面向 UAB 本科课程的**本地单机**学习助手。
 把课堂录音、板书/幻灯片、自己与同学的笔记，变成**可追溯**的知识点、复习材料与复习规划。
 核心铁律只有一条：**绝不编造**——每一条知识点都必须能沿「知识点 → 证据 → 原始材料 → 具体位置」走回去。
 
@@ -29,10 +29,10 @@
 | 项 | 事实 |
 |---|---|
 | 仓库路径 | `D:\Project\Clases`（Windows，路径含空格时用引号） |
-| 版本控制 | git，分支 `main`，`origin = https://github.com/ShengxuanLing/ClassroomAssistant.git` |
+| 版本控制 | git，分支 `main`，`origin = https://github.com/ShengxuanLing/Loomind.git` |
 | 最新提交 | 动手前自己 `git log --oneline -5` 核对，**不要用历史对话或本文里的旧提交号当基线** |
 | 依赖 | `requirements.txt`（运行时）/ `requirements-dev.txt`（= 运行时 + pytest） |
-| 数据真相源 | 运行时的 `classroom-data/`（8 子目录，SQLite WAL + 材料副本 + 日志 + 备份 + temp），**与 `src/application/data_dirs.py` 的 8 目录一字对应** |
+| 数据真相源 | 运行时的 `loomind-data/`（8 子目录，SQLite WAL + 材料副本 + 日志 + 备份 + temp），**与 `src/application/data_dirs.py` 的 8 目录一字对应** |
 | 遗留目录 | 仓库根下的 `input/ output/ audio/ images/ documents/ materials/ backups/` **已废止**，只剩占位 README，**新代码禁止写入** |
 
 ### 1.1 Python 解释器（最容易踩的坑之一）
@@ -121,7 +121,7 @@ node scripts/ui_render_check.js
 - **`CLASSROOM_AI_TIMEOUT_SECONDS` 未接线**（已知缺陷）：`analyze` 与 `_translate_kp_once` 都硬编码
   `timeout_seconds=60` ⇒ 慢而正常的调用被判超时 → chunk 失败 → 整份材料失败。
 - chunk 缓存**不跨尝试**（每次新建 `AIAnalysisService()` ⇒ 重试要重跑全部 chunk）。
-- **同一 `classroom-data` 不能双进程写**（第二个进程秒失败 `StorageError: database is locked`）⇒ 分析**必须串行**。
+- **同一 `loomind-data` 不能双进程写**（第二个进程秒失败 `StorageError: database is locked`）⇒ 分析**必须串行**。
 - 后台任务约 3 小时被静默杀掉（日志无 traceback）。
 - PDF 抽文用 pypdf（`src/document_input.py`，懒加载）；**文档摄取不做语言判定** ⇒ 文档证据
   `language` 全 `Unknown` ⇒ 详情页按证据语言请求解释会 400。

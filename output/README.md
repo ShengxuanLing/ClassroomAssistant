@@ -1,6 +1,6 @@
 # output/ —— 已归档的遗留目录
 
-> **本目录不再使用。** 课堂助手的唯一数据真相源是 `classroom-data/`
+> **本目录不再使用。** Loomind的唯一数据真相源是 `loomind-data/`
 > （8 个子目录，由 `src/application/data_dirs.py::DATA_LAYOUT_DIRS` 定义）。
 >
 > 旧布局到新布局的逐项映射见 [docs/legacy-input-output.md](../docs/legacy-input-output.md)。

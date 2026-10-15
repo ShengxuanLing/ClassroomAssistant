@@ -12,21 +12,25 @@ __pycache__/
 scripts/ai-env.bat
 
 # 运行期生成的数据库边车文件 (WAL / 共享内存) —— 它们不是真相源, 必须排除
-classroom-data/database/*.shm
-classroom-data/database/*.wal
+loomind-data/database/*.shm
+loomind-data/database/*.wal
 *.sqlite-shm
 *.sqlite-wal
 
 # 运行期进程元数据 (如 launcher.pid)
-classroom-data/.run/
+loomind-data/.run/
 
 # 运行期产物: 备份归档 / 临时 / 运行日志 (含本仓库根的 logs/)
-classroom-data/backups/*.zip
-classroom-data/temp/
-classroom-data/logs/
+loomind-data/backups/*.zip
+loomind-data/temp/
+loomind-data/logs/
 logs/
 
 # 本地数据真相源 (活 SQLite 库 + 用户真实课程材料) —— git 只管代码, 数据走备份
+loomind-data/
+
+# 品牌改名前的旧数据目录 (Classroom Assistant 时期)。正常迁移后不再存在;
+# 迁移退化成"复制"时原目录会保留, 这里兜住不让它进仓库。
 classroom-data/
 
 # 自带的可移植 Python 解释器 (整个 CPython 发行版, 可重装, 不进版本控制)

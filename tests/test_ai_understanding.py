@@ -9,7 +9,7 @@
   grounding / 去重 / 冲突 / retry / 幂等 + student state 隔离 +
   API endpoint + UI 资源一致性。
 - C. Contract: 真实 provider 的形状测试 (构造/脱敏, 不出站)。
-- D. Real AI smoke: 仅 ``CLASSROOM_AI_LIVE_TEST=true`` 且有 key 时执行,
+- D. Real AI smoke: 仅 ``LOOMIND_AI_LIVE_TEST=true`` 且有 key 时执行,
   否则干净 SKIP (绝不 FAIL)。
 
 全部默认测试使用 ``FakeAIProvider`` (确定性 fixture, 零出站)。
@@ -1308,13 +1308,13 @@ class TestAINoRegression:
 def test_live_ai_smoke():
     """真实 provider 冒烟: 文本理解 + 结构化输出 + grounding 形状。
 
-    运行: ``CLASSROOM_AI_LIVE_TEST=true`` + ``CLASSROOM_AI_API_KEY``。
+    运行: ``LOOMIND_AI_LIVE_TEST=true`` + ``LOOMIND_AI_API_KEY``。
     缺任一 -> SKIP (绝不 FAIL)。key 绝不写日志/文件。
     """
-    if os.environ.get("CLASSROOM_AI_LIVE_TEST", "").strip().lower() not in (
+    if os.environ.get("LOOMIND_AI_LIVE_TEST", "").strip().lower() not in (
         "1", "true", "yes", "on",
     ):
-        pytest.skip("CLASSROOM_AI_LIVE_TEST is not enabled")
+        pytest.skip("LOOMIND_AI_LIVE_TEST is not enabled")
     config = load_ai_config()
     api_key = get_api_key()
     if not api_key or not config.base_url or not config.text_model:

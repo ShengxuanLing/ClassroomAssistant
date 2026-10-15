@@ -1,4 +1,4 @@
-﻿; TASK-110 — 课堂助手 (Classroom Assistant) Windows 安装脚本
+﻿; TASK-110 — Loomind Windows 安装脚本
 ;
 ; 编译:  ISCC.exe packaging\installer.iss
 ; 或由  python packaging\build.py  传入版本号: ISCC.exe /DAppVersion=x.y.z ...
@@ -7,7 +7,7 @@
 ; --------------------------------------------------------------------
 ; - PrivilegesRequired=lowest + {localappdata}\Programs: 装到用户目录,
 ;   不需要管理员、不弹 UAC;
-; - 用户数据在 %LOCALAPPDATA%\ClassroomAssistant\classroom-data (由程序
+; - 用户数据在 %LOCALAPPDATA%\Loomind\loomind-data (由程序
 ;   冻结态自己解析, 见 src/application/config.py::installed_data_root),
 ;   与安装目录分离 —— 卸载**不删数据**, 这是有意设计;
 ; - AppId 是固定的 GUID: 升级安装时 Inno 据此识别"同一个程序", 改了
@@ -19,22 +19,22 @@
   #define AppVersion "1.1.1"
 #endif
 
-#define AppName "课堂助手"
-#define AppFullName "课堂助手 (Classroom Assistant)"
-#define AppExeName "ClassroomAssistant.exe"
+#define AppName "Loomind"
+#define AppFullName "Loomind"
+#define AppExeName "Loomind.exe"
 
 [Setup]
 AppId={{A0642C37-D798-40EF-A730-8F3D6A1AD48B}
 AppName={#AppFullName}
 AppVersion={#AppVersion}
 AppVerName={#AppFullName} {#AppVersion}
-AppPublisher=Classroom Assistant
-DefaultDirName={localappdata}\Programs\ClassroomAssistant
+AppPublisher=Loomind
+DefaultDirName={localappdata}\Programs\Loomind
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\dist\installer
-OutputBaseFilename=ClassroomAssistant-{#AppVersion}-Setup
+OutputBaseFilename=Loomind-{#AppVersion}-Setup
 SetupIconFile=..\src\application\assets\app.ico
 UninstallDisplayName={#AppFullName}
 UninstallDisplayIcon={app}\{#AppExeName}
@@ -54,7 +54,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; onedir 产物整体铺进安装目录 (exe + _internal)。
-Source: "..\dist\ClassroomAssistant\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\Loomind\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"

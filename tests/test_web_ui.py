@@ -133,7 +133,7 @@ class Client:
 
     def upload_multipart(self, path, content, filename, fields=None):
         """按浏览器 FormData 的方式上传 (UTF-8 文件名直接写进头部)。"""
-        boundary = "----ClassroomAssistantBoundary39"
+        boundary = "----LoomindBoundary39"
         chunks = []
         for key, value in (fields or {}).items():
             chunks.append(
@@ -374,7 +374,7 @@ class TestStaticAssets:
         status, headers, body = client.raw_get("/index.html")
         assert status == 200
         assert headers.get("Content-Type") == "text/html; charset=utf-8"
-        assert b"Classroom Assistant" in body
+        assert b"Loomind" in body
 
     def test_stylesheet_is_served_with_css_content_type(self, client):
         status, headers, body = client.raw_get("/styles.css")
@@ -497,8 +497,8 @@ class TestAssetSelfContainment:
         for name in ("index.html", "styles.css", "app.js"):
             text = read_asset(name)
             assert isinstance(text, str)
-        assert "课堂助手" in read_asset("index.html")
-        assert "课堂助手" in read_asset("app.js")
+        assert "Loomind" in read_asset("index.html")
+        assert "Loomind" in read_asset("app.js")
 
     def test_javascript_uses_only_the_documented_api_surface(self):
         """UI 只能通过 /api/* 取数, 不得触碰其他路径。"""
@@ -1001,16 +1001,25 @@ class TestDataFidelityAndSafety:
         ``api.js`` / ``i18n.js`` / ``app.js`` / ``views/``。这一条仍然是
         "只放静态资源"的守卫 —— **视图目录里的每一个文件都必须是 .js**,
         绝不能混进 Python 源码或构建产物 (node_modules / dist / .map 等)。
+
+        ``icons/`` 是浏览器图标资产 (favicon / apple-touch / PWA manifest /
+        品牌 SVG)。它同样是静态资源, 所以放行; 但白名单只到图标扩展名,
+        ``.js`` / ``.py`` / 构建产物仍然进不来。
         """
         names = sorted(path.name for path in WEB_DIR.iterdir())
         assert names == [
-            "api.js", "app.js", "i18n.js", "index.html", "styles.css", "views",
+            "api.js", "app.js", "i18n.js", "icons", "index.html", "styles.css", "views",
         ], names
         # views/ 里只允许 .js —— 零构建拆分不得引入打包产物。
         for path in (WEB_DIR / "views").iterdir():
             assert path.is_file() and path.suffix == ".js", (
                 f"views/ 里混入了非 JS 文件: {path.name}"
             )
+        # icons/ 只允许图标资产。
+        for path in (WEB_DIR / "icons").iterdir():
+            assert path.is_file() and path.suffix.lower() in (
+                ".png", ".svg", ".ico", ".webmanifest",
+            ), f"icons/ 里混入了非图标文件: {path.name}"
 
 
 # ===========================================================================

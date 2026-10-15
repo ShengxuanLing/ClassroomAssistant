@@ -403,7 +403,7 @@ def validate_environment(config: AppConfig) -> EnvironmentReport:
         )
     else:
         # data_dir 可能要**多级**新建 (安装版落在
-        # ``%LOCALAPPDATA%\ClassroomAssistant\classroom-data``, 两级都不存在),
+        # ``%LOCALAPPDATA%\Loomind\loomind-data``, 两级都不存在),
         # 所以不能只看一层父目录 —— 向上找到最近的"已存在且可写"的祖先即可,
         # 真正建目录由 ``ensure_data_layout`` 负责。
         # 刻意复用第 4 段数据库检查用的同一个助手, 避免两处规则再次漂移。
@@ -649,7 +649,7 @@ def open_ui_window(url: str, shell: str = UI_SHELL_APP) -> None:
 
 
 def _open_browser(url: str) -> None:
-    """``launcher start`` 打开界面 (外壳模式见 ``CLASSROOM_UI_SHELL``)。
+    """``launcher start`` 打开界面 (外壳模式见 ``LOOMIND_UI_SHELL``)。
 
     打不开界面 (无图形环境 / 没有可用浏览器) 不该让服务起不来 —— 此时服务
     已经绑定成功, 用户完全可以手动访问提示的地址。

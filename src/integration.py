@@ -1,4 +1,4 @@
-"""Multi-source Evidence Integration module for the Classroom Assistant project.
+"""Multi-source Evidence Integration module for the Loomind project.
 
 This module implements the first layer of multi-source information integration.
 It accepts Evidence[] from multiple sources and produces an organized result

@@ -93,7 +93,7 @@ def _built_manifest(**overrides) -> BackupManifest:
         "application_version": "1.0.0",
         "database_checksum": _DB_CHECKSUM,
         "database_size": 4096,
-        "database_filename": "classroom.sqlite",
+        "database_filename": "loomind.sqlite",
     }
     options.update(overrides)
     return build_manifest(**options)
@@ -375,8 +375,8 @@ def test_from_dict_coerces_an_invalid_optional_int_to_zero(bad_value):
 
 
 def test_from_dict_reads_the_database_filename():
-    manifest = BackupManifest.from_dict(_manifest_dict(database_filename="classroom.sqlite"))
-    assert manifest.database_filename == "classroom.sqlite"
+    manifest = BackupManifest.from_dict(_manifest_dict(database_filename="loomind.sqlite"))
+    assert manifest.database_filename == "loomind.sqlite"
 
 
 # ======================================================================

@@ -333,7 +333,7 @@ def test_ocr_config_rejects_a_secret_in_a_list(cwd):
 
 def test_ocr_config_rejects_a_secret_via_environment(cwd):
     with pytest.raises(ConfigurationError):
-        load_config(cwd=cwd, env={"CLASSROOM_OCR_CONFIG": '{"client_secret": "x"}'})
+        load_config(cwd=cwd, env={"LOOMIND_OCR_CONFIG": '{"client_secret": "x"}'})
 
 
 def test_ocr_config_accepts_ordinary_keys(cwd):
@@ -363,7 +363,7 @@ def test_config_repr_and_describe_never_leak_a_secret(cwd):
 
 
 def test_unknown_env_secret_value_never_reaches_output(cwd):
-    config = load_config(cwd=cwd, env={"CLASSROOM_API_KEY": FAKE_SECRET})
+    config = load_config(cwd=cwd, env={"LOOMIND_API_KEY": FAKE_SECRET})
     blob = (
         json.dumps(config.to_dict(), ensure_ascii=False)
         + repr(config)

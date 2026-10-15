@@ -9,8 +9,8 @@
 
 窗口程序没有控制台, ``print`` 写进虚空; 所以探针把结果**落文件**:
 
-    ClassroomAssistant.exe verify-ocr [--out PATH]
-    ClassroomAssistant.exe verify-static [--out PATH]
+    Loomind.exe verify-ocr [--out PATH]
+    Loomind.exe verify-static [--out PATH]
 
 - ``verify-ocr``: **真跑一次 OCR** —— 现场生成一张带文字的小图, 交给
   本地 OCR provider 识别, 检查数字串 ``12345`` 与单词 ``classroom`` 都能

@@ -1,5 +1,5 @@
 @echo off
-REM 课堂助手 一键启动 (Task 46)
+REM Loomind 一键启动 (Task 46)
 REM 双击本文件即可在本机启动本地 HTTP 服务, 并自动打开浏览器。
 chcp 65001 >nul 2>&1
 

@@ -517,7 +517,7 @@ class TestFreshInstall:
             workspace.create_course("A", "A", "es")
         finally:
             workspace.close()
-        db = Path(data_dir) / "database" / "classroom.sqlite"
+        db = Path(data_dir) / "database" / "loomind.sqlite"
         assert db.is_file(), "全新安装没有建出数据库文件"
         assert db.stat().st_size > 0
 

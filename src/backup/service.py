@@ -135,8 +135,8 @@ __all__ = [
     "restore_backup",
 ]
 
-#: 数据库文件名 (Task 42 的约定: ``data/database/classroom.sqlite``)。
-DEFAULT_DATABASE_FILENAME = "classroom.sqlite"
+#: 数据库文件名 (Task 42 的约定: ``data/database/loomind.sqlite``)。
+DEFAULT_DATABASE_FILENAME = "loomind.sqlite"
 
 #: 归档文件名前缀 (便于 ``list_backups`` 与人工识别)。
 BACKUP_FILE_PREFIX = "backup-"

@@ -277,7 +277,7 @@ class TestUnexpectedShutdown:
         self, tmp_path, spawn_child
     ) -> None:
         """核心断言: 崩溃只能带走**未提交**的东西。"""
-        db_path = tmp_path / "classroom.sqlite"
+        db_path = tmp_path / "loomind.sqlite"
         child = spawn_child(_CRASH_WRITER, str(db_path))
         child.wait_ready()
         child.kill()
@@ -293,7 +293,7 @@ class TestUnexpectedShutdown:
 
     def test_database_is_healthy_after_a_hard_kill(self, tmp_path, spawn_child) -> None:
         """崩溃后库必须是"健康"的, 而不是"能打开但已经坏了"。"""
-        db_path = tmp_path / "classroom.sqlite"
+        db_path = tmp_path / "loomind.sqlite"
         child = spawn_child(_CRASH_WRITER, str(db_path))
         child.wait_ready()
         child.kill()
@@ -311,7 +311,7 @@ class TestUnexpectedShutdown:
         self, tmp_path, spawn_child
     ) -> None:
         """恢复之后必须还能继续写 —— 恢复不是只读的旁路。"""
-        db_path = tmp_path / "classroom.sqlite"
+        db_path = tmp_path / "loomind.sqlite"
         child = spawn_child(_CRASH_WRITER, str(db_path))
         child.wait_ready()
         child.kill()
@@ -336,7 +336,7 @@ class TestUnexpectedShutdown:
         连续重开三次, 每次都必须看到同一个结果: 已提交的在, 未提交的不在。
         如果恢复只是读取时的障眼法, 第二次重开就会把丢弃的行"变回来"。
         """
-        db_path = tmp_path / "classroom.sqlite"
+        db_path = tmp_path / "loomind.sqlite"
         child = spawn_child(_CRASH_WRITER, str(db_path))
         child.wait_ready()
         child.kill()
@@ -362,7 +362,7 @@ class TestUnexpectedShutdown:
         注意这与 ``test_persistence_transaction`` 里的受控回滚是**两件事**:
         那里是"第二步抛异常", 这里是"第二步还没执行, 进程就没了"。
         """
-        db_path = tmp_path / "classroom.sqlite"
+        db_path = tmp_path / "loomind.sqlite"
         child = spawn_child(_CRASH_PAIR, str(db_path))
         child.wait_ready()
         child.kill()
@@ -382,7 +382,7 @@ class TestUnexpectedShutdown:
         self, tmp_path, spawn_child
     ) -> None:
         """迁移执行到一半进程消失 -> 该条迁移整体回滚, 且迁移器能续跑。"""
-        db_path = tmp_path / "classroom.sqlite"
+        db_path = tmp_path / "loomind.sqlite"
         child = spawn_child(_CRASH_MIGRATION, str(db_path))
         child.wait_ready()  # hook 已执行 -> CREATE TABLE 已经在事务里跑过了
         assert child.wait_exit() == 9

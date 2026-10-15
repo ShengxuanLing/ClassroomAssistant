@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Task 47.4 — Final production performance audit.
 
-验证课堂助手在接近真实规模的负载下仍保持线性 (而非 O(N^2)) 的热路径性能:
+验证 Loomind 在接近真实规模的负载下仍保持线性 (而非 O(N^2)) 的热路径性能:
 
 规模基线
     - 1000 KnowledgePoints
@@ -320,7 +320,7 @@ def test_answer_submission_throughput(scale_model: Dict[str, Any]) -> None:
 
 # --- 数据库落库 (规模) ---------------------------------------------------
 def test_database_save_scale(scale_model: Dict[str, Any], tmp_path) -> None:
-    db_path = str(tmp_path / "classroom.sqlite")
+    db_path = str(tmp_path / "loomind.sqlite")
     db = open_database(db_path)
     repos = Repositories(db)
 
@@ -352,7 +352,7 @@ def test_database_save_scale(scale_model: Dict[str, Any], tmp_path) -> None:
 
 # --- 数据库加载 (规模) ---------------------------------------------------
 def test_database_load_scale(scale_model: Dict[str, Any], tmp_path) -> None:
-    db_path = str(tmp_path / "classroom.sqlite")
+    db_path = str(tmp_path / "loomind.sqlite")
     db = open_database(db_path)
     repos = Repositories(db)
 
@@ -392,7 +392,7 @@ def test_database_load_scale(scale_model: Dict[str, Any], tmp_path) -> None:
 
 # --- 备份 (规模) ---------------------------------------------------------
 def test_backup_restore_scale(scale_model: Dict[str, Any], tmp_path) -> None:
-    db_path = str(tmp_path / "classroom.sqlite")
+    db_path = str(tmp_path / "loomind.sqlite")
     backup_path = str(tmp_path / "backup.sqlite")
     db = open_database(db_path)
     repos = Repositories(db)

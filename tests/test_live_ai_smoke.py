@@ -3,10 +3,10 @@
 
 默认 SKIP。只有同时满足以下全部条件时才真正出站::
 
-    CLASSROOM_AI_LIVE_TEST=true
-    CLASSROOM_AI_API_KEY (或 CLASSROOM_LLM_API_KEY) 已配置
-    CLASSROOM_AI_BASE_URL (或 CLASSROOM_LLM_API_BASE) 为 https
-    CLASSROOM_AI_MODEL (或 CLASSROOM_LLM_MODEL) 已配置
+    LOOMIND_AI_LIVE_TEST=true
+    LOOMIND_AI_API_KEY (或 LOOMIND_LLM_API_KEY) 已配置
+    LOOMIND_AI_BASE_URL (或 LOOMIND_LLM_API_BASE) 为 https
+    LOOMIND_AI_MODEL (或 LOOMIND_LLM_MODEL) 已配置
 
 验证 (§17 要求):
 
@@ -40,21 +40,21 @@ _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 def _live_enabled() -> bool:
-    return os.environ.get("CLASSROOM_AI_LIVE_TEST", "").strip().lower() in _TRUE_VALUES
+    return os.environ.get("LOOMIND_AI_LIVE_TEST", "").strip().lower() in _TRUE_VALUES
 
 
 def _require_live():
     if not _live_enabled():
-        pytest.skip("CLASSROOM_AI_LIVE_TEST is not enabled")
+        pytest.skip("LOOMIND_AI_LIVE_TEST is not enabled")
     config = load_ai_config()
     api_key = get_api_key()
     missing = []
     if not api_key:
-        missing.append("CLASSROOM_AI_API_KEY")
+        missing.append("LOOMIND_AI_API_KEY")
     if not (config.base_url or "").strip():
-        missing.append("CLASSROOM_AI_BASE_URL")
+        missing.append("LOOMIND_AI_BASE_URL")
     if not (config.text_model or "").strip():
-        missing.append("CLASSROOM_AI_MODEL")
+        missing.append("LOOMIND_AI_MODEL")
     if missing:
         pytest.skip("no live AI credentials configured (missing: %s)" % ", ".join(missing))
     return config, api_key

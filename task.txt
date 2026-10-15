@@ -20,7 +20,7 @@ Evidence
 
 > AI 分析仍然需要用户手动点击 `AI Analyze` 才会执行。
 
-这与 Classroom Assistant 的最终产品目标不一致。
+这与 Loomind 的最终产品目标不一致。
 
 本任务的目标不是继续增加抽象层或测试数量，而是完成真正的：
 
@@ -1296,7 +1296,7 @@ Examples
 本任务不是：
 
 ```text
-rewrite Classroom Assistant
+rewrite Loomind
 ```
 
 不要修改：
@@ -1651,7 +1651,7 @@ FakeAIProvider
 +
 真实 UAB 学习材料
 +
-真实 Classroom Assistant
+真实 Loomind
 ```
 
 完成：
@@ -1695,7 +1695,7 @@ PDF
 课堂录音
 课堂照片
 
-全部丢进 Classroom Assistant。
+全部丢进 Loomind。
 
 然后系统自己：
 

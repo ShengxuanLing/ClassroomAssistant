@@ -75,7 +75,7 @@ class TestInstallerISS:
         assert re.search(r"^AppId=\{\{[0-9A-F-]{36}\}", text, re.M)
         # 装到用户目录、不要管理员。
         assert "PrivilegesRequired=lowest" in text
-        assert r"DefaultDirName={localappdata}\Programs\ClassroomAssistant" in text
+        assert r"DefaultDirName={localappdata}\Programs\Loomind" in text
         # 开始菜单组。
         assert "DefaultGroupName=" in text
         assert '{group}\\' in text
@@ -83,19 +83,19 @@ class TestInstallerISS:
     def test_setup_icon_and_output_naming(self) -> None:
         text = _read_iss()
         assert "SetupIconFile=" in text
-        assert "OutputBaseFilename=ClassroomAssistant-{#AppVersion}-Setup" in text
+        assert "OutputBaseFilename=Loomind-{#AppVersion}-Setup" in text
         # 图标文件真的在 (相对 iss 所在目录)。
         icon = re.search(r"^SetupIconFile=(.+)$", text, re.M).group(1).strip()
         assert (PACKAGING / icon).resolve().is_file()
 
     def test_files_icons_run_sections(self) -> None:
         text = _read_iss()
-        assert r'Source: "..\dist\ClassroomAssistant\*"' in text
+        assert r'Source: "..\dist\Loomind\*"' in text
         assert re.search(r"^\[Icons\]", text, re.M)
         assert re.search(r"^\[Run\]", text, re.M)
 
     def test_uninstall_leaves_user_data_alone(self) -> None:
-        """卸载不删 ``%LOCALAPPDATA%\\ClassroomAssistant`` (用户数据)。"""
+        """卸载不删 ``%LOCALAPPDATA%\\Loomind`` (用户数据)。"""
         text = _read_iss()
         assert "[UninstallDelete]" not in text
         # 仅有的两处 {localappdata} 用途: 安装目录 (Programs 子目录)。
@@ -107,12 +107,12 @@ class TestInstallerISS:
 
 
 # ----------------------------------------------------------------------
-# classroom-assistant.spec (AST 检查, 不执行 PyInstaller)
+# loomind.spec (AST 检查, 不执行 PyInstaller)
 # ----------------------------------------------------------------------
 
 
 def _spec_tree() -> ast.Module:
-    return ast.parse((PACKAGING / "classroom-assistant.spec").read_text(encoding="utf-8"))
+    return ast.parse((PACKAGING / "loomind.spec").read_text(encoding="utf-8"))
 
 
 def _call_keyword(tree: ast.Module, func_name: str, keyword: str):
@@ -179,16 +179,16 @@ class TestPyInstallerSpec:
         assert "entry.py" in ast.unparse(first_call.args[0])
 
     def test_web_and_assets_are_collected_as_datas(self) -> None:
-        text = (PACKAGING / "classroom-assistant.spec").read_text(encoding="utf-8")
+        text = (PACKAGING / "loomind.spec").read_text(encoding="utf-8")
         assert '"web"' in text and '"src/web"' in text
         assert '"application", "assets"' in text and '"src/application/assets"' in text
 
     def test_verified_opencv_trim_stays(self) -> None:
-        text = (PACKAGING / "classroom-assistant.spec").read_text(encoding="utf-8")
+        text = (PACKAGING / "loomind.spec").read_text(encoding="utf-8")
         assert "opencv_videoio_ffmpeg" in text
 
     def test_collect_all_packages_unchanged(self) -> None:
-        text = (PACKAGING / "classroom-assistant.spec").read_text(encoding="utf-8")
+        text = (PACKAGING / "loomind.spec").read_text(encoding="utf-8")
         for package in (
             "faster_whisper",
             "ctranslate2",
@@ -301,7 +301,7 @@ class TestBuildScript:
         match = re.search(r"OutputBaseFilename=(.+)$", text, re.M)
         expected = match.group(1).replace("{#AppVersion}", "{version}").strip() + ".exe"
         computed = os.path.basename(
-            os.path.join(BUILD.SETUP_DIR, f"ClassroomAssistant-{'{version}'}-Setup.exe")
+            os.path.join(BUILD.SETUP_DIR, f"Loomind-{'{version}'}-Setup.exe")
         )
         assert computed == expected
 

@@ -2,25 +2,25 @@
 """AI provider 配置 (TASK-76 §5/§29/§30)。
 
 独立于 ``AppConfig`` 的轻量配置: ``AppConfig`` 的键集合由配置测试逐键
-钉死, 在那里加 ``CLASSROOM_AI_*`` 会扰动现有门禁; AI 配置只在显式调用
-AI 管线时读取, 默认关闭 (``CLASSROOM_AI_ENABLED``), 不影响旧链路。
+钉死, 在那里加 ``LOOMIND_AI_*`` 会扰动现有门禁; AI 配置只在显式调用
+AI 管线时读取, 默认关闭 (``LOOMIND_AI_ENABLED``), 不影响旧链路。
 
 环境变量 (全部可选, 文档只写 placeholder)::
 
-    CLASSROOM_AI_ENABLED=true|false        (默认 false: 旧确定性链路)
-    CLASSROOM_AI_MODE=auto|real|fake|manual|disabled
+    LOOMIND_AI_ENABLED=true|false        (默认 false: 旧确定性链路)
+    LOOMIND_AI_MODE=auto|real|fake|manual|disabled
                                            (默认 auto: 按凭证推导;
                                             manual = 导出/导入, 不发请求、不自动分析)
-    CLASSROOM_AI_BASE_URL=<YOUR_API_BASE>  (默认沿用 CLASSROOM_LLM_API_BASE)
-    CLASSROOM_AI_API_KEY=<YOUR_API_KEY>    (默认沿用 CLASSROOM_LLM_API_KEY)
-    CLASSROOM_AI_MODEL=<YOUR_MODEL>        (默认沿用 CLASSROOM_LLM_MODEL)
-    CLASSROOM_AI_VISION_MODEL=<MODEL>      (默认回落到 TEXT model)
-    CLASSROOM_AI_AUDIO_MODEL=<MODEL>       (默认回落到 TEXT model)
-    CLASSROOM_AI_TIMEOUT_SECONDS=60
-    CLASSROOM_AI_MAX_RETRIES=1
-    CLASSROOM_AI_JSON_MODE=true|false  (默认 true: 带 response_format;
+    LOOMIND_AI_BASE_URL=<YOUR_API_BASE>  (默认沿用 LOOMIND_LLM_API_BASE)
+    LOOMIND_AI_API_KEY=<YOUR_API_KEY>    (默认沿用 LOOMIND_LLM_API_KEY)
+    LOOMIND_AI_MODEL=<YOUR_MODEL>        (默认沿用 LOOMIND_LLM_MODEL)
+    LOOMIND_AI_VISION_MODEL=<MODEL>      (默认回落到 TEXT model)
+    LOOMIND_AI_AUDIO_MODEL=<MODEL>       (默认回落到 TEXT model)
+    LOOMIND_AI_TIMEOUT_SECONDS=60
+    LOOMIND_AI_MAX_RETRIES=1
+    LOOMIND_AI_JSON_MODE=true|false  (默认 true: 带 response_format;
         某些网关对该字段犯病时设 false, 走纯文本 + 严格 schema 校验)
-    CLASSROOM_AI_ALLOW_IMAGE_BYTES=true|false (默认 false: 只发 OCR 文字;
+    LOOMIND_AI_ALLOW_IMAGE_BYTES=true|false (默认 false: 只发 OCR 文字;
         true 时图片材料的原始字节出境走 vision)
 
 密钥规则 (与 ``src/application/config.py`` 同源):
@@ -58,29 +58,29 @@ DEFAULT_AI_MAX_RETRIES = 1
 class AIEnvNames:
     """AI 配置的环境变量名 (唯一真相, 测试据此断言文档与实现一致)。"""
 
-    ENABLED = "CLASSROOM_AI_ENABLED"
+    ENABLED = "LOOMIND_AI_ENABLED"
     #: 显式模式开关 (默认 auto = 按凭证推导)。``manual`` 表示"用导出/导入做
     #: 抽取, 不发任何请求" —— 材料摄取后也不会自动分析。
-    MODE = "CLASSROOM_AI_MODE"
-    BASE_URL = "CLASSROOM_AI_BASE_URL"
-    API_KEY = "CLASSROOM_AI_API_KEY"
-    MODEL = "CLASSROOM_AI_MODEL"
-    TEXT_MODEL = "CLASSROOM_AI_TEXT_MODEL"
-    VISION_MODEL = "CLASSROOM_AI_VISION_MODEL"
-    AUDIO_MODEL = "CLASSROOM_AI_AUDIO_MODEL"
-    TIMEOUT = "CLASSROOM_AI_TIMEOUT_SECONDS"
-    MAX_RETRIES = "CLASSROOM_AI_MAX_RETRIES"
+    MODE = "LOOMIND_AI_MODE"
+    BASE_URL = "LOOMIND_AI_BASE_URL"
+    API_KEY = "LOOMIND_AI_API_KEY"
+    MODEL = "LOOMIND_AI_MODEL"
+    TEXT_MODEL = "LOOMIND_AI_TEXT_MODEL"
+    VISION_MODEL = "LOOMIND_AI_VISION_MODEL"
+    AUDIO_MODEL = "LOOMIND_AI_AUDIO_MODEL"
+    TIMEOUT = "LOOMIND_AI_TIMEOUT_SECONDS"
+    MAX_RETRIES = "LOOMIND_AI_MAX_RETRIES"
     #: 是否发送 ``response_format: json_object`` (默认 true; 某些网关对
     #: 该字段犯病时会 200 包错, 此时设 false 走纯文本 + 严格 schema 校验)。
-    JSON_MODE = "CLASSROOM_AI_JSON_MODE"
+    JSON_MODE = "LOOMIND_AI_JSON_MODE"
     #: 是否允许把图片字节发给模型 (默认 false: 只发 OCR 文字; 开启后图片
     #: 材料走 vision，原始字节出境——用户已明确豁免课堂材料的隐私顾虑)。
-    IMAGE_BYTES = "CLASSROOM_AI_ALLOW_IMAGE_BYTES"
+    IMAGE_BYTES = "LOOMIND_AI_ALLOW_IMAGE_BYTES"
 
     #: 回落到既有 LLM 配置的旧变量名 (AI 未配时沿用, 不强制双份配置)。
-    FALLBACK_BASE_URL = "CLASSROOM_LLM_API_BASE"
-    FALLBACK_API_KEY = "CLASSROOM_LLM_API_KEY"
-    FALLBACK_MODEL = "CLASSROOM_LLM_MODEL"
+    FALLBACK_BASE_URL = "LOOMIND_LLM_API_BASE"
+    FALLBACK_API_KEY = "LOOMIND_LLM_API_KEY"
+    FALLBACK_MODEL = "LOOMIND_LLM_MODEL"
 
 
 #: 显式 AI 模式的白名单 (auto = 按凭证推导, 与历史行为逐字一致)。
@@ -98,7 +98,7 @@ def _as_bool_text(value: Any) -> bool:
 def _as_default_true_bool(value: Any, *, key: str) -> bool:
     """默认 true 的布尔环境变量 (缺省/空 -> True; 非法值直接报错)。
 
-    与 ``_as_bool_text`` (默认 false) 对偶: ``CLASSROOM_AI_JSON_MODE``
+    与 ``_as_bool_text`` (默认 false) 对偶: ``LOOMIND_AI_JSON_MODE``
     默认开, 只有显式写 false 类才关 —— 关掉是个需要有意识的动作,
     写错别字时报错比静默关掉安全。
     """
@@ -194,7 +194,7 @@ def load_ai_config(
 ) -> AIConfig:
     """从进程环境读取 AI 配置 (默认 ``os.environ``; 测试可注入映射)。
 
-    未知 ``CLASSROOM_AI_*`` 变量直接忽略 (环境是共享命名空间, 与
+    未知 ``LOOMIND_AI_*`` 变量直接忽略 (环境是共享命名空间, 与
     ``AppConfig.read_environment`` 同一理由), 但绝不记录它们的值。
     """
     source: Mapping[str, str] = os.environ if env is None else env

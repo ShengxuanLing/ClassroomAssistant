@@ -1,8 +1,8 @@
-# Classroom Assistant - Architecture Design
+# Loomind - Architecture Design
 
 ## Overview
 
-The Classroom Assistant project provides a structured pipeline for processing multilingual classroom materials (audio, images, notes) and generating knowledge structures and review materials for UAB students.
+The Loomind project provides a structured pipeline for processing multilingual classroom materials (audio, images, notes) and generating knowledge structures and review materials for UAB students.
 
 ## Core Data Model
 
@@ -2275,7 +2275,7 @@ lock** — i.e. every other request would queue behind it.
 ### 17.1 Why not `shutil.copy`
 
 Under WAL, a committed transaction can live entirely in the `-wal`
-sidecar until a checkpoint. Copying `classroom.sqlite` alone therefore
+sidecar until a checkpoint. Copying `loomind.sqlite` alone therefore
 produces an archive that **opens successfully and is silently missing
 data** — the worst possible failure shape. The only correct snapshot
 mechanism is SQLite's online backup API (`sqlite3.Connection.backup`),

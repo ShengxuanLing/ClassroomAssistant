@@ -1,4 +1,4 @@
-# 课堂助手 (Classroom Assistant)
+# Loomind
 
 面向巴塞罗那自治大学（UAB）本科课程的**本地单机**学习助手。
 
@@ -32,13 +32,13 @@
 
 ### Windows 安装包（普通用户，推荐）
 
-不需要 Python。下载 `ClassroomAssistant-1.1.1-Setup.exe`（随 Release 发布），双击安装：
+不需要 Python。下载 `Loomind-1.1.1-Setup.exe`（随 Release 发布），双击安装：
 
-- 装到当前用户目录 `%LOCALAPPDATA%\Programs\ClassroomAssistant`，**不弹 UAC、不需要管理员**；
-- 装完在开始菜单出现「课堂助手」，双击启动：托盘图标常驻，界面以**独立窗口**打开
+- 装到当前用户目录 `%LOCALAPPDATA%\Programs\Loomind`，**不弹 UAC、不需要管理员**；
+- 装完在开始菜单出现「Loomind」，双击启动：托盘图标常驻，界面以**独立窗口**打开
   （Edge 的 `--app` 模式，没有地址栏和标签栏；找不到 Edge / Chrome 时回退默认浏览器）；
 - 会弹 SmartScreen 警告（安装包未做代码签名，属预期）：点「更多信息 → 仍要运行」；
-- 数据目录固定为 `%LOCALAPPDATA%\ClassroomAssistant\classroom-data`，**卸载不会删数据**。
+- 数据目录固定为 `%LOCALAPPDATA%\Loomind\loomind-data`，**卸载不会删数据**。
 
 完整说明（卸载、Whisper 模型首次下载、构建方法）见
 [docs/installer-windows.md](docs/installer-windows.md)。
@@ -103,7 +103,7 @@ JSON 模式等全部可调项见 [docs/configuration.md](docs/configuration.md) 
 
 ## 怎么启动
 
-**安装版**：开始菜单 →「课堂助手」。托盘图标常驻（双击托盘图标重新打开界面；
+**安装版**：开始菜单 →「Loomind」。托盘图标常驻（双击托盘图标重新打开界面；
 右键菜单：打开界面 / 打开数据目录 / 退出）。双击第二次不会起第二个实例，而是直接
 把已有界面打开。退出走托盘菜单的「退出」—— 服务与端口标记会一并清理。
 
@@ -147,18 +147,18 @@ python -m src.application.cli --check        # 完整装配一遍后退出
 
 ## 数据放在哪
 
-源码运行时默认在**当前工作目录**下建 `classroom-data/`；安装版固定为
-`%LOCALAPPDATA%\ClassroomAssistant\classroom-data`（与安装目录分离，卸载不删）。
+源码运行时默认在**当前工作目录**下建 `loomind-data/`；安装版固定为
+`%LOCALAPPDATA%\Loomind\loomind-data`（与安装目录分离，卸载不删）。
 它是本应用**唯一**的数据真相源
 （与 `src/application/data_dirs.py` 的 8 目录一字对应）：
 
 ```text
-classroom-data/
+loomind-data/
 ├── materials/    材料注册表（每个课程一个 JSON）
 ├── audio/        音频材料副本
 ├── images/       图片材料副本
 ├── documents/    文档 / 笔记材料副本
-├── database/     classroom.sqlite（SQLite，WAL 模式）
+├── database/     loomind.sqlite（SQLite，WAL 模式）
 ├── logs/         运行日志
 ├── backups/      备份归档（.zip）
 └── temp/         处理中间产物（可安全删除）
@@ -185,7 +185,7 @@ classroom-data/
 | [docs/backup_restore.md](docs/backup_restore.md) | 备份归档格式、恢复流程、安全边界 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 常见故障与处理 |
 | [docs/status.md](docs/status.md) | 逐任务实现记录（交付文件、测试、发现并修复的缺陷） |
-| [docs/legacy-input-output.md](docs/legacy-input-output.md) | 旧 `input/` `output/` 布局 → `classroom-data/` 对照表（已归档） |
+| [docs/legacy-input-output.md](docs/legacy-input-output.md) | 旧 `input/` `output/` 布局 → `loomind-data/` 对照表（已归档） |
 | [docs/final_persistence_report.md](docs/final_persistence_report.md) | Task 48–55 报告：13 行重启矩阵 / 50 知识点 traceability / DB 足迹 / 未验证项 |
 | [docs/task-76-ai-understanding-report.md](docs/task-76-ai-understanding-report.md) | Task 76 报告：AI 语义理解管线（24 项交付清单 + 分级结论） |
 
@@ -195,7 +195,7 @@ classroom-data/
 
 1. **【已解决】业务对象现在落盘了。** Task 48–55 把 Course / Session / Material /
    Evidence / KnowledgePoint / ReviewRecord / Student / Answer / Evaluation / StudyPlan /
-   LearningPath 真正接进 `classroom.sqlite`（WAL 模式）。运行时 `data_dir/database/`
+   LearningPath 真正接进 `loomind.sqlite`（WAL 模式）。运行时 `data_dir/database/`
    **有活库**；创建课程 → 关闭程序 → 重新打开，全部业务对象按内容寻址 ID 逐字段恢复。
    这条限制曾是 Task 34–47 阶段的"Beta Ready 唯一决定性缺口"，现已由
    `tests/test_restart_recovery.py`（90 条，全部真子进程）+
@@ -227,7 +227,7 @@ classroom-data/
 4. **备份归档默认落在 `data_dir/backups/` 里**，也就是和被备份的数据在同一个目录。
    整目录级的丢失（误删、磁盘故障）会连备份一起带走。异地/异盘复制需要你自己做。
 5. **`--check` / `health` 不是只读的。** 它会建目录并迁移数据库，因此会创建
-   `classroom-data/`。
+   `loomind-data/`。
 6. **单用户、单机、无鉴权。** 服务默认只绑回环地址，没有账号体系；不要把它暴露到
    公网。
 

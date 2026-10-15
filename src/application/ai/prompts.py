@@ -140,7 +140,7 @@ def build_chunk_extraction_prompt(
         else "Write \"title\"/\"description\" in the evidence language.\n"
     )
     return (
-        "You are a classroom-assistant knowledge extractor for university courses "
+        "You are a loomind knowledge extractor for university courses "
         "(languages: Spanish/Catalan input; explanations may be Chinese).\n"
         "Your output is a CONDENSED exam-review sheet, not a copy of the input.\n"
         + _GROUNDING_RULES
@@ -210,7 +210,7 @@ def build_merge_prompt(
         else ""
     )
     return (
-        "You are a classroom-assistant knowledge merger. Merge per-chunk extraction "
+        "You are a loomind knowledge merger. Merge per-chunk extraction "
         "results into material-level concepts.\n"
         "Keep every description CONDENSED (1-3 sentences, exam-memorable); "
         "merging must never glue copied source paragraphs back together.\n"
@@ -244,7 +244,7 @@ def build_summary_prompt(
         else ""
     )
     return (
-        "You are a classroom-assistant summarizer. Write a CONDENSED exam-review "
+        "You are a loomind summarizer. Write a CONDENSED exam-review "
         "summary: the fewest sentences that still cover every key topic.\n"
         + _GROUNDING_RULES
         + lang_line
@@ -289,7 +289,7 @@ def build_summary_zh_prompt(
         else "The requested explanation language is zh (Chinese)."
     )
     return (
-        "You are a classroom-assistant translator. Produce a concise Chinese "
+        "You are a loomind translator. Produce a concise Chinese "
         "learning summary from the merged report digest below.\n"
         "Use ONLY facts present in SUMMARY INPUT. Do not add outside knowledge, "
         "examples, numbers, or conclusions.\n"
@@ -342,7 +342,7 @@ def build_kp_zh_prompt(
         else "The requested explanation language is zh (Chinese)."
     )
     return (
-        "You are a classroom-assistant translator. Explain ONE knowledge point "
+        "You are a loomind translator. Explain ONE knowledge point "
         "in Chinese for a student who reads Spanish/Catalan course material.\n"
         "RULES (must follow exactly):\n"
         "1. Use ONLY the facts in KNOWLEDGE POINT INPUT. Do not add outside "
@@ -381,7 +381,7 @@ def build_glossary_prompt(
     """Build the evidence-grounded bilingual glossary stage prompt."""
     titles = json.dumps(list(kp_titles or []), ensure_ascii=False)
     return (
-        "You are a classroom-assistant terminology extractor. Build a compact "
+        "You are a loomind terminology extractor. Build a compact "
         "Spanish/Catalan -> Chinese glossary from EVIDENCE DIGEST only.\n"
         "GROUNDING RULES:\n"
         "1. Every term MUST be copied character-for-character from the evidence "
@@ -413,7 +413,7 @@ def build_course_overview_prompt(
 ) -> str:
     """Build the one-shot, read-only course synthesis prompt."""
     return (
-        "You are a classroom-assistant course synthesizer. Synthesize only the "
+        "You are a loomind course synthesizer. Synthesize only the "
         "material reports in COURSE REPORTS DIGEST; do not use outside knowledge "
         "and never include another course.\n"
         "Keep source claims attributable to the supplied material reports. "
@@ -443,7 +443,7 @@ def build_image_analysis_prompt(
     )
     chunks_line = "AVAILABLE CHUNKS: [%s]\n" % (chunk_id or "chunk") if chunk_id else ""
     return (
-        "You are a classroom-assistant vision analyst. The input is OCR text from "
+        "You are a loomind vision analyst. The input is OCR text from "
         "a classroom image (slide / blackboard / diagram / formula / handwritten "
         "note / table). Reconstruct the page meaning: text, formulas, structure.\n"
         "When image pixels are also provided, read layout directly (table columns, "
@@ -480,7 +480,7 @@ def build_audio_analysis_prompt(
     )
     chunks_line = "AVAILABLE CHUNKS: [%s]\n" % (chunk_id or "chunk") if chunk_id else ""
     return (
-        "You are a classroom-assistant lecture analyst. The input is a classroom "
+        "You are a loomind lecture analyst. The input is a classroom "
         "transcript with timestamps. Identify key teaching points, definitions, "
         "concepts, examples, and emphasized content.\n"
         "Output is a CONDENSED exam-review sheet: filler and repetition removed, "

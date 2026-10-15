@@ -79,7 +79,7 @@ from src.models import ClassSession, Course
 
 __all__ = ["CourseContext", "Workspace", "APPLICATION_NAME", "APPLICATION_VERSION"]
 
-APPLICATION_NAME = "Classroom Assistant"
+APPLICATION_NAME = "Loomind"
 APPLICATION_VERSION = "1.1.1"
 
 #: TASK-77: 自动 AI 触发状态 (``process_material`` 返回作业字典里 ``ai``
@@ -214,7 +214,7 @@ class Workspace:
 
     ``close()`` 关闭数据库 (只在自己打开它时)。
 
-    ``persistence=None`` 时自动在 ``<data_dir>/database/classroom.sqlite``
+    ``persistence=None`` 时自动在 ``<data_dir>/database/loomind.sqlite``
     上建一个; 传 ``persistence=False`` 可显式关闭持久化 (只用于纯内存的
     单元测试)。已有的内存实现没有被删除 —— 它现在只是**缓存**, 不再是
     唯一的数据来源。
@@ -1525,7 +1525,7 @@ class Workspace:
     # ------------------------------------------------------------------
     #
     # ``process_material`` 摄取成功后调用 ``_maybe_auto_ai``; 关闭
-    # (``CLASSROOM_AI_ENABLED=false`` / ``configure_ai(enabled=False)``)
+    # (``LOOMIND_AI_ENABLED=false`` / ``configure_ai(enabled=False)``)
     # 时返回 None —— 作业字典形状与 TASK-76 完全一致, 旧链路零改动。
     # 开启时 AI 失败只产生 ``{"status": "failed", ...}`` 子对象, 材料本身
     # 保持 SUCCEEDED, Evidence 原样保留, 用户可经 ``POST .../ai-analyze``
@@ -1811,7 +1811,7 @@ class Workspace:
     #
     # 1. **只读**。本组方法不写 KnowledgePoint、不改 Evidence、不动 Review
     #    状态 —— 中文是一个**解释层**, 不是知识点的新事实。落盘的是
-    #    ``classroom-data/materials/ai-reports/<课>/kp-translations/<kp>.json``
+    #    ``loomind-data/materials/ai-reports/<课>/kp-translations/<kp>.json``
     #    一个可随时重建的衍生缓存, 因此零 DB migration。
     # 2. **证据原文零改动**。返回值只带原文与它的引用; prompt 明确禁止逐字
     #    全文翻译, 术语必须逐字出现在知识点自身文本里 (ground_kp_zh 校验)。
@@ -2369,7 +2369,7 @@ class Workspace:
     #
     # 确定性 ingestion 之后的可选语义层: Evidence -> chunk -> AI Provider ->
     # 结构化候选 -> grounding/校验/去重 -> KnowledgePoint (+ Review)。
-    # 默认关闭 (``CLASSROOM_AI_ENABLED`` / ``configure_ai``); 关闭时旧链路
+    # 默认关闭 (``LOOMIND_AI_ENABLED`` / ``configure_ai``); 关闭时旧链路
     # 照常工作。显式分析失败绝不删除已有 Evidence/KP (422 + 可 retry)。
     # 本层绝不写 student learning state (只做课程 KP 注册表的只读同步)。
 

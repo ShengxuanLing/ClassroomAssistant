@@ -19,8 +19,8 @@ ISCC 同理: ``--iscc`` > ``CLASSROOM_ISCC`` > ``D:/Program Files/Inno Setup 7/I
 
 产物:
 
-- ``dist/ClassroomAssistant/ClassroomAssistant.exe`` (onedir, 无控制台);
-- ``dist/installer/ClassroomAssistant-<version>-Setup.exe``。
+- ``dist/Loomind/Loomind.exe`` (onedir, 无控制台);
+- ``dist/installer/Loomind-<version>-Setup.exe``。
 
 ``--skip-installer`` / ``--skip-exe`` 分别只跑一半。退出码 0 = 全部成功。
 """
@@ -36,11 +36,11 @@ import sys
 from typing import Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPEC = os.path.join(ROOT, "packaging", "classroom-assistant.spec")
+SPEC = os.path.join(ROOT, "packaging", "loomind.spec")
 ISS = os.path.join(ROOT, "packaging", "installer.iss")
 DIST = os.path.join(ROOT, "dist")
-EXE_DIR = os.path.join(DIST, "ClassroomAssistant")
-EXE = os.path.join(EXE_DIR, "ClassroomAssistant.exe")
+EXE_DIR = os.path.join(DIST, "Loomind")
+EXE = os.path.join(EXE_DIR, "Loomind.exe")
 SETUP_DIR = os.path.join(DIST, "installer")
 
 DEFAULT_PACK_PYTHON = (
@@ -159,7 +159,7 @@ def build_installer(iscc: str, version: str) -> str:
     code = _run([iscc, f"/DAppVersion={version}", ISS])
     if code != 0:
         raise SystemExit(f"ISCC failed with exit code {code}")
-    setup = os.path.join(SETUP_DIR, f"ClassroomAssistant-{version}-Setup.exe")
+    setup = os.path.join(SETUP_DIR, f"Loomind-{version}-Setup.exe")
     if not os.path.isfile(setup):
         raise SystemExit(f"ISCC finished but {setup} is missing")
     _emit(f"built         : {setup} ({_size_mb(setup)})")

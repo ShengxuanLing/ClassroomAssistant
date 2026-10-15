@@ -1,8 +1,8 @@
-# AGENTS.md - 课堂助手项目规范
+# AGENTS.md - Loomind 项目规范
 
 ## 项目概述
 
-本项目名为「课堂助手」，服务于巴塞罗那自治大学（Universitat Autònoma de Barcelona, UAB）大二学生。
+本项目名为「Loomind」，服务于巴塞罗那自治大学（Universitat Autònoma de Barcelona, UAB）大二学生。
 目标是帮助用户处理西班牙语/加泰罗尼亚语授课课程的课堂音频、板书图片、用户与同学笔记，
 生成知识点梳理、复习材料和考前复习规划。
 
@@ -159,19 +159,19 @@
 
 ### 真相源（唯一）
 
-课堂助手在磁盘上的**唯一**数据真相源是 `classroom-data/`（由 `src/application/data_dirs.py`
+Loomind 在磁盘上的**唯一**数据真相源是 `loomind-data/`（由 `src/application/data_dirs.py`
 的 `DATA_LAYOUT_DIRS` 定义，固定 8 个子目录）。所有受管材料、数据库、日志、备份都
 落在它内部，布局与 `src/application/data_dirs.py:381` 的 8 目录**一字对应**。
 
-### 目录结构（classroom-data/）
+### 目录结构（loomind-data/）
 
 ```
-classroom-data/
+loomind-data/
 ├── materials/      # 材料注册索引（每门课程一份 JSON）
 ├── audio/          # 音频材料副本
 ├── images/         # 图片/板书材料副本
 ├── documents/      # 笔记 / PDF / DOCX 材料副本
-├── database/       # SQLite 数据库（classroom.sqlite，WAL 模式）
+├── database/       # SQLite 数据库（loomind.sqlite，WAL 模式）
 ├── logs/           # 运行日志
 ├── backups/        # 备份归档（Task 43）
 ├── temp/           # 临时暂存区（绝不长期保留）
@@ -185,7 +185,7 @@ classroom-data/
 ### 遗留目录（已归档，不再使用）
 
 项目早期规范的 `input/` 与 `output/` 已废止：二者只剩一个占位说明 `README.md`、不含任何业务数据，所有数据都已收口到
-`classroom-data/`。它们仅保留为空占位，供历史脚本兼容；新代码**禁止**向其中写入。
+`loomind-data/`。它们仅保留为空占位，供历史脚本兼容；新代码**禁止**向其中写入。
 从旧布局到新布局的逐项映射见 `docs/legacy-input-output.md`。
 
 ### 命名规范
@@ -282,6 +282,29 @@ classroom-data/
 - 后续变更需在此记录
 
 ### 变更记录
+
+- **2026-10-15（品牌重塑：Classroom Assistant → Loomind）**：产品改名为 **Loomind**（slogan *Weave Knowledge Together.*），外观与数据布局一并迁移。
+
+  **改名范围** —— 用户可见品牌（Web 标题 / 顶栏 / footer / 托盘菜单 / 安装向导 / README 与活文档）与全部技术标识（`APPLICATION_NAME`、CLI `prog`、日志 logger 名、托盘 `ICON_NAME`、HTTP `server_version`、AI 提示词自称、数据目录名、库文件名、配置文件默认名、安装目录与发布产物名）统一改为 Loomind。
+
+  **刻意不改** —— ① 安装包 `AppId` GUID：改了等于变成另一个产品，升级会并存两份；② `ClassroomProcessingService` / `ClassroomWorkspaceView` / `classroom_view.py` 这类**领域词汇**：「课堂」是业务语义，不是品牌。
+
+  **数据迁移** —— `classroom-data/` → `loomind-data/`、`database/classroom.sqlite` → `loomind.sqlite`（含 `-wal` / `-shm`）、安装态 `%LOCALAPPDATA%\ClassroomAssistant` → `%LOCALAPPDATA%\Loomind`。新增 `src/application/data_migration.py`：**只在目标位置无数据时迁移**；优先 `os.rename`（同卷原子），跨卷退化为复制且**保留原目录**并告警；失败只回报状态、**不打断启动**。由 `bootstrap.py` 在 `ensure_data_layout` **之前**接线，且只对**默认路径**生效（用户显式 `--data-dir` 不碰）+ 测试环境整体跳过（测试 cwd 是仓库根，`legacy_data_dir()` 正好指向真实数据）。
+
+  **环境变量** —— `CLASSROOM_*` → `LOOMIND_*`，读取时**旧前缀回落**（`env_value()` / `read_environment` / `.env` 加载器三处），用户既有的 `.env` 不失效。
+
+  **图标** —— 接入 `src/web/icons/`（favicon-16/32、apple-touch-icon、192/512、品牌 SVG、PWA manifest）+ `src/application/assets/app.ico`（托盘 / exe / 安装包 / 开始菜单共用）；顶栏品牌标记由「课」字改为品牌图标。
+
+  **深色主题** —— 底色由中性灰黑改到品牌深海军蓝（`--bg #0a0f1e` 等 6 个底 token + 顶栏 + 画布底），**前景 token 一个未动**（底压深只会让文字对比度更高）。
+
+  **守卫** —— `ui_audit.js` **692 全过**（含 30 对 WCAG 对比度实算）；新增 `tests/test_data_migration.py` 9 条 + `tests/test_config.py` 5 条旧前缀回落；`test_web_ui.py` 的 `src/web` 目录守卫加 `icons/` 白名单（只放图标扩展名，`.js` / `.py` 仍进不来）。
+
+  **已知既有红（非本次）** —— `ui_render_check.js` 312/314（`#/students` 与 `#/courses/<c>/students/<s>` 期望重定向到「我的课程」、实际渲染「未找到页面」）：用 HEAD 快照做对照实验，同样 312/314。
+
+  **历史文档刻意保留旧名** —— `status.md` / `task-*.md` / `final_*.md` / `reports/*` 记录的是当时的事实，改了就是篡改；本条目即两者之间的对照说明。
+
+  **版本号未动**（仍 `1.1.1`）—— 改名 + 数据布局变更建议升 `1.2.0`，留待用户拍板。
+
 
 - **2026-09-20（P0-1 目录规范统一，决策 A）**：`classroom-data/` 确立为唯一数据真相源；重写「文件组织规范」章，以 8 目录布局为准，删除旧 `input/` `output/` 目录树描述；将「YAML frontmatter / 小写连字符命名」降级为「导出文件建议」（受管材料改用内容寻址 ID）。新增 `docs/legacy-input-output.md` 旧布局对照表。`input/` `output/` 各只剩一个占位说明 `README.md`、不含任何业务数据，新代码禁止写入。
 

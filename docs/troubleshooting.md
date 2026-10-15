@@ -59,7 +59,7 @@ scripts\stop.bat                                         # 停掉本应用占用
 这是**保护**，不是故障：
 
 ```
-stale PID file removed: no classroom-assistant service is listening on
+stale PID file removed: no loomind service is listening on
 127.0.0.1:8765. Refusing to kill PID 9200 (that PID may have been reused by
 an unrelated program). Re-run 'stop --force' to kill it anyway.
 ```
@@ -103,7 +103,7 @@ data_dir must not live inside the project's src/ directory
 不是误报。换一个位置：
 
 ```bash
-python -m src.application.launcher start --data-dir D:\classroom-data
+python -m src.application.launcher start --data-dir D:\loomind-data
 ```
 
 ## 处理类
@@ -265,7 +265,7 @@ POST /api/reviews/{knowledge_id}/resolve-conflict
 ### 恢复后看不到课程 / 知识点 / 学生
 
 如果恢复之后确实看不到业务对象，那是**真故障**，不是已知限制。Task 48–55 之后运行时
-`data_dir/database/classroom.sqlite` 是**活库**，业务对象全部落盘；正常恢复的库应当
+`data_dir/database/loomind.sqlite` 是**活库**，业务对象全部落盘；正常恢复的库应当
 逐字段还原课程 / 知识点 / 审核记录 / 学生 / 作答 / 评估 / 计划 / 路径。
 
 应先排查：备份归档是否真的包含数据库快照（`list_backups()` 看条目）、恢复是否真的替换了
@@ -295,7 +295,7 @@ CRC 不符、清单里的 SHA-256 对不上、路径穿越、zip bomb 超限
 
 ```python
 from src.backup import validate_backup
-report = validate_backup("classroom-data/backups/x.zip")
+report = validate_backup("loomind-data/backups/x.zip")
 print(report.ok, report.errors)
 ```
 

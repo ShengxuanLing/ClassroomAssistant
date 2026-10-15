@@ -529,7 +529,7 @@ class AcceptanceReport:
         """人类可读的验收报告 (稳定输出, 便于人工核对)。"""
         lines: list[str] = []
         lines.append("=" * 72)
-        lines.append("课堂助手 — 真实课程端到端验收报告 (Task 45)")
+        lines.append("Loomind — 真实课程端到端验收报告 (Task 45)")
         lines.append("=" * 72)
         lines.append(f"课程: {self.dataset.get('course', {}).get('name', '?')}")
         lines.append(f"course_id: {self.course_id}")
@@ -1310,7 +1310,7 @@ class AcceptanceHarness:
             "restore_ok": restore_ok,
             "restore_warnings": list(restore_warnings),
             "restored_database_present": os.path.isfile(
-                os.path.join(restore_dir, "database", "classroom.sqlite")
+                os.path.join(restore_dir, "database", "loomind.sqlite")
             ),
             "restored_file_count": len(restored_files),
             "registry_material_total": len(restored_registry_ids),

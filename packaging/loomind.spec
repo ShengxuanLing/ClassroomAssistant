@@ -6,7 +6,7 @@
 
     pyinstaller --noconfirm --clean \
         --distpath dist --workpath build/pyinstaller \
-        packaging/classroom-assistant.spec
+        packaging/loomind.spec
 
 收集策略 (与验证过的 spike 一致, 见 temp/pack_spike/spike.spec)
 --------------------------------------------------------------------
@@ -78,7 +78,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="ClassroomAssistant",
+    name="Loomind",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -93,5 +93,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="ClassroomAssistant",
+    name="Loomind",
 )

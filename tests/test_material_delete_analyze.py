@@ -415,7 +415,7 @@ class TestDeletePersistence:
         from src.application.persistence_wiring import WorkspacePersistence
 
         data = str(tmp_path / "data")
-        db_path = os.path.join(data, "database", "classroom.sqlite")
+        db_path = os.path.join(data, "database", "loomind.sqlite")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         persistence = WorkspacePersistence.open(db_path)
         ws = _workspace(tmp_path, persistence=persistence)
@@ -446,7 +446,7 @@ class TestDeletePersistence:
         from src.application.persistence_wiring import WorkspacePersistence
 
         data = str(tmp_path / "data")
-        db_path = os.path.join(data, "database", "classroom.sqlite")
+        db_path = os.path.join(data, "database", "loomind.sqlite")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         persistence = WorkspacePersistence.open(db_path)
         ws = _workspace(tmp_path, persistence=persistence)

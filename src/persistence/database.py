@@ -76,7 +76,7 @@ class Database:
 
     用法::
 
-        db = Database("data/database/classroom.sqlite")
+        db = Database("data/database/loomind.sqlite")
         db.migrate()                       # 建表 + 迁移到最新版
         with db.transaction():
             db.execute("INSERT INTO courses ...", (...))

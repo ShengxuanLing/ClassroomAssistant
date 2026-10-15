@@ -239,7 +239,7 @@ class AIProvider(ABC):
 
         子类需同时声明 ``supports_image_bytes`` 才可覆写。注意：调用本方法
         意味着原始图片字节出境（OCR 文字路径则不出境），是否调用由
-        ``CLASSROOM_AI_ALLOW_IMAGE_BYTES`` 与 capability 双重门控。
+        ``LOOMIND_AI_ALLOW_IMAGE_BYTES`` 与 capability 双重门控。
         """
         raise AIRequestError(
             "this provider does not support image bytes; "
@@ -538,8 +538,8 @@ class FakeAIProvider(AIProvider):
 class OpenAICompatibleAIProvider(AIProvider):
     """OpenAI-compatible ``/chat/completions`` provider (标准库实现)。
 
-    - ``api_key`` 只经构造参数注入 (来自 ``CLASSROOM_AI_API_KEY`` /
-      ``CLASSROOM_LLM_API_KEY``), 绝不写配置文件 / 数据库 / 日志。
+    - ``api_key`` 只经构造参数注入 (来自 ``LOOMIND_AI_API_KEY`` /
+      ``LOOMIND_LLM_API_KEY``), 绝不写配置文件 / 数据库 / 日志。
     - 只向配置的 host 发 HTTPS 请求; 请求体只有文本 JSON
       (``model/messages/response_format``); 音频/图片字节默认绝不进入。
     - 失败抛 ``AIRequestError`` (形状信息 only), 由管线记 processing
@@ -563,7 +563,7 @@ class OpenAICompatibleAIProvider(AIProvider):
         if not isinstance(api_key, str) or not api_key.strip():
             raise ConfigurationError(
                 "AI provider requires an API key from the process environment "
-                "(CLASSROOM_AI_API_KEY); refusing to run without credentials",
+                "(LOOMIND_AI_API_KEY); refusing to run without credentials",
             )
         parsed = urlparse(str(base_url or "").strip())
         if parsed.scheme != "https" or not parsed.hostname:
@@ -607,7 +607,7 @@ class OpenAICompatibleAIProvider(AIProvider):
         退避 ``0.5s -> 1s -> 2s`` 上限), 最终失败进 ``AI_FAILED`` 由用户
         手动 Retry —— 绝不疯狂重试。401/403 等其它 4xx 直接失败 (重试无用)。
         每次 ``urlopen`` 都带 ``timeout`` (connect+read 共用, 调用方经
-        ``CLASSROOM_AI_TIMEOUT_SECONDS`` 配置, 默认 60s), 绝不无限等待。
+        ``LOOMIND_AI_TIMEOUT_SECONDS`` 配置, 默认 60s), 绝不无限等待。
         ``detail`` 只记 host/model/http_status, 绝无 key 与正文。
         """
         url = self._base_url + "/chat/completions"
@@ -725,7 +725,7 @@ class OpenAICompatibleAIProvider(AIProvider):
         if not self._allow_image_bytes:
             raise AIRequestError(
                 "image bytes are not enabled for this provider "
-                "(set CLASSROOM_AI_ALLOW_IMAGE_BYTES=true); "
+                "(set LOOMIND_AI_ALLOW_IMAGE_BYTES=true); "
                 "use the OCR-text path instead",
                 detail={"host": self.api_host, "model": self._model},
             )

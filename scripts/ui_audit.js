@@ -1,4 +1,4 @@
-/* 课堂助手 UI 审计 (Task 47.8)
+/* Loomind UI 审计 (Task 47.8)
  *
  * 为什么需要它
  * ------------
@@ -1071,7 +1071,7 @@ function studentToday() {
 function routes() {
   const table = {};
   table['/api/health'] = {
-    application: 'classroom-assistant',
+    application: 'loomind',
     status: 'ok',
     version: '0.35.0',
     storage: { courses: 1 },
@@ -3960,7 +3960,7 @@ async function audit() {
     {
       const table = routes();
       table['/api/health'] = {
-        application: 'classroom-assistant', status: 'ok', version: 't',
+        application: 'loomind', status: 'ok', version: 't',
         processing: { asr: 'real', ocr: 'real', evidence_count: 2 },
         storage: { courses: 1 },
         ai_mode: 'real', ai_enabled: true, ai: { mode: 'real', enabled: true },
@@ -3973,7 +3973,7 @@ async function audit() {
         !/api[_-]?key|sk-/i.test(pill), pill);
 
       table['/api/health'] = {
-        application: 'classroom-assistant', status: 'ok', version: 't',
+        application: 'loomind', status: 'ok', version: 't',
         processing: { asr: 'real', ocr: 'real', evidence_count: 2 },
         storage: { courses: 1 },
       };

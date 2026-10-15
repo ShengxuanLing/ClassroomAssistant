@@ -60,7 +60,7 @@ def drill(tmp_path_factory, dataset):
     返回演练的全部证据 (harness / 归档路径 / 恢复目录 / 材料字节)。
     """
     root = tmp_path_factory.mktemp("drill")
-    data_dir = root / "classroom-data"
+    data_dir = root / "loomind-data"
     restore_dir = root / "restored"
 
     harness = AcceptanceHarness(dataset, data_dir=str(data_dir))

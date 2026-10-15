@@ -163,7 +163,7 @@ function pageDashboardCourseBody(data) {
     // 原始请求体)。创建入口已经长在「我的课程」页上 (courseForm), 空态只
     // 负责把人送过去 —— 新用户拿到这个应用必须能**在网页上**开始使用。
     setView(
-      '<div class="card"><h1>' + t('课堂助手') + '</h1>' +
+      '<div class="card"><h1>Loomind</h1>' +
       '<p class="muted">' + t('还没有任何课程。先创建一门课程，再建课堂、上传材料。') + '</p>' +
       '<p><a class="btn" href="#/courses">' + t('新建课程') + '</a></p>' +
       '</div>'

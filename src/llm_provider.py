@@ -62,7 +62,7 @@ PROMPT_VERSION = "review-pack-v1"
 #: 固定中文导读前缀: 请求体 = 选中证据原文 + 该前缀。证据原文一字不改,
 #: 前缀只说明"用中文总结 / 每段挂证据编号 / 冲突并列不裁决"。
 CHINESE_PREAMBLE = (
-    "你是课堂助手的内容整理员。请用中文总结以下课堂证据的要点。"
+    "你是 Loomind 的内容整理员。请用中文总结以下课堂证据的要点。"
     "要求: 每个要点标注对应证据编号; 不改写、不翻译证据原文; "
     "证据之间相互矛盾时并列列出, 不做裁决。\n\n证据原文:\n"
 )
@@ -157,7 +157,7 @@ class OpenAICompatibleProvider(SummarizerProvider):
     """OpenAI 兼容 ``/chat/completions`` 提供方 (标准库实现)。
 
     - ``api_key`` 只经构造参数注入 (来自进程环境变量
-      ``CLASSROOM_LLM_API_KEY``, 由 bootstrap 装配), 绝不写
+      ``LOOMIND_LLM_API_KEY``, 由 bootstrap 装配), 绝不写
       配置文件 / 数据库 / 日志。
     - 只向 ``api_base`` 的 host 发 HTTPS 请求 (allowlist 即配置值本身)。
     - 请求体只有 ``{model, messages}`` 文本 JSON; 音频/图片字节绝不进入。
@@ -178,7 +178,7 @@ class OpenAICompatibleProvider(SummarizerProvider):
         if not isinstance(api_key, str) or not api_key.strip():
             # real 缺 key 即 ConfigurationError, 禁静默降级 (§1 验收)。
             raise ConfigurationError(
-                "llm_mode='real' requires CLASSROOM_LLM_API_KEY to be set; "
+                "llm_mode='real' requires LOOMIND_LLM_API_KEY to be set; "
                 "refusing to silently fall back to mock"
             )
         parsed = urlparse(str(api_base or "").strip())

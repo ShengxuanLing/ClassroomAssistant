@@ -1,4 +1,4 @@
-# Classroom Assistant
+# Loomind
 #
 # 产品版本的**唯一真源**是 ``src.application.workspace.APPLICATION_VERSION``
 # （``/api/health`` 报的就是它）。这里的 ``__version__`` 只是包元数据, 必须与它一致。

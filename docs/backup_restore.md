@@ -50,9 +50,9 @@ test_backup_refuses_while_a_transaction_is_open`。
 ## 2. 创建备份
 
 ```python
-result = create_backup("classroom-data", label="before-exam")
+result = create_backup("loomind-data", label="before-exam")
 
-result.archive_path            # classroom-data/backups/classroom-<时间戳>-before-exam.zip
+result.archive_path            # loomind-data/backups/classroom-<时间戳>-before-exam.zip
 result.manifest                # BackupManifest
 result.material_file_count     # 归档里的材料文件数
 result.archive_size
@@ -104,7 +104,7 @@ result.archive_size
 ## 4. 校验
 
 ```python
-validation = validate_backup("classroom-data/backups/x.zip")
+validation = validate_backup("loomind-data/backups/x.zip")
 validation.ok          # 是否可安全恢复
 validation.errors      # 逐条列出问题，不抛异常
 validation.manifest
@@ -130,8 +130,8 @@ validation.uncompressed_bytes
 
 ```python
 result = restore_backup(
-    "classroom-data/backups/x.zip",
-    "classroom-data",          # 目标 data_dir
+    "loomind-data/backups/x.zip",
+    "loomind-data",          # 目标 data_dir
     restore_materials=True,
     migrate=True,
 )
@@ -161,7 +161,7 @@ result.warnings
 ## 6. 列表
 
 ```python
-for info in list_backups("classroom-data"):
+for info in list_backups("loomind-data"):
     print(info.name, info.created_at, info.schema_version, info.readable, info.error)
 ```
 

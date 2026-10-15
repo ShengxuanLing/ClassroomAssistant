@@ -1,4 +1,4 @@
-/* 课堂助手 Web UI (Task 39, 视觉重构 2026-10-14)
+/* Loomind Web UI (Task 39, 视觉重构 2026-10-14)
  *
  * 无构建链: 一个手写 CSS 文件，跟随系统浅色 / 深色偏好。
  *
@@ -7,7 +7,7 @@
  *   2) 基础层 —— 盒模型、字体、键盘焦点环、减少动态、选区与滚动条;
  *   3) 组件层 —— 顶栏 / 卡片 / 表格 / 控件 / 各页面区块，只引用 token。
  *
- * 设计取向 (为什么是这一套): 「课堂助手」是**证据优先的学术阅读工具** —— 页面
+ * 设计取向 (为什么是这一套): Loomind 是**证据优先的学术阅读工具** —— 页面
  * 主体是西语 / 加泰语原文、数据表、溯源链与大量元信息，用户要在几秒内判断
  * "这条知识点有没有来源、来源在哪"。所以取当前口碑较高的三类做法之交集:
  *   - 层级靠字号、间距与留白，不靠颜色 (Linear / Vercel 的克制);
@@ -195,12 +195,17 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* 深色不是"把浅色反过来": 底色压到近黑 (#101317), 表面按 4% 亮度逐级抬升,
-     * 边框用半透明白 —— 纯灰的 1px 线在深色底上会显得比在浅色底上重。 */
-    --bg: #101317;
-    --surface: #171a1f;
-    --surface-2: #1e222a;
-    --surface-3: #252a33;
+    /* 深色不是"把浅色反过来": 底色压到近黑, 表面逐级抬升, 边框用半透明白 ——
+     * 纯灰的 1px 线在深色底上会显得比在浅色底上重。
+     *
+     * 色相取 Loomind 的品牌底 (深海军蓝 #071638, 见 icons/site.webmanifest 的
+     * theme_color), 而不是中性灰黑: 深色模式是"夜里织网"的那一面, 该认得出
+     * 是谁。前景 token 全部不动 —— 底压深只会让文字对比度更高, 由
+     * scripts/ui_audit.js 的 30 对 WCAG 断言复核。 */
+    --bg: #0a0f1e;
+    --surface: #0f1729;
+    --surface-2: #141e39;
+    --surface-3: #1b2647;
     --border: rgba(255, 255, 255, .1);
     --border-strong: rgba(255, 255, 255, .2);
     --text: #e9edf2;
@@ -227,14 +232,14 @@
     --info-line: #2b3f52;
     /* 见 :root 里的说明 —— 深色模式下 --accent / --ok 是浅色, 压在它们
      * 上面的前景必须转深, 否则对比度只有 1.67:1 / 2.39:1。 */
-    --on-accent: #101317;
-    --on-ok: #101317;
-    --topbar-bg: rgba(16, 19, 23, 0.84);
+    --on-accent: #0a0f1e;
+    --on-ok: #0a0f1e;
+    --topbar-bg: rgba(10, 15, 30, 0.84);
     --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.45), 0 10px 24px -8px rgba(0, 0, 0, 0.55);
     --shadow-3: 0 16px 48px -12px rgba(0, 0, 0, 0.7);
     /* 画布 token 的深色版 (见 :root 里的说明)。 */
-    --graph-bg: #101219;
+    --graph-bg: #0a0f1e;
     --graph-text: #dfe4f2;
     --graph-muted: #9aa3b8;
     --graph-node: #8c95ac;
@@ -364,11 +369,11 @@ html {
 
 .brand { display: flex; align-items: center; gap: 10px; color: inherit; }
 .brand:hover { text-decoration: none; }
+/* 品牌标记: Loomind 图标 (三个相连的知识节点)。图标资产自带深色底与圆角,
+ * 所以这里**不再**叠 --accent 底色 —— 叠上去会把品牌色盖掉。 */
 .brand-mark {
   width: 30px; height: 30px; border-radius: var(--radius-sm);
-  background: var(--accent); color: var(--on-accent);
-  display: grid; place-items: center; font-weight: 700;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12);
+  display: block; flex: none;
 }
 .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .brand-text small { color: var(--text-muted); font-size: var(--fs-2xs); }
@@ -418,7 +423,7 @@ html {
 /* 顶栏控件组: 自身可换行。
  *
  * 为什么必须要这一条 (2026-10-14 真实数据实测): 组里三个状态 pill 的文案是
- * **服务端给的、没有长度上界** (实测 "Classroom Assistant v1.0.1 · deterministic…"
+ * **服务端给的、没有长度上界** (实测 "Loomind v1.0.1 · deterministic…"
  * 一个 pill 就 249px)。520px 视口下整组的最小内容宽度 917px —— 比视口宽近
  * 一倍, 而它是 flex 行、默认 nowrap, 于是**撑出了整页横向滚动条**
  * (实测 docW 937 vs 520)。这不是本轮引入的: 对照实验——换回改动前的

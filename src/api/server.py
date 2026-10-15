@@ -167,7 +167,7 @@ class ApiServer:
         httpd.daemon_threads = True
         self._httpd = httpd
         self._thread = threading.Thread(
-            target=httpd.serve_forever, name="classroom-assistant-http", daemon=True
+            target=httpd.serve_forever, name="loomind-http", daemon=True
         )
         self._thread.start()
         return self
@@ -210,7 +210,7 @@ class ApiServer:
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
-            server_version = "ClassroomAssistant"
+            server_version = "Loomind"
             sys_version = ""
 
             # -- connection lifecycle ------------------------------------

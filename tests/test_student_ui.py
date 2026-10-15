@@ -1233,7 +1233,7 @@ class TestTheLiveSessionPickerEndToEnd:
     ``scripts/ui_audit.js`` 的夹具上证明过, 没有在**真实 HTTP 响应**上证明过。
 
     这个脚本自己 spawn 一个用临时数据目录的 launcher, 在里面建课程 / 两堂课 /
-    一份材料, 再渲染真实材料页。跑完删临时目录、kill 服务 —— 不碰 ``classroom-data/``。
+    一份材料, 再渲染真实材料页。跑完删临时目录、kill 服务 —— 不碰 ``loomind-data/``。
     """
 
     def test_the_live_script_passes(self):

@@ -40,7 +40,7 @@ class ReviewPackService:
 
     依赖全部注入: ``KnowledgeService`` 供证据与冲突, 材料查询函数供
     材料记录, ``SummarizerProvider`` 供总结 (Mock 或 OpenAI 兼容)。
-    本服务自己不开库、不建线程、不写任何受管文件 —— classroom-data/
+    本服务自己不开库、不建线程、不写任何受管文件 —— loomind-data/
     零写入。
     """
 

@@ -39,7 +39,7 @@ Windows 友好、可备份、稳定、够用。
 
 ::
 
-    db = open_database("data/database/classroom.sqlite")
+    db = open_database("data/database/loomind.sqlite")
     repos = Repositories(db)
     with repos.transaction():
         repos.courses.save(course)

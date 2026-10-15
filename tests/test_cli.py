@@ -181,12 +181,12 @@ def test_parser_does_not_advertise_a_remote_default():
 
 def test_build_config_applies_cli_over_the_environment(cwd):
     options = parse_cli(["--port", "1234"])
-    config = build_config(options, env={"CLASSROOM_PORT": "9999"}, cwd=cwd)
+    config = build_config(options, env={"LOOMIND_PORT": "9999"}, cwd=cwd)
     assert config.port == 1234
 
 
 def test_build_config_reads_the_environment(cwd):
-    config = build_config(CliOptions(), env={"CLASSROOM_LOG_LEVEL": "error"}, cwd=cwd)
+    config = build_config(CliOptions(), env={"LOOMIND_LOG_LEVEL": "error"}, cwd=cwd)
     assert config.log_level == "ERROR"
 
 
@@ -296,7 +296,7 @@ def test_check_builds_the_runtime_and_creates_the_database(tmp_path, cwd, capsys
         cwd=cwd,
     )
     assert code == EXIT_OK
-    assert (data_dir / "database" / "classroom.sqlite").is_file()
+    assert (data_dir / "database" / "loomind.sqlite").is_file()
     out = capsys.readouterr().out
     assert "database_schema_version" in out
     assert "asr_mode" in out
@@ -304,11 +304,11 @@ def test_check_builds_the_runtime_and_creates_the_database(tmp_path, cwd, capsys
 
 def test_check_json_is_parseable(tmp_path, cwd, capsys, monkeypatch):
     for name in (
-        "CLASSROOM_AI_ENABLED",
-        "CLASSROOM_AI_API_KEY",
-        "CLASSROOM_AI_BASE_URL",
-        "CLASSROOM_LLM_API_KEY",
-        "CLASSROOM_LLM_API_BASE",
+        "LOOMIND_AI_ENABLED",
+        "LOOMIND_AI_API_KEY",
+        "LOOMIND_AI_BASE_URL",
+        "LOOMIND_LLM_API_KEY",
+        "LOOMIND_LLM_API_BASE",
     ):
         monkeypatch.delenv(name, raising=False)
     code = run(
@@ -326,7 +326,7 @@ def test_check_json_is_parseable(tmp_path, cwd, capsys, monkeypatch):
     )
     assert code == EXIT_OK
     payload = json.loads(capsys.readouterr().out)
-    assert payload["application"] == "Classroom Assistant"
+    assert payload["application"] == "Loomind"
     assert payload["asr_mode"] == "mock"
     assert payload["ocr_mode"] == "mock"
     assert payload["ai_mode"] == "disabled"
@@ -336,11 +336,11 @@ def test_check_json_is_parseable(tmp_path, cwd, capsys, monkeypatch):
 
 def test_check_never_prints_the_ai_key(tmp_path, cwd, capsys, monkeypatch):
     secret = "sk-test-AI-KEY-MUST-NOT-APPEAR-0123456789"
-    monkeypatch.setenv("CLASSROOM_AI_ENABLED", "true")
-    monkeypatch.setenv("CLASSROOM_AI_API_KEY", secret)
-    monkeypatch.setenv("CLASSROOM_AI_BASE_URL", "https://example.invalid/v1")
-    monkeypatch.setenv("CLASSROOM_AI_MODEL", "test-model")
-    monkeypatch.delenv("CLASSROOM_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("LOOMIND_AI_ENABLED", "true")
+    monkeypatch.setenv("LOOMIND_AI_API_KEY", secret)
+    monkeypatch.setenv("LOOMIND_AI_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("LOOMIND_AI_MODEL", "test-model")
+    monkeypatch.delenv("LOOMIND_LLM_API_KEY", raising=False)
 
     code = run(
         CliOptions(

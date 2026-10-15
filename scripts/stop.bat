@@ -1,5 +1,5 @@
 @echo off
-REM 课堂助手 停止运行中的实例 (Task 46)
+REM Loomind 停止运行中的实例 (Task 46)
 chcp 65001 >nul 2>&1
 
 setlocal

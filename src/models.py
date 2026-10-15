@@ -1,4 +1,4 @@
-"""Core data models for the Classroom Assistant project.
+"""Core data models for the Loomind project.
 
 This module defines all fundamental data structures used throughout the
 project. It is a pure data-definition module with basic serialization

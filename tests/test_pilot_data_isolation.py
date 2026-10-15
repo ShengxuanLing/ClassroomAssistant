@@ -8,7 +8,7 @@
 1. 数据目录守卫 ``guard_data_dir`` 拒绝把仓库根 / ``src`` / ``tests`` 当成数据目录
    (否则会在源码树里就地建 ``database/`` ``materials/`` ...)。
 2. 数据目录画像解析 ``resolve_data_dir`` 把真实使用与测试运行落到两个不相交目录
-   (``classroom-data`` vs ``data-test``)。
+   (``loomind-data`` vs ``data-test``)。
 3. ``Workspace`` 在仓库根上构造会被守卫拦下 (用户可读的 ConfigurationError)。
 4. 测试套件使用 ``tmp_path`` 时一切正常 (隔离不破坏正常用例)。
 """
@@ -48,8 +48,8 @@ def test_guard_rejects_repository_tree(candidate):
 
 
 def test_guard_allows_dedicated_data_dirs():
-    """classroom-data / data-test / data-pilot 这类专有子目录放行。"""
-    for name in ("classroom-data", "data-test", "data-pilot"):
+    """loomind-data / data-test / data-pilot 这类专有子目录放行。"""
+    for name in ("loomind-data", "data-test", "data-pilot"):
         path = os.path.join(REPO_ROOT, name)
         assert guard_data_dir(path) == os.path.abspath(path)
 
@@ -61,12 +61,12 @@ def test_guard_rejects_empty_string():
 
 def test_is_repository_root_recognizes_project_root():
     assert is_repository_root(REPO_ROOT) is True
-    assert is_repository_root(os.path.join(REPO_ROOT, "classroom-data")) is False
+    assert is_repository_root(os.path.join(REPO_ROOT, "loomind-data")) is False
 
 
 def test_resolve_data_dir_default_is_pilot():
     assert resolve_data_dir(REPO_ROOT, explicit=None, profile=None).endswith(
-        "classroom-data"
+        "loomind-data"
     )
 
 
@@ -109,9 +109,9 @@ def test_default_data_dir_does_not_resolve_inside_source_tree(monkeypatch):
     """默认画像解析出的数据目录绝不在 src / tests 里。"""
     import src.application.config as config
 
-    monkeypatch.delenv("CLASSROOM_DATA_DIR", raising=False)
-    monkeypatch.delenv("CLASSROOM_DATA_PROFILE", raising=False)
-    # 即使 cwd 恰好是仓库根, 默认仍是 classroom-data 子目录, 而非根本身。
+    monkeypatch.delenv("LOOMIND_DATA_DIR", raising=False)
+    monkeypatch.delenv("LOOMIND_DATA_PROFILE", raising=False)
+    # 即使 cwd 恰好是仓库根, 默认仍是 loomind-data 子目录, 而非根本身。
     monkeypatch.setattr(config.os, "getcwd", lambda: REPO_ROOT)
     resolved = config.default_data_dir_name()
-    assert resolved == "classroom-data"
+    assert resolved == "loomind-data"

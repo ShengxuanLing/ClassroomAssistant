@@ -1944,7 +1944,6 @@ const TRANSLATIONS = {
     // 序数后缀: 西班牙语里 `第 3 堂` 就是 `Sesión 3`, 没有对应的量词 ——
     // 空串是**正确**译文, 不是漏译。
     ' 堂': '',
-    '课堂助手': 'Asistente de clase',
     '课程': 'Asignatura',
     '课程 ': 'Asignatura ',
     '课程列表加载失败': 'No se pudo cargar la lista de asignaturas',
@@ -2136,7 +2135,6 @@ const TRANSLATIONS = {
     '不关联课堂': 'Sense sessió',
     // 同上: 加泰语里 `第 3 堂` 就是 `Sessió 3`。
     ' 堂': '',
-    '课堂助手': 'Assistent de classe',
     '课程': 'Assignatura',
     '课程 ': 'Assignatura ',
     '课程列表加载失败': 'No s\'ha pogut carregar la llista d\'assignatures',

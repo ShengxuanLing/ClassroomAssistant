@@ -1,4 +1,4 @@
-"""Note Parser module for the Classroom Assistant project.
+"""Note Parser module for the Loomind project.
 
 Parses TXT and Markdown note files into structured Evidence objects.
 Follows the task specification for Task 4.

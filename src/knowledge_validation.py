@@ -1,4 +1,4 @@
-"""Knowledge Validation module for the Classroom Assistant project.
+"""Knowledge Validation module for the Loomind project.
 
 Task 14 - Knowledge Validation & Evidence Conflict Resolution.
 

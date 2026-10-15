@@ -8,7 +8,7 @@
 2. **菜单与动作**: 默认项是「打开界面」、四个条目齐全、每个条目接到正确
    的回调 (用假 pystray 模块注入, 测试不碰真实桌面);
 3. **生命周期**: 起服务 -> 事件循环 -> 退出时 ``launcher.stop()`` +
-   ``icon.stop()``, ``classroom-data/.run/`` 的 PID / 端口标记被清掉;
+   ``icon.stop()``, ``loomind-data/.run/`` 的 PID / 端口标记被清掉;
    端口被本应用占时「附着到已有实例」, 被别的程序占时如实报错。
 
 真实 pystray 的 ``Icon.run`` 需要交互式桌面, 因此所有用例都用**假模块**
@@ -65,7 +65,7 @@ def free_port() -> int:
 def base_config(tmp_path, free_port) -> AppConfig:
     return AppConfig.load(
         cwd=str(tmp_path),
-        cli_overrides={"port": free_port, "data_dir": str(tmp_path / "classroom-data")},
+        cli_overrides={"port": free_port, "data_dir": str(tmp_path / "loomind-data")},
     )
 
 
@@ -370,7 +370,7 @@ class TestMain:
         browser_calls: list[str] = []
         monkeypatch.setattr(tray, "open_in_browser", browser_calls.append)
 
-        data_dir = tmp_path / "classroom-data"
+        data_dir = tmp_path / "loomind-data"
         code = tray.main(
             ["--data-dir", str(data_dir), "--port", str(free_port)]
         )

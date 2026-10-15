@@ -65,7 +65,7 @@ from src.backup import BackupService
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = os.environ.get(
-    "CLASSROOM_NODE",
+    "LOOMIND_NODE",
     r"C:/Users/Rafae/.workbuddy-ai/binaries/node/versions/22.22.2-2/node.exe",
 )
 UI_STRESS = ROOT / "scripts" / "ui_stress_check.js"
@@ -559,7 +559,7 @@ class TestSemesterScale:
         assert wrong > 0
 
     def test_the_database_file_is_real_and_not_tiny(self, semester) -> None:
-        db_path = Path(semester["data_dir"]) / "database" / "classroom.sqlite"
+        db_path = Path(semester["data_dir"]) / "database" / "loomind.sqlite"
         assert db_path.exists()
         assert db_path.stat().st_size > 1_000_000, db_path.stat().st_size
 
@@ -1200,7 +1200,7 @@ class TestBackupRestore:
         with zipfile.ZipFile(result.archive_path) as archive:
             names = archive.namelist()
         # 归档里的数据库叫 ``database.sqlite``（归档内部名），不是运行时的
-        # ``classroom.sqlite`` —— 按运行时的名字找会找不到。
+        # ``loomind.sqlite`` —— 按运行时的名字找会找不到。
         assert any(name.endswith("database.sqlite") for name in names), names[:10]
 
         # ``list_backups`` 返回的是 ``BackupInfo``（字段是 ``path``），不是

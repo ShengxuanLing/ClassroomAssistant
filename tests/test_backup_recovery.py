@@ -777,7 +777,7 @@ def test_module_restore_backup_can_restore_into_a_new_data_dir(tmp_path):
     elsewhere = str(tmp_path / "elsewhere")
     restored = restore_backup(result.archive_path, elsewhere)
     assert restored.data_dir == os.path.abspath(elsewhere)
-    assert os.path.isfile(os.path.join(elsewhere, "database", "classroom.sqlite"))
+    assert os.path.isfile(os.path.join(elsewhere, "database", "loomind.sqlite"))
 
 
 # ======================================================================

@@ -236,7 +236,7 @@ class TestBundleProtocol:
         assert bundle["prompt_version"]
         assert bundle["limits"]["max_response_chars"] == MAX_RESPONSE_CHARS
         # 包里不许出现受管绝对路径 (导出物会离开本机)
-        assert "classroom-data" not in json.dumps(bundle, ensure_ascii=False)
+        assert "loomind-data" not in json.dumps(bundle, ensure_ascii=False)
         for request in bundle["requests"]:
             assert request["evidence_scope"]["material_id"] == material_id
             assert request["stage"] == "chunk_extraction"
@@ -249,7 +249,7 @@ class TestBundleProtocol:
         assert bundle["bundle_id"] in markdown
         assert MANUAL_PROTOCOL_VERSION in markdown
         assert "request_id" in markdown
-        assert "classroom-data" not in markdown
+        assert "loomind-data" not in markdown
         # 必须说明导入会重算 bundle_id (这是拒绝旧包的机制)
         assert "bundle_id" in markdown
         # R3: 说明里必须要求模型把结果写成 .json 文件（而不仅仅是贴在对话里）
@@ -661,7 +661,7 @@ class TestEndToEndImport:
 
     def test_import_does_not_need_ai_credentials(self, tmp_path, monkeypatch):
         monkeypatch.delenv(AIEnvNames.API_KEY, raising=False)
-        monkeypatch.delenv("CLASSROOM_LLM_API_KEY", raising=False)
+        monkeypatch.delenv("LOOMIND_LLM_API_KEY", raising=False)
         ws, course_id, material_id = _prepared(tmp_path)
         assert ws.ai_enabled is False  # 默认关闭
         bundle = _bundle_for(ws, course_id, material_id)
@@ -855,7 +855,7 @@ class TestManualApi:
 
 
 # ---------------------------------------------------------------------------
-# F. 配置层: CLASSROOM_AI_MODE
+# F. 配置层: LOOMIND_AI_MODE
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""Evidence extraction pipeline for the Classroom Assistant project.
+"""Evidence extraction pipeline for the Loomind project.
 
 Orchestrates different parsers based on Material type to produce
 structured Evidence objects. Supports TXT/Markdown notes via

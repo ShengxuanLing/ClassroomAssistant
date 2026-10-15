@@ -41,7 +41,7 @@ __all__ = ["AppService"]
 
 
 class AppService:
-    """课堂助手应用服务门面。
+    """Loomind 应用服务门面。
 
     构造:
     - EvidenceStore: 证据统一去重存储

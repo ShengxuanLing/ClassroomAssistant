@@ -1,4 +1,4 @@
-"""Tests for the Classroom Assistant models."""
+"""Tests for the Loomind models."""
 
 import unittest
 import uuid

@@ -35,7 +35,7 @@ from src.persistence.errors import (
 
 @pytest.fixture
 def db_path(tmp_path):
-    return str(tmp_path / "classroom.sqlite")
+    return str(tmp_path / "loomind.sqlite")
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def test_open_creates_the_database_file(db_path):
 
 
 def test_open_creates_missing_parent_directories(tmp_path):
-    nested = str(tmp_path / "a" / "b" / "c" / "classroom.sqlite")
+    nested = str(tmp_path / "a" / "b" / "c" / "loomind.sqlite")
     database = Database(nested)
     database.migrate()
     assert os.path.isfile(nested)

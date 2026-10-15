@@ -118,14 +118,14 @@ RESERVED_EXTRA_KEYS: frozenset[str] = frozenset(
 DEFAULT_EXCERPT_LIMIT = 200
 
 #: 打在本模块安装的 handler 上的标记, 用于幂等安装与精确卸载。
-_HANDLER_MARKER = "_classroom_assistant_handler"
+_HANDLER_MARKER = "_loomind_handler"
 
 #: 文件日志的标记（与 ``_HANDLER_MARKER`` 分开：同一个 logger 上会同时挂
 #: 一个控制台 handler 和一个文件 handler，两个幂等机制互不干扰）。
-_FILE_HANDLER_MARKER = "_classroom_assistant_file_handler"
+_FILE_HANDLER_MARKER = "_loomind_file_handler"
 
 #: 运行日志文件名（落在 ``<data_dir>/logs/`` 下）。
-LOG_FILENAME = "classroom.log"
+LOG_FILENAME = "loomind.log"
 
 
 def _one_line(text: str) -> str:
@@ -351,7 +351,7 @@ def attach_file_logging(
     """给 logger 再挂一个**滚动文件** handler，返回它。
 
     分工：``configure_logging`` 管"看得见的输出"（控制台 / ``sys.stderr``），
-    本函数管"留得下的输出"（``<log_dir>/classroom.log``）。安装版没有控制台，
+    本函数管"留得下的输出"（``<log_dir>/loomind.log``）。安装版没有控制台，
     此时文件日志是唯一能事后排查的线索。
 
     幂等：按 ``_FILE_HANDLER_MARKER`` 识别自己装的，不重复叠加；``force=True``

@@ -23,12 +23,12 @@ python -m src.application.cli --print-config --json
 
 ## 2. 配置文件
 
-默认在 `data_dir` 下查找 `classroom-assistant.json`。用 `--config PATH` 或
+默认在 `data_dir` 下查找 `loomind.json`。用 `--config PATH` 或
 `CLASSROOM_CONFIG=PATH` 显式指定时，文件**必须存在**，否则报错（不会静默回落到默认值）。
 
 ```json
 {
-  "data_dir": "D:/classroom-data",
+  "data_dir": "D:/loomind-data",
   "host": "127.0.0.1",
   "port": 8765,
   "max_upload_size": 209715200,
@@ -50,8 +50,8 @@ python -m src.application.cli --print-config --json
 
 | 配置键 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `data_dir` | `CLASSROOM_DATA_DIR` | `<cwd>/classroom-data` | 数据根目录 |
-| `database_path` | `CLASSROOM_DATABASE_PATH` | `<data_dir>/database/classroom.sqlite` | SQLite 路径，**必须位于 `data_dir` 内** |
+| `data_dir` | `CLASSROOM_DATA_DIR` | `<cwd>/loomind-data` | 数据根目录 |
+| `database_path` | `CLASSROOM_DATABASE_PATH` | `<data_dir>/database/loomind.sqlite` | SQLite 路径，**必须位于 `data_dir` 内** |
 | `host` | `CLASSROOM_HOST` | `127.0.0.1` | 监听地址 |
 | `port` | `CLASSROOM_PORT` | `8765` | 监听端口，`0` = 由系统分配 |
 | `max_upload_size` | `CLASSROOM_MAX_UPLOAD_SIZE` | `209715200`（200 MiB） | 单次上传字节上限 |
@@ -110,12 +110,12 @@ Chromium 系浏览器（Edge / Chrome）时，自动回退系统默认浏览器�
 `data_dir` 下固定 8 个子目录（顺序固定，便于文档与测试断言）：
 
 ```text
-classroom-data/
+loomind-data/
 ├── materials/    材料注册表（每个课程一个 JSON）
 ├── audio/        音频材料副本
 ├── images/       图片材料副本
 ├── documents/    文档 / 笔记材料副本
-├── database/     classroom.sqlite（+ -wal / -shm 边车文件）
+├── database/     loomind.sqlite（+ -wal / -shm 边车文件）
 ├── logs/         运行日志
 ├── backups/      备份归档（.zip）
 └── temp/         处理中间产物（可安全删除）

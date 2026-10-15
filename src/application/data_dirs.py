@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """应用数据目录布局与安全文件原语 (Task 35)。
 
-本模块定义课堂助手在磁盘上的**唯一**数据根 (data_dir) 及其内部结构::
+本模块定义 Loomind 在磁盘上的**唯一**数据根 (data_dir) 及其内部结构::
 
     data/
         materials/   材料注册索引 (每门课程一份 JSON)
@@ -147,7 +147,7 @@ def guard_data_dir(data_dir: str) -> str:
     2. 路径的任意一级目录名为 ``src`` 或 ``tests`` -> 拒绝 (含子目录);
     3. 路径就是仓库根 (同时含 ``AGENTS.md`` / ``src`` / ``tests``) -> 拒绝。
 
-    ``classroom-data`` / ``data-pilot`` / ``data-test`` 这类**仓库内的普通子目录**
+    ``loomind-data`` / ``data-pilot`` / ``data-test`` 这类**仓库内的普通子目录**
     (不是仓库根、也不叫 src/tests) 一律放行。
     """
     if not isinstance(data_dir, str) or not data_dir.strip():
@@ -158,7 +158,7 @@ def guard_data_dir(data_dir: str) -> str:
     if offending:
         raise ConfigurationError(
             f"data_dir must not live inside a '{offending[0]}' directory; "
-            "use a dedicated data directory (e.g. classroom-data / data-test) "
+            "use a dedicated data directory (e.g. loomind-data / data-test) "
             "outside the source tree",
             detail={"data_dir": root, "forbidden": offending[0]},
         )

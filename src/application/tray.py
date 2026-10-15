@@ -13,7 +13,7 @@
   (``ApiServer.start()`` 本来就是如此), 主线程只跑托盘事件循环
   (pystray 要求主线程) —— 不需要任何并发改造;
 - 退出顺序是 ``launcher.stop()`` -> ``icon.stop()``: 先停服务 (关数据库、
-  清 ``classroom-data/.run/`` 下的 PID / 端口标记), 再结束事件循环。
+  清 ``loomind-data/.run/`` 下的 PID / 端口标记), 再结束事件循环。
   ``run`` 的 ``finally`` 里还有一次 ``launcher.stop()`` 兜底 —— 事件循环
   无论因为什么结束, 标记都不会残留 (两处都幂等)。
 
@@ -75,7 +75,7 @@ ICON_FILENAME = "app.ico"
 
 #: 托盘组件在 pystray 内部的名字 (Windows 后端把它编进窗口类名,
 #: 自动化验收脚本按这个前缀找窗口, 见 ``docs/installer-windows.md``)。
-ICON_NAME = "classroom-assistant"
+ICON_NAME = "loomind"
 
 
 def default_icon_path() -> str:
@@ -94,12 +94,12 @@ def default_icon_path() -> str:
 
 
 def open_in_browser(url: str) -> None:
-    """打开界面 (外壳模式见 ``CLASSROOM_UI_SHELL``); 失败只记日志, 绝不杀死托盘。"""
+    """打开界面 (外壳模式见 ``LOOMIND_UI_SHELL``); 失败只记日志, 绝不杀死托盘。"""
     try:
         open_ui_window(url, shell=resolve_ui_shell())
     except Exception as exc:  # noqa: BLE001 - 打不开界面不该让服务停掉
         log_event(
-            get_logger("classroom.tray"),
+            get_logger("loomind.tray"),
             logging.WARNING,
             "tray_open_browser_failed",
             str(exc),
@@ -199,7 +199,7 @@ class TrayApp:
             if launcher is not None
             else Launcher(config, browser_opener=self.browser_opener)
         )
-        self._logger = get_logger("classroom.tray")
+        self._logger = get_logger("loomind.tray")
         self._icon: Any = None
 
     # -- 菜单动作 -------------------------------------------------------

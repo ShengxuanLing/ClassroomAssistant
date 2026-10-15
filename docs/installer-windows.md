@@ -1,11 +1,11 @@
 # Windows 安装包使用说明（TASK-110）
 
-适用版本：**1.1.1**（产物：`ClassroomAssistant-1.1.1-Setup.exe`，105.3 MB，
+适用版本：**1.1.1**（产物：`Loomind-1.1.1-Setup.exe`，105.3 MB，
 Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物 370.7 MB）。
 
 ## 下载与安装
 
-1. 从 Release 页面下载 `ClassroomAssistant-<版本>-Setup.exe`。
+1. 从 Release 页面下载 `Loomind-<版本>-Setup.exe`。
 2. 双击运行。**不需要管理员权限**：装到当前用户目录，不弹 UAC。
 3. 第一次运行会弹 SmartScreen 警告 —— 安装包未做代码签名，属预期行为：
    点「更多信息 → 仍要运行」。
@@ -13,9 +13,9 @@ Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物 370.7 MB）�
 
    | 项 | 位置 |
    | --- | --- |
-   | 程序目录 | `%LOCALAPPDATA%\Programs\ClassroomAssistant` |
-   | 开始菜单 | 「课堂助手」文件夹（可选桌面图标，安装时勾选） |
-   | 卸载入口 | 设置 → 应用 →「课堂助手 (Classroom Assistant)」，或程序目录下的 `unins000.exe` |
+   | 程序目录 | `%LOCALAPPDATA%\Programs\Loomind` |
+   | 开始菜单 | 「Loomind」文件夹（可选桌面图标，安装时勾选） |
+   | 卸载入口 | 设置 → 应用 →「Loomind」，或程序目录下的 `unins000.exe` |
 
 ## 启动与托盘
 
@@ -27,7 +27,7 @@ Edge / Chrome 时回退系统默认浏览器。想强制用浏览器标签页，
 托盘右键菜单：
 
 - **打开界面**（双击图标同效）：重新打开浏览器指向运行中的界面；
-- **打开数据目录**：在资源管理器里打开 `classroom-data`；
+- **打开数据目录**：在资源管理器里打开 `loomind-data`；
 - **退出**：停服务（清理 `.run` 标记）并结束托盘。
 
 双击第二次启动**不会**起第二个实例：端口已在本进程手中且握手确认是同一应用时，
@@ -38,9 +38,9 @@ Edge / Chrome 时回退系统默认浏览器。想强制用浏览器标签页，
 安装版的数据固定放在：
 
 ```text
-%LOCALAPPDATA%\ClassroomAssistant\classroom-data\
+%LOCALAPPDATA%\Loomind\loomind-data\
 ├── materials/  audio/  images/  documents/
-├── database/classroom.sqlite    （WAL 模式）
+├── database/loomind.sqlite    （WAL 模式）
 ├── logs/classroom.log           （启动、OCR/ASR、托盘退出都有记录）
 ├── backups/  temp/
 └── .run/launcher.pid / launcher.port   （运行期标记，退出时清理）
@@ -61,10 +61,10 @@ Edge / Chrome 时回退系统默认浏览器。想强制用浏览器标签页，
 设置 → 应用里卸载，或静默卸载：
 
 ```bat
-"%LOCALAPPDATA%\Programs\ClassroomAssistant\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+"%LOCALAPPDATA%\Programs\Loomind\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
-卸载会清掉程序目录与开始菜单项；`%LOCALAPPDATA%\ClassroomAssistant\classroom-data`
+卸载会清掉程序目录与开始菜单项；`%LOCALAPPDATA%\Loomind\loomind-data`
 （含数据库与日志）**原样保留**。需要彻底清除时手动删该目录即可。
 
 ## 从源码构建安装包（维护者）
@@ -78,8 +78,8 @@ Edge / Chrome 时回退系统默认浏览器。想强制用浏览器标签页，
 
 ```bash
 python packaging/build.py                 # 读 APPLICATION_VERSION, 先 PyInstaller 后 ISCC
-python packaging/build.py --skip-installer   # 只出 dist/ClassroomAssistant/
-python packaging/build.py --skip-exe         # 只重打安装包（复用已有 dist/ClassroomAssistant）
+python packaging/build.py --skip-installer   # 只出 dist/Loomind/
+python packaging/build.py --skip-exe         # 只重打安装包（复用已有 dist/Loomind）
 ```
 
 版本号的唯一真源是 `src/application/workspace.py::APPLICATION_VERSION`；
@@ -90,13 +90,13 @@ python packaging/build.py --skip-exe         # 只重打安装包（复用已有
 
 | 产物 | 路径 |
 | --- | --- |
-| onedir | `dist\ClassroomAssistant\ClassroomAssistant.exe` |
-| 安装包 | `dist\installer\ClassroomAssistant-<版本>-Setup.exe` |
+| onedir | `dist\Loomind\Loomind.exe` |
+| 安装包 | `dist\installer\Loomind-<版本>-Setup.exe` |
 
 ```bat
 :: 冻结产物自检（窗口程序没有控制台, 探针结果写 --out 文件）
-dist\ClassroomAssistant\ClassroomAssistant.exe verify-static --out static.txt
-dist\ClassroomAssistant\ClassroomAssistant.exe verify-ocr    --out ocr.txt
+dist\Loomind\Loomind.exe verify-static --out static.txt
+dist\Loomind\Loomind.exe verify-ocr    --out ocr.txt
 ```
 
 `verify-ocr` 会画一张含 `Classroom / 12345 / Hello` 的图并走真实 rapidocr 识别；
@@ -104,7 +104,7 @@ dist\ClassroomAssistant\ClassroomAssistant.exe verify-ocr    --out ocr.txt
 
 ## 自动化验收挂点（给脚本用）
 
-- 托盘窗口是顶层窗口，类名前缀为 `classroom-assistant`（后缀含
+- 托盘窗口是顶层窗口，类名前缀为 `loomind`（后缀含
   `SystemTrayIcon`）；可用 `EnumWindows` + `GetClassNameW` 找到；
 - 向该窗口 `PostMessageW(hwnd, 0x40A, 0, 0)`（`WM_STOP = WM_USER + 10`）
   即为**干净的退出**：等价于托盘菜单「退出」，`.run` 标记与日志按正常路径处理；

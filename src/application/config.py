@@ -16,14 +16,14 @@
 - 高优先级层覆盖低优先级层, 逐键覆盖 (不是整层替换)。
 - ``config file`` 与 ``CLI`` 里出现未知键 -> **硬错误**。理由: 这两个来源是
   我们自己解析的, 拼错键名却静默忽略, 会变成"我明明配了却没生效"。
-- ``environment`` 里出现未知的 ``CLASSROOM_*`` -> **不报错, 但记入
+- ``environment`` 里出现未知的 ``LOOMIND_*`` -> **不报错, 但记入
   ``unknown_env_vars`` (只记名字, 绝不记值)**。理由: 环境变量是继承来的
   共享命名空间, 无法区分"拼错"与"别的工具/旧版本留下的"; 但把它暴露出来,
-  拼错 ``CLASSROOM_PROT`` 就不会再悄无声息。
+  拼错 ``LOOMIND_PROT`` 就不会再悄无声息。
 - ``database_path`` 若没有任何一层指定, 则由 ``data_dir`` **派生**
   (来源标记为 ``DERIVED``), 而不是硬编码一个默认绝对路径。
-- 配置文件位置: ``--config`` / ``CLASSROOM_CONFIG`` 显式指定 (必须存在),
-  否则取**工作目录**下的 ``classroom-assistant.json``。
+- 配置文件位置: ``--config`` / ``LOOMIND_CONFIG`` 显式指定 (必须存在),
+  否则取**工作目录**下的 ``loomind.json``。
   相对路径 (含 ``--data-dir``) 一律按**进程工作目录**解析 —— 标准 CLI 行为,
   不因为传入 ``cwd`` 参数而改变 (``cwd`` 只用于定位默认 data_dir 与配置文件,
   它是测试与嵌入调用的接缝)。
@@ -68,6 +68,13 @@ __all__ = [
     # 常量
     "DEFAULT_DATA_DIR_NAME",
     "TEST_DATA_DIR_NAME",
+    "LEGACY_DATA_DIR_NAME",
+    "LEGACY_CONFIG_FILENAME",
+    "LEGACY_DATABASE_FILENAME",
+    "LEGACY_INSTALLED_ROOT_NAME",
+    "LEGACY_ENV_PREFIX",
+    "legacy_data_dir",
+    "env_value",
     "DATA_DIR_PROFILES",
     "DATA_PROFILE_ENV_VAR",
     "default_data_dir_name",
@@ -126,12 +133,24 @@ __all__ = [
 
 #: 默认数据根目录名 (相对启动时的工作目录, 不用 home 目录以免"文件去哪了")。
 #: 这个目录就是**真实 Pilot / 生产**数据所在地。
-DEFAULT_DATA_DIR_NAME = "classroom-data"
+DEFAULT_DATA_DIR_NAME = "loomind-data"
 
 #: 测试专用数据目录名。pytest / stress test / UI audit / backup drill 一律解析到
-#: 这里 (或显式传入的临时目录), 与真实 Pilot 数据 (``classroom-data``) 彻底分离
+#: 这里 (或显式传入的临时目录), 与真实 Pilot 数据 (``loomind-data``) 彻底分离
 #: (Task 71.2)。
 TEST_DATA_DIR_NAME = "data-test"
+
+#: 品牌重塑 (Classroom Assistant -> Loomind) 之前的目录名与文件名。启动时由
+#: ``src.application.data_migration`` 一次性搬到新布局 (见 :func:`legacy_data_dir`)。
+#: 这些常量**只服务于迁移**, 新代码一律用上面的新名。
+LEGACY_DATA_DIR_NAME = "classroom-data"
+LEGACY_CONFIG_FILENAME = "classroom-assistant.json"
+LEGACY_DATABASE_FILENAME = "classroom.sqlite"
+LEGACY_INSTALLED_ROOT_NAME = "ClassroomAssistant"
+
+#: 旧品牌的环境变量前缀。读取时作为**回落**: ``LOOMIND_X`` 未设才看
+#: ``CLASSROOM_X`` —— 用户既有的 ``.env`` 不会因为改名而静默失效。
+LEGACY_ENV_PREFIX = "CLASSROOM_"
 
 #: 数据目录"画像" -> 目录名。``pilot`` 是真实使用, ``test`` 是测试隔离。
 DATA_DIR_PROFILES: dict[str, str] = {
@@ -139,18 +158,18 @@ DATA_DIR_PROFILES: dict[str, str] = {
     "test": TEST_DATA_DIR_NAME,
 }
 
-#: 选择数据目录画像的环境变量 (``CLASSROOM_DATA_DIR`` 优先级更高, 因为它直接
+#: 选择数据目录画像的环境变量 (``LOOMIND_DATA_DIR`` 优先级更高, 因为它直接
 #: 指定了绝对/相对路径)。
-DATA_PROFILE_ENV_VAR = "CLASSROOM_DATA_PROFILE"
+DATA_PROFILE_ENV_VAR = "LOOMIND_DATA_PROFILE"
 
 #: 默认配置文件名 (在 data_dir 下自动发现)。
-DEFAULT_CONFIG_FILENAME = "classroom-assistant.json"
+DEFAULT_CONFIG_FILENAME = "loomind.json"
 
 #: 指向配置文件的环境变量 (它本身不是配置项)。
-CONFIG_FILE_ENV_VAR = "CLASSROOM_CONFIG"
+CONFIG_FILE_ENV_VAR = "LOOMIND_CONFIG"
 
 #: 环境变量前缀。
-ENV_PREFIX = "CLASSROOM_"
+ENV_PREFIX = "LOOMIND_"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -163,9 +182,9 @@ DEFAULT_OCR_KIND = "auto"
 #: §0 默认值: API base URL 未给时用占位, health 只断形状不断连通。
 DEFAULT_LLM_API_BASE = "https://LLM_API_BASE/v1"
 
-#: §0 默认值: model 未给时用占位, 经 CLASSROOM_LLM_MODEL 可覆写。
+#: §0 默认值: model 未给时用占位, 经 LOOMIND_LLM_MODEL 可覆写。
 DEFAULT_LLM_MODEL = "llm-model-default"
-DEFAULT_DATABASE_FILENAME = "classroom.sqlite"
+DEFAULT_DATABASE_FILENAME = "loomind.sqlite"
 DEFAULT_LOG_LEVEL = "INFO"
 
 #: 规范点名的 5 个日志级别 (Task 44 Logging)。
@@ -182,13 +201,13 @@ LOOPBACK_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
 
 #: 界面外壳模式 (TASK-111)。``app`` = 用 Chromium 系浏览器的 ``--app`` 模式开一个
 #: 无地址栏 / 无标签栏的独立窗口; ``browser`` = 交给系统默认浏览器开标签页。
-UI_SHELL_ENV_VAR = "CLASSROOM_UI_SHELL"
+UI_SHELL_ENV_VAR = "LOOMIND_UI_SHELL"
 UI_SHELL_APP = "app"
 UI_SHELL_BROWSER = "browser"
 UI_SHELLS: tuple[str, ...] = (UI_SHELL_APP, UI_SHELL_BROWSER)
 DEFAULT_UI_SHELL = UI_SHELL_APP
 
-#: 已知、但**不进入 AppConfig** 的 ``CLASSROOM_*`` 环境变量。
+#: 已知、但**不进入 AppConfig** 的 ``LOOMIND_*`` 环境变量。
 #: 它们描述"界面怎么呈现"这类客户端偏好, 与数据目录 / 端口 / 模型无关, 由运行时
 #: 直接读取 (见 :func:`resolve_ui_shell`)。登记在这里是为了让 ``read_environment``
 #: 不把它们误报进 ``unknown_env_vars`` —— 那个列表专门用来抓拼错的变量名。
@@ -196,30 +215,30 @@ RUNTIME_ENV_VARS: frozenset[str] = frozenset({UI_SHELL_ENV_VAR})
 
 #: 环境变量 -> 配置键 (唯一映射表)。
 ENV_VARS: dict[str, str] = {
-    "CLASSROOM_DATA_DIR": "data_dir",
-    "CLASSROOM_DATABASE_PATH": "database_path",
-    "CLASSROOM_HOST": "host",
-    "CLASSROOM_PORT": "port",
-    "CLASSROOM_MAX_UPLOAD_SIZE": "max_upload_size",
-    "CLASSROOM_WHISPER_MODEL": "whisper_model",
-    "CLASSROOM_WHISPER_DEVICE": "whisper_device",
-    "CLASSROOM_WHISPER_COMPUTE_TYPE": "whisper_compute_type",
-    "CLASSROOM_WHISPER_LANGUAGE": "whisper_language",
-    "CLASSROOM_ASR_MODE": "asr_mode",
-    "CLASSROOM_OCR_CONFIG": "ocr_config",
-    "CLASSROOM_LOG_LEVEL": "log_level",
-    "CLASSROOM_DEBUG": "debug",
-    "CLASSROOM_ALLOW_REMOTE": "allow_remote",
-    "CLASSROOM_LLM_API_KEY": "llm_api_key",
-    "CLASSROOM_LLM_API_BASE": "llm_api_base",
-    "CLASSROOM_LLM_MODEL": "llm_model",
+    "LOOMIND_DATA_DIR": "data_dir",
+    "LOOMIND_DATABASE_PATH": "database_path",
+    "LOOMIND_HOST": "host",
+    "LOOMIND_PORT": "port",
+    "LOOMIND_MAX_UPLOAD_SIZE": "max_upload_size",
+    "LOOMIND_WHISPER_MODEL": "whisper_model",
+    "LOOMIND_WHISPER_DEVICE": "whisper_device",
+    "LOOMIND_WHISPER_COMPUTE_TYPE": "whisper_compute_type",
+    "LOOMIND_WHISPER_LANGUAGE": "whisper_language",
+    "LOOMIND_ASR_MODE": "asr_mode",
+    "LOOMIND_OCR_CONFIG": "ocr_config",
+    "LOOMIND_LOG_LEVEL": "log_level",
+    "LOOMIND_DEBUG": "debug",
+    "LOOMIND_ALLOW_REMOTE": "allow_remote",
+    "LOOMIND_LLM_API_KEY": "llm_api_key",
+    "LOOMIND_LLM_API_BASE": "llm_api_base",
+    "LOOMIND_LLM_MODEL": "llm_model",
 }
 
 #: §0 环境变量名 (LLM 出站三件套, 固定这三个)。
 LLM_ENV_VARS: tuple[str, ...] = (
-    "CLASSROOM_LLM_API_KEY",
-    "CLASSROOM_LLM_API_BASE",
-    "CLASSROOM_LLM_MODEL",
+    "LOOMIND_LLM_API_KEY",
+    "LOOMIND_LLM_API_BASE",
+    "LOOMIND_LLM_MODEL",
 )
 
 #: ``llm_api_key`` 只允许来自进程环境变量, 禁止出现在配置文件 / CLI /
@@ -273,12 +292,20 @@ def _parse_local_environment_file(path: str) -> dict[str, str]:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip()
-        if not key or not key.startswith(ENV_PREFIX):
+        if not key:
             continue
-        # Only inject runtime AI/LLM settings.  Other CLASSROOM_* values
+        # 旧品牌前缀 (CLASSROOM_) 规范化为新名 —— 用户既有的 .env / ai-env.bat
+        # 不会因为改名而静默失效。
+        if key.startswith(LEGACY_ENV_PREFIX):
+            key = ENV_PREFIX + key[len(LEGACY_ENV_PREFIX):]
+        if not key.startswith(ENV_PREFIX):
+            continue
+        # Only inject runtime AI/LLM settings.  Other LOOMIND_* values
         # remain the responsibility of the explicit config/CLI layers, and a
         # local helper file must not unexpectedly relocate the data directory.
-        if not (key.startswith("CLASSROOM_AI_") or key.startswith("CLASSROOM_LLM_")):
+        if not (
+            key.startswith(ENV_PREFIX + "AI_") or key.startswith(ENV_PREFIX + "LLM_")
+        ):
             continue
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
@@ -538,11 +565,11 @@ class ConfigSource(str, Enum):
 def default_data_dir_name() -> str:
     """根据运行画像选择默认数据目录名 (Task 71.2)。
 
-    - 设了 ``CLASSROOM_DATA_DIR`` 时, 调用方应直接用那个显式路径, 本函数不参与;
-    - 设了 ``CLASSROOM_DATA_PROFILE=test`` 时, 解析到 ``data-test`` (测试隔离);
-    - 否则解析到 ``classroom-data`` (真实 Pilot / 生产数据)。
+    - 设了 ``LOOMIND_DATA_DIR`` 时, 调用方应直接用那个显式路径, 本函数不参与;
+    - 设了 ``LOOMIND_DATA_PROFILE=test`` 时, 解析到 ``data-test`` (测试隔离);
+    - 否则解析到 ``loomind-data`` (真实 Pilot / 生产数据)。
     """
-    profile = os.environ.get(DATA_PROFILE_ENV_VAR, "").strip().lower()
+    profile = (env_value(DATA_PROFILE_ENV_VAR) or "").strip().lower()
     name = DATA_DIR_PROFILES.get(profile)
     if name is None:
         return DEFAULT_DATA_DIR_NAME
@@ -561,7 +588,7 @@ def resolve_data_dir(
 
     - ``explicit`` 非空 -> 原样返回 (调用方已决定路径);
     - ``profile == "test"`` -> ``<base>/data-test``;
-    - ``profile == "pilot"`` 或无画像 -> ``<base>/classroom-data``。
+    - ``profile == "pilot"`` 或无画像 -> ``<base>/loomind-data``。
 
     这样同一个代码库里, 真实使用与测试运行天然落到两个不相交的目录, 测试永远
     碰不到真实 Pilot 数据。
@@ -587,14 +614,30 @@ def installed_data_root() -> str:
     """安装版的数据根目录 (用户级)。
 
     打包安装后程序位于 ``Program Files`` 或 ``%LOCALAPPDATA%\\Programs``,
-    那里对普通用户**只读**; 若仍按"启动目录下建 classroom-data"解析, 第一次
+    那里对普通用户**只读**; 若仍按"启动目录下建 loomind-data"解析, 第一次
     建库就会撞权限失败。所以冻结态把基准目录换到用户目录。
 
-    ``CLASSROOM_DATA_DIR`` 环境变量仍然优先 (它在更上层解析), 用户想换位置
+    ``LOOMIND_DATA_DIR`` 环境变量仍然优先 (它在更上层解析), 用户想换位置
     随时可以覆盖。
     """
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "ClassroomAssistant")
+    return os.path.join(base, "Loomind")
+
+
+def legacy_data_dir(cwd: Optional[str] = None) -> str:
+    """改名前的数据目录位置 (只服务于一次性迁移)。
+
+    - 冻结态 (安装版): ``%LOCALAPPDATA%\\ClassroomAssistant\\classroom-data``;
+    - 开发态: ``<cwd>/classroom-data``。
+
+    画像规则与 :func:`default_values` / :func:`installed_data_root` **同构** ——
+    迁移的目标必须正好是"改名后默认会去的地方", 否则用户升级后打开的是空库,
+    会以为数据丢了。
+    """
+    if is_frozen():
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, LEGACY_INSTALLED_ROOT_NAME, LEGACY_DATA_DIR_NAME)
+    return os.path.join(os.path.abspath(cwd or os.getcwd()), LEGACY_DATA_DIR_NAME)
 
 
 def default_values(cwd: Optional[str] = None) -> dict[str, Any]:
@@ -805,12 +848,27 @@ def read_config_file(path: str) -> dict[str, Any]:
     if forbidden:
         raise ConfigurationError(
             f"config file {absolute}: key(s) {forbidden} must only come from "
-            "process environment variables (CLASSROOM_LLM_API_KEY); "
+            "process environment variables (LOOMIND_LLM_API_KEY); "
             "refusing to read a secret from a file",
             detail={"forbidden": forbidden},
         )
     origin = f"config file {absolute}"
     return {key: _coerce(key, value, origin) for key, value in raw.items()}
+
+
+def env_value(
+    name: str, env: Optional[Mapping[str, str]] = None
+) -> Optional[str]:
+    """读一个应用环境变量: ``LOOMIND_*`` 优先, 未设时回落旧前缀 ``CLASSROOM_*``。
+
+    回落只为兼容改名前的 ``.env``; 两者都设时新名赢。返回原样的字符串 (或
+    ``None``), 不做 strip / 校验 —— 那是各调用方的事。
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+    value = source.get(name)
+    if value is None and name.startswith(ENV_PREFIX):
+        value = source.get(LEGACY_ENV_PREFIX + name[len(ENV_PREFIX):])
+    return value
 
 
 def read_environment(
@@ -819,22 +877,32 @@ def read_environment(
     """第 2 层: 环境变量。
 
     返回 ``(值, 未知变量名)``。未知变量**只记名字, 绝不记值** ——
-    否则一个 ``CLASSROOM_API_KEY=...`` 就会被我们自己的诊断信息写进日志。
+    否则一个 ``LOOMIND_API_KEY=...`` 就会被我们自己的诊断信息写进日志。
     """
     source: Mapping[str, str] = os.environ if env is None else env
     values: dict[str, Any] = {}
     unknown: list[str] = []
     for name in sorted(source):
-        if not isinstance(name, str) or not name.startswith(ENV_PREFIX):
+        if not isinstance(name, str):
             continue
-        if name == CONFIG_FILE_ENV_VAR:
+        # 新前缀为主, 旧前缀 (CLASSROOM_) 作回落 —— 用户既有的 .env 不至于
+        # 因为改名而静默失效。两者都设时新名赢。
+        if name.startswith(ENV_PREFIX):
+            canonical = name
+        elif name.startswith(LEGACY_ENV_PREFIX):
+            canonical = ENV_PREFIX + name[len(LEGACY_ENV_PREFIX):]
+        else:
             continue
-        if name in RUNTIME_ENV_VARS:
+        if canonical == CONFIG_FILE_ENV_VAR:
+            continue
+        if canonical in RUNTIME_ENV_VARS:
             # 已知, 但由运行时直接读 —— 不进配置层 (见 resolve_ui_shell)。
             continue
-        key = ENV_VARS.get(name)
+        key = ENV_VARS.get(canonical)
         if key is None:
             unknown.append(name)
+            continue
+        if name != canonical and canonical in source:
             continue
         raw = source[name]
         if raw is None:
@@ -844,13 +912,12 @@ def read_environment(
 
 
 def resolve_ui_shell(env: Optional[Mapping[str, str]] = None) -> str:
-    """解析界面外壳模式 (``CLASSROOM_UI_SHELL``)。
+    """解析界面外壳模式 (``LOOMIND_UI_SHELL``)。
 
     未设或取值非法一律回退 ``"app"`` —— 这是纯客户端偏好, 写错不该让服务起不来
     (界面照样打得开, 只是回到浏览器标签页)。
     """
-    source: Mapping[str, str] = os.environ if env is None else env
-    value = (source.get(UI_SHELL_ENV_VAR) or "").strip().lower()
+    value = (env_value(UI_SHELL_ENV_VAR, env) or "").strip().lower()
     return value if value in UI_SHELLS else DEFAULT_UI_SHELL
 
 
@@ -869,7 +936,7 @@ def normalise_overrides(
     if forbidden:
         raise ConfigurationError(
             f"command line: key(s) {forbidden} must only come from "
-            "process environment variables (CLASSROOM_LLM_API_KEY)",
+            "process environment variables (LOOMIND_LLM_API_KEY)",
             detail={"forbidden": forbidden},
         )
     out: dict[str, Any] = {}
@@ -892,9 +959,9 @@ def discover_config_file(
 
     规则 (确定性, 只有这两条):
 
-    1. 显式指定 (``--config`` / ``CLASSROOM_CONFIG``) -> **必须存在**, 否则报错。
+    1. 显式指定 (``--config`` / ``LOOMIND_CONFIG``) -> **必须存在**, 否则报错。
        显式点名一个不存在的文件却被静默忽略, 是最容易让人白查半天的一类 bug。
-    2. 否则看工作目录下的 ``classroom-assistant.json``; 再没有就是没有。
+    2. 否则看工作目录下的 ``loomind.json``; 再没有就是没有。
 
     **为什么不在 data_dir 下找**: 配置文件的首要职责之一就是告诉程序
     ``data_dir`` 在哪 —— 再去 data_dir 里找配置文件, 在用户看来是个循环。
@@ -904,7 +971,7 @@ def discover_config_file(
     """
     source: Mapping[str, str] = os.environ if env is None else env
 
-    requested = explicit or source.get(CONFIG_FILE_ENV_VAR)
+    requested = explicit or env_value(CONFIG_FILE_ENV_VAR, env)
     if isinstance(requested, str) and requested.strip():
         absolute = os.path.abspath(requested.strip())
         if not os.path.isfile(absolute):
@@ -955,7 +1022,7 @@ class AppConfig:
     config_path: Optional[str] = None
     #: 每个配置值的来源。不参与相等比较 (它是元数据, 不是配置本身)。
     sources: Mapping[str, str] = field(default_factory=dict, compare=False, repr=False)
-    #: 无法识别的 ``CLASSROOM_*`` 环境变量名 (只有名字)。
+    #: 无法识别的 ``LOOMIND_*`` 环境变量名 (只有名字)。
     unknown_env_vars: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------
@@ -1022,7 +1089,7 @@ class AppConfig:
         if any(k in _LLM_ENV_ONLY_KEYS and overrides.get(k) is not None for k in overrides):
             raise ConfigurationError(
                 "override: llm_api_key must only come from "
-                "process environment variables (CLASSROOM_LLM_API_KEY)",
+                "process environment variables (LOOMIND_LLM_API_KEY)",
                 detail={"forbidden": ["llm_api_key"]},
             )
         current = self._writable_dict()
@@ -1107,7 +1174,7 @@ class AppConfig:
             raise ConfigurationError(
                 f"host {self.host!r} is not a loopback address; this is a local "
                 "single-user application. Pass allow_remote=True "
-                "(CLI: --allow-remote, env: CLASSROOM_ALLOW_REMOTE=1) to bind it anyway.",
+                "(CLI: --allow-remote, env: LOOMIND_ALLOW_REMOTE=1) to bind it anyway.",
                 detail={"host": self.host, "allowed": list(LOOPBACK_HOSTS)},
             )
 
@@ -1214,7 +1281,7 @@ class AppConfig:
             if origin not in (ConfigSource.ENV.value, ConfigSource.DEFAULT.value):
                 raise ConfigurationError(
                     "llm_api_key must only come from process environment "
-                    "(CLASSROOM_LLM_API_KEY)",
+                    "(LOOMIND_LLM_API_KEY)",
                     detail={"origin": origin},
                 )
         if not isinstance(self.llm_api_base, str) or not self.llm_api_base.strip():
@@ -1355,7 +1422,7 @@ class AppConfig:
         if self.unknown_env_vars:
             lines.append(
                 f"  {'ignored env vars':<20} = {list(self.unknown_env_vars)!r} "
-                "(unrecognised CLASSROOM_* variables)"
+                "(unrecognised LOOMIND_* variables)"
             )
         return "\n".join(lines)
 

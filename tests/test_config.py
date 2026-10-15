@@ -42,6 +42,7 @@ from src.application.config import (
     ConfigSource,
     default_values,
     discover_config_file,
+    env_value,
     load_config,
     load_local_environment,
     normalise_overrides,
@@ -73,36 +74,74 @@ def _write_config(directory: str, payload: object, name: str = DEFAULT_CONFIG_FI
 
 
 # ======================================================================
+# 品牌改名 (Classroom Assistant -> Loomind): 旧环境变量前缀的回落
+# ======================================================================
+
+
+def test_env_value_falls_back_to_the_legacy_prefix():
+    """只有旧名时 ``env_value`` 返回旧名的值 —— 用户既有的 .env 不失效。"""
+    assert env_value("LOOMIND_DEBUG", {"CLASSROOM_DEBUG": "true"}) == "true"
+
+
+def test_env_value_prefers_the_new_prefix_when_both_are_set():
+    env = {"LOOMIND_DEBUG": "true", "CLASSROOM_DEBUG": "false"}
+    assert env_value("LOOMIND_DEBUG", env) == "true"
+
+
+def test_read_environment_accepts_the_legacy_prefix():
+    values, unknown = read_environment({"CLASSROOM_PORT": "9999"})
+    assert values["port"] == 9999
+    assert unknown == ()
+
+
+def test_new_prefix_wins_over_the_legacy_prefix_in_the_environment_layer():
+    values, _ = read_environment({"LOOMIND_PORT": "1111", "CLASSROOM_PORT": "9999"})
+    assert values["port"] == 1111
+
+
+def test_local_environment_file_normalises_the_legacy_prefix(tmp_path):
+    """旧名写在 .env 里也要生效: 规范化成新名后再注入进程环境。"""
+    (tmp_path / ".env").write_text(
+        "CLASSROOM_AI_ENABLED=true\nCLASSROOM_AI_MODEL=legacy-model\n",
+        encoding="utf-8",
+    )
+    env: dict[str, str] = {}
+    load_local_environment(str(tmp_path), env=env)
+    assert env["LOOMIND_AI_ENABLED"] == "true"
+    assert env["LOOMIND_AI_MODEL"] == "legacy-model"
+
+
+# ======================================================================
 # 本地 AI 环境加载
 # ======================================================================
 
 
 def test_local_environment_loader_precedence_is_process_dotenv_then_batch(tmp_path):
     (tmp_path / ".env").write_text(
-        "CLASSROOM_AI_ENABLED=true\n"
-        'CLASSROOM_AI_MODEL="dotenv-model"\n'
-        "CLASSROOM_AI_TIMEOUT_SECONDS=30\n"
-        "CLASSROOM_DATA_DIR=must-not-move-the-data-root\n",
+        "LOOMIND_AI_ENABLED=true\n"
+        'LOOMIND_AI_MODEL="dotenv-model"\n'
+        "LOOMIND_AI_TIMEOUT_SECONDS=30\n"
+        "LOOMIND_DATA_DIR=must-not-move-the-data-root\n",
         encoding="utf-8",
     )
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     (scripts / "ai-env.bat").write_text(
         "@echo off\n"
-        'set "CLASSROOM_AI_ENABLED=false"\n'
-        'set "CLASSROOM_AI_MODEL=batch-model"\n'
-        'set "CLASSROOM_AI_API_KEY=batch-secret-placeholder"\n',
+        'set "LOOMIND_AI_ENABLED=false"\n'
+        'set "LOOMIND_AI_MODEL=batch-model"\n'
+        'set "LOOMIND_AI_API_KEY=batch-secret-placeholder"\n',
         encoding="utf-8",
     )
-    env = {"CLASSROOM_AI_ENABLED": "false"}
+    env = {"LOOMIND_AI_ENABLED": "false"}
 
     loaded = load_local_environment(str(tmp_path), env=env)
 
-    assert env["CLASSROOM_AI_ENABLED"] == "false"  # process wins
-    assert env["CLASSROOM_AI_MODEL"] == "dotenv-model"  # .env wins over batch
-    assert env["CLASSROOM_AI_TIMEOUT_SECONDS"] == "30"
-    assert env["CLASSROOM_AI_API_KEY"] == "batch-secret-placeholder"
-    assert "CLASSROOM_DATA_DIR" not in env  # never relocate data from a helper file
+    assert env["LOOMIND_AI_ENABLED"] == "false"  # process wins
+    assert env["LOOMIND_AI_MODEL"] == "dotenv-model"  # .env wins over batch
+    assert env["LOOMIND_AI_TIMEOUT_SECONDS"] == "30"
+    assert env["LOOMIND_AI_API_KEY"] == "batch-secret-placeholder"
+    assert "LOOMIND_DATA_DIR" not in env  # never relocate data from a helper file
     assert loaded == (
         str(tmp_path / ".env"),
         str(scripts / "ai-env.bat"),
@@ -112,12 +151,12 @@ def test_local_environment_loader_precedence_is_process_dotenv_then_batch(tmp_pa
 
 def test_local_environment_loader_accepts_export_and_quoted_batch_values(tmp_path):
     (tmp_path / ".env").write_text(
-        "export CLASSROOM_AI_ENABLED='true'\n", encoding="utf-8"
+        "export LOOMIND_AI_ENABLED='true'\n", encoding="utf-8"
     )
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     (scripts / "ai-env.bat").write_text(
-        'set "CLASSROOM_AI_BASE_URL=https://example.invalid/v1"\n',
+        'set "LOOMIND_AI_BASE_URL=https://example.invalid/v1"\n',
         encoding="utf-8",
     )
     env = {}
@@ -125,8 +164,8 @@ def test_local_environment_loader_accepts_export_and_quoted_batch_values(tmp_pat
     load_local_environment(str(tmp_path), env=env)
 
     assert env == {
-        "CLASSROOM_AI_ENABLED": "true",
-        "CLASSROOM_AI_BASE_URL": "https://example.invalid/v1",
+        "LOOMIND_AI_ENABLED": "true",
+        "LOOMIND_AI_BASE_URL": "https://example.invalid/v1",
     }
 
 
@@ -274,7 +313,7 @@ def test_config_file_overrides_defaults(cwd):
 
 def test_environment_overrides_config_file(cwd):
     _write_config(cwd, {"port": 1111})
-    config = load_config(cwd=cwd, env={"CLASSROOM_PORT": "2222"})
+    config = load_config(cwd=cwd, env={"LOOMIND_PORT": "2222"})
     assert config.port == 2222
     assert config.source_of("port") is ConfigSource.ENV
 
@@ -282,7 +321,7 @@ def test_environment_overrides_config_file(cwd):
 def test_cli_overrides_environment(cwd):
     _write_config(cwd, {"port": 1111})
     config = load_config(
-        cwd=cwd, env={"CLASSROOM_PORT": "2222"}, cli_overrides={"port": 3333}
+        cwd=cwd, env={"LOOMIND_PORT": "2222"}, cli_overrides={"port": 3333}
     )
     assert config.port == 3333
     assert config.source_of("port") is ConfigSource.CLI
@@ -293,7 +332,7 @@ def test_all_four_layers_apply_at_once(cwd):
     _write_config(cwd, {"port": 1111, "host": "localhost", "log_level": "debug"})
     config = load_config(
         cwd=cwd,
-        env={"CLASSROOM_HOST": "::1", "CLASSROOM_LOG_LEVEL": "warning"},
+        env={"LOOMIND_HOST": "::1", "LOOMIND_LOG_LEVEL": "warning"},
         cli_overrides={"log_level": "critical"},
     )
     assert (config.port, config.source_of("port")) == (1111, ConfigSource.FILE)
@@ -308,7 +347,7 @@ def test_all_four_layers_apply_at_once(cwd):
 
 def test_absent_key_in_a_high_layer_does_not_clear_a_low_layer(cwd):
     _write_config(cwd, {"port": 1111})
-    config = load_config(cwd=cwd, env={"CLASSROOM_LOG_LEVEL": "debug"})
+    config = load_config(cwd=cwd, env={"LOOMIND_LOG_LEVEL": "debug"})
     assert config.port == 1111
 
 
@@ -360,19 +399,19 @@ def test_database_path_can_be_overridden_from_the_cli(cwd):
 
 @pytest.mark.parametrize("env_name,key,value", sorted(
     [
-        ("CLASSROOM_DATA_DIR", "data_dir", "env-data"),
-        ("CLASSROOM_HOST", "host", "localhost"),
-        ("CLASSROOM_PORT", "port", "4321"),
-        ("CLASSROOM_MAX_UPLOAD_SIZE", "max_upload_size", "8192"),
-        ("CLASSROOM_WHISPER_MODEL", "whisper_model", "medium"),
-        ("CLASSROOM_WHISPER_DEVICE", "whisper_device", "cuda"),
-        ("CLASSROOM_WHISPER_COMPUTE_TYPE", "whisper_compute_type", "float16"),
-        ("CLASSROOM_WHISPER_LANGUAGE", "whisper_language", "es"),
-        ("CLASSROOM_ASR_MODE", "asr_mode", "mock"),
-        ("CLASSROOM_OCR_CONFIG", "ocr_config", '{"kind": "mock"}'),
-        ("CLASSROOM_LOG_LEVEL", "log_level", "error"),
-        ("CLASSROOM_DEBUG", "debug", "1"),
-        ("CLASSROOM_ALLOW_REMOTE", "allow_remote", "true"),
+        ("LOOMIND_DATA_DIR", "data_dir", "env-data"),
+        ("LOOMIND_HOST", "host", "localhost"),
+        ("LOOMIND_PORT", "port", "4321"),
+        ("LOOMIND_MAX_UPLOAD_SIZE", "max_upload_size", "8192"),
+        ("LOOMIND_WHISPER_MODEL", "whisper_model", "medium"),
+        ("LOOMIND_WHISPER_DEVICE", "whisper_device", "cuda"),
+        ("LOOMIND_WHISPER_COMPUTE_TYPE", "whisper_compute_type", "float16"),
+        ("LOOMIND_WHISPER_LANGUAGE", "whisper_language", "es"),
+        ("LOOMIND_ASR_MODE", "asr_mode", "mock"),
+        ("LOOMIND_OCR_CONFIG", "ocr_config", '{"kind": "mock"}'),
+        ("LOOMIND_LOG_LEVEL", "log_level", "error"),
+        ("LOOMIND_DEBUG", "debug", "1"),
+        ("LOOMIND_ALLOW_REMOTE", "allow_remote", "true"),
     ]
 ))
 def test_every_env_var_is_honoured(cwd, env_name, key, value):
@@ -382,7 +421,7 @@ def test_every_env_var_is_honoured(cwd, env_name, key, value):
 
 def test_environment_database_path_is_honoured(cwd):
     target = os.path.join(cwd, DEFAULT_DATA_DIR_NAME, "env-db.sqlite")
-    config = load_config(cwd=cwd, env={"CLASSROOM_DATABASE_PATH": target})
+    config = load_config(cwd=cwd, env={"LOOMIND_DATABASE_PATH": target})
     assert config.database_path == os.path.abspath(target)
     assert config.source_of("database_path") is ConfigSource.ENV
 
@@ -462,7 +501,7 @@ def test_explicitly_requested_missing_config_file_is_an_error(cwd, tmp_path):
 
 def test_config_path_env_var_is_honoured(tmp_path, cwd):
     path = _write_config(str(tmp_path), {"port": 8888}, name="via-env.json")
-    config = load_config(cwd=cwd, env={"CLASSROOM_CONFIG": path})
+    config = load_config(cwd=cwd, env={"LOOMIND_CONFIG": path})
     assert config.port == 8888
     assert config.config_path == os.path.abspath(path)
 
@@ -518,20 +557,20 @@ def test_config_file_may_be_utf8_with_multibyte_values(tmp_path, cwd):
 
 def test_unknown_env_vars_are_recorded_by_name():
     values, unknown = read_environment(
-        {"CLASSROOM_PORT": "1", "CLASSROOM_PROT": "9999", "CLASSROOM_API_KEY": "x"}
+        {"LOOMIND_PORT": "1", "LOOMIND_PROT": "9999", "LOOMIND_API_KEY": "x"}
     )
     assert values == {"port": 1}
-    assert unknown == ("CLASSROOM_API_KEY", "CLASSROOM_PROT")
+    assert unknown == ("LOOMIND_API_KEY", "LOOMIND_PROT")
 
 
 def test_unknown_env_var_values_are_never_stored(cwd):
     """诊断信息里泄露一个 API key, 等于把密钥写进了日志。"""
     config = load_config(
-        cwd=cwd, env={"CLASSROOM_API_KEY": "super-secret-value"}
+        cwd=cwd, env={"LOOMIND_API_KEY": "super-secret-value"}
     )
     blob = json.dumps(config.to_dict(), ensure_ascii=False) + repr(config) + config.describe()
     assert "super-secret-value" not in blob
-    assert config.unknown_env_vars == ("CLASSROOM_API_KEY",)
+    assert config.unknown_env_vars == ("LOOMIND_API_KEY",)
 
 
 def test_non_classroom_env_vars_are_ignored():
@@ -541,14 +580,14 @@ def test_non_classroom_env_vars_are_ignored():
 
 
 def test_config_file_env_var_is_not_a_config_key():
-    values, unknown = read_environment({"CLASSROOM_CONFIG": "/tmp/x.json"})
+    values, unknown = read_environment({"LOOMIND_CONFIG": "/tmp/x.json"})
     assert values == {}
     assert unknown == ()
 
 
 def test_read_environment_is_deterministic():
-    first = read_environment({"CLASSROOM_PORT": "1", "CLASSROOM_B": "x", "CLASSROOM_A": "y"})
-    second = read_environment({"CLASSROOM_A": "y", "CLASSROOM_B": "x", "CLASSROOM_PORT": "1"})
+    first = read_environment({"LOOMIND_PORT": "1", "LOOMIND_B": "x", "LOOMIND_A": "y"})
+    second = read_environment({"LOOMIND_A": "y", "LOOMIND_B": "x", "LOOMIND_PORT": "1"})
     assert first == second
 
 
@@ -557,7 +596,7 @@ def test_empty_environment_yields_nothing():
 
 
 def test_runtime_only_env_vars_are_known_but_never_become_config():
-    """``CLASSROOM_UI_SHELL`` 由运行时直接读 —— 既不报"未知变量", 也不进配置。"""
+    """``LOOMIND_UI_SHELL`` 由运行时直接读 —— 既不报"未知变量", 也不进配置。"""
     assert UI_SHELL_ENV_VAR in RUNTIME_ENV_VARS
     assert UI_SHELL_ENV_VAR not in ENV_VARS
     values, unknown = read_environment({UI_SHELL_ENV_VAR: "browser"})
@@ -566,7 +605,7 @@ def test_runtime_only_env_vars_are_known_but_never_become_config():
 
 
 # ======================================================================
-# 界面外壳模式: CLASSROOM_UI_SHELL (TASK-111)
+# 界面外壳模式: LOOMIND_UI_SHELL (TASK-111)
 # ======================================================================
 
 
@@ -965,7 +1004,7 @@ def test_ocr_config_is_a_copy_of_the_input(tmp_path, cwd):
 
 
 def test_sources_do_not_affect_equality(cwd):
-    first = load_config(cwd=cwd, env={"CLASSROOM_PORT": "1"})
+    first = load_config(cwd=cwd, env={"LOOMIND_PORT": "1"})
     second = load_config(cwd=cwd, env={}, cli_overrides={"port": 1})
     assert first == second
     assert first.source_of("port") is not second.source_of("port")
@@ -997,7 +1036,7 @@ def test_with_overrides_with_no_arguments_is_identity(cwd):
 
 
 def test_with_overrides_preserves_metadata(cwd):
-    config = load_config(cwd=cwd, env={"CLASSROOM_PROT": "x"})
+    config = load_config(cwd=cwd, env={"LOOMIND_PROT": "x"})
     changed = config.with_overrides(port=1)
     assert changed.unknown_env_vars == config.unknown_env_vars
     assert changed.config_path == config.config_path
@@ -1049,8 +1088,8 @@ def test_describe_lists_every_key_and_its_source(cwd):
 
 
 def test_describe_mentions_ignored_env_vars(cwd):
-    config = load_config(cwd=cwd, env={"CLASSROOM_NOPE": "1"})
-    assert "CLASSROOM_NOPE" in config.describe()
+    config = load_config(cwd=cwd, env={"LOOMIND_NOPE": "1"})
+    assert "LOOMIND_NOPE" in config.describe()
 
 
 def test_describe_mentions_the_config_path(tmp_path, cwd):

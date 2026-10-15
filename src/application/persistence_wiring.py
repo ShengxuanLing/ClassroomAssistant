@@ -99,7 +99,7 @@ __all__ = [
 #: 与 ``src.application.config.DEFAULT_DATABASE_FILENAME`` 保持一致。
 #: 这里**复述**而不是 import 配置层: 配置层是"说明 data_dir 在哪"的地方,
 #: 让存储接线反过来依赖它会把两层的职责搅在一起。
-DEFAULT_DATABASE_FILENAME = "classroom.sqlite"
+DEFAULT_DATABASE_FILENAME = "loomind.sqlite"
 
 #: 失败注入点 (Task 53)。
 #:
@@ -149,7 +149,7 @@ class WorkspacePersistence:
 
     典型用法::
 
-        store = WorkspacePersistence.open("data/database/classroom.sqlite")
+        store = WorkspacePersistence.open("data/database/loomind.sqlite")
         store.save_course(course)
         ...
         store.close()
@@ -818,7 +818,7 @@ def build_answer_log(
 
 
 def default_database_path(data_dir: str) -> str:
-    """``<data_dir>/database/classroom.sqlite`` (与配置层的派生规则一致)。"""
+    """``<data_dir>/database/loomind.sqlite`` (与配置层的派生规则一致)。"""
     return os.path.join(os.path.abspath(data_dir), "database", DEFAULT_DATABASE_FILENAME)
 
 

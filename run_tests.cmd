@@ -1,5 +1,5 @@
 @echo off
-REM 课堂助手 测试运行器 (修复: 使用便携 Python, 跑非集成全套)
+REM Loomind 测试运行器 (修复: 使用便携 Python, 跑非集成全套)
 chcp 65001 >nul 2>&1
 
 setlocal

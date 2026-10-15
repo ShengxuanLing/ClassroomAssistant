@@ -1,4 +1,4 @@
-# Classroom Assistant - Python dependencies
+# Loomind - Python dependencies
 
 # Core: stdlib only for the data-model / index / knowledge layers.
 

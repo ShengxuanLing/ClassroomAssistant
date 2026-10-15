@@ -1,4 +1,4 @@
-# 课堂助手 · Agent 任务计划书模板
+# Loomind · Agent 任务计划书模板
 
 > 这是给**任何** agent（codex / cline / opencode / freebuff / workbuddy）执行任务时用的计划书模板。
 > 澳龙每次接到用户需求，会按这个模板写一份 `docs/task-xxx-<slug>-plan.md`，然后把它交给目标 agent。

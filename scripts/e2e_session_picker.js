@@ -12,7 +12,7 @@
  * temp/e2e_student_ui.js 需要用户先在 8765 上起服务, 所以留在 temp/。
  *
  * 写的是**临时目录** (temp/_e2e_session_picker_data/), 跑完就删; 不碰
- * classroom-data/。服务由本脚本 spawn, 结束前 kill。
+ * loomind-data/。服务由本脚本 spawn, 结束前 kill。
  *
  * 用法: node scripts/e2e_session_picker.js
  */

@@ -1,4 +1,4 @@
-"""Course-level knowledge organization for the Classroom Assistant project.
+"""Course-level knowledge organization for the Loomind project.
 
 Task 26 - Knowledge Organization & Course-Level Knowledge Structure.
 

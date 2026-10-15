@@ -142,7 +142,7 @@ curl -X POST "http://127.0.0.1:8765/api/materials?course_id=<course_id>&session_
 
 要点：
 
-- 上传后文件被**复制**进 `classroom-data/{audio|images|documents}/`，
+- 上传后文件被**复制**进 `loomind-data/{audio|images|documents}/`，
   文件名**保持原样**（含中文、重音字符、空格）。
 - **同名 + 同内容**只登记一次：第二次上传会返回已有记录并标 `duplicate: true`。
 - 超出 `max_upload_size`（默认 200 MiB）、扩展名不支持、零字节文件都会被拒绝，
@@ -252,16 +252,16 @@ curl http://127.0.0.1:8765/api/evaluations/<answer_id>
 ```python
 from src.backup import create_backup, list_backups, restore_backup
 
-result = create_backup("classroom-data", label="before-exam")
+result = create_backup("loomind-data", label="before-exam")
 print(result.archive_path, result.manifest.material_file_count)
 
-for info in list_backups("classroom-data"):
+for info in list_backups("loomind-data"):
     print(info.archive_path, info.created_at)
 
-restore_backup(result.archive_path, "classroom-data-restored")
+restore_backup(result.archive_path, "loomind-data-restored")
 ```
 
-归档落在 `classroom-data/backups/*.zip`。格式、校验规则与恢复流程详见
+归档落在 `loomind-data/backups/*.zip`。格式、校验规则与恢复流程详见
 [backup_restore.md](backup_restore.md)。
 
 ## 10. 下一步

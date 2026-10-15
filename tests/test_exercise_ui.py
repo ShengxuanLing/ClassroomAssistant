@@ -1213,7 +1213,7 @@ class TestUiRenderExecution:
     @staticmethod
     def _node() -> str:
         candidates = [
-            os.environ.get("CLASSROOM_NODE"),
+            os.environ.get("LOOMIND_NODE"),
             "node",
             r"C:/Users/Rafae/.workbuddy-ai/binaries/node/versions/22.22.2-2/node.exe",
             r"C:/Program Files/nodejs/node.exe",

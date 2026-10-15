@@ -434,7 +434,7 @@ def dataset_dir(tmp_path_factory) -> pathlib.Path:
 def gate(tmp_path_factory, dataset_dir) -> dict:
     """建一次 (真子进程) -> 重启观察一次 (另一个真子进程)。"""
     root = tmp_path_factory.mktemp("gate")
-    data_dir = root / "classroom-data"
+    data_dir = root / "loomind-data"
     manifest_path = root / "manifest.json"
     observed_path = root / "observed.json"
 
@@ -1057,7 +1057,7 @@ DB_BYTES_PER_ROW_MAX = 4096
 def scale(tmp_path_factory) -> dict:
     """按 spec 规模通过**持久化层**建一次库, 并记录足迹。"""
     root = tmp_path_factory.mktemp("scale55")
-    db_path = root / "classroom.sqlite"
+    db_path = root / "loomind.sqlite"
 
     from src.answer_evaluation import StudentAnswer
     from src.application.learning_service import LearningService

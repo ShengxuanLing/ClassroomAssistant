@@ -271,7 +271,7 @@ def test_service_rejects_an_invalid_database_filename(tmp_path, bad):
         _service(str(tmp_path / "data"), database_filename=bad)
 
 
-@pytest.mark.parametrize("bad", ["sub/classroom.sqlite", "sub\\classroom.sqlite", "../x.sqlite"])
+@pytest.mark.parametrize("bad", ["sub/loomind.sqlite", "sub\\loomind.sqlite", "../x.sqlite"])
 def test_service_rejects_a_database_filename_with_a_directory_component(tmp_path, bad):
     with pytest.raises(BackupValidationError) as caught:
         _service(str(tmp_path / "data"), database_filename=bad)
@@ -1081,7 +1081,7 @@ def test_restore_result_to_dict_is_json_serialisable():
     result = RestoreResult(
         archive_path="a.zip",
         data_dir="data",
-        database_path="data/database/classroom.sqlite",
+        database_path="data/database/loomind.sqlite",
         replaced_dirs=("database", "audio"),
         material_file_count=2,
         migrated_from=1,

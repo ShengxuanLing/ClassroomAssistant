@@ -1,4 +1,4 @@
-"""Unified Evidence Store for the Classroom Assistant project (Task 23).
+"""Unified Evidence Store for the Loomind project (Task 23).
 
 This module provides the single authoritative in-memory Evidence registry
 for the whole project.  All Evidence produced by the extractors

@@ -17,7 +17,7 @@ from src.persistence.repositories import Repositories
 @pytest.fixture
 def db_path(tmp_path):
     """一个临时 SQLite 文件路径 (尚未创建)。"""
-    return str(tmp_path / "classroom.sqlite")
+    return str(tmp_path / "loomind.sqlite")
 
 
 @pytest.fixture

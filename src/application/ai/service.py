@@ -56,7 +56,7 @@ __all__ = [
 #: 未启用时的统一错误 (400, 非 500 —— release 契约门要求)。
 AI_DISABLED_MESSAGE = (
     "AI understanding pipeline is disabled "
-    "(set CLASSROOM_AI_ENABLED=true or call configure_ai(enabled=True)); "
+    "(set LOOMIND_AI_ENABLED=true or call configure_ai(enabled=True)); "
     "the deterministic pipeline remains available"
 )
 
@@ -112,7 +112,7 @@ class AIAnalysisService:
         tolerate_chunk_failures: bool = False,
     ) -> AIAnalysisReport:
         # TASK-82: 超时不再是硬编码 60s —— 未显式传入时读
-        # `load_ai_config().timeout_seconds` (env `CLASSROOM_AI_TIMEOUT_SECONDS`),
+        # `load_ai_config().timeout_seconds` (env `LOOMIND_AI_TIMEOUT_SECONDS`),
         # 但显式参数仍然可以覆盖 (测试 / 调用方按需收紧)。
         if timeout_seconds is None:
             from src.application.ai.config import load_ai_config
@@ -458,7 +458,7 @@ class AIAnalysisService:
         """图片材料的原始字节 (vision 可选; 拿不到就回 OCR, 不报错)。
 
         三重门: 材料是图片 + provider 声明 ``supports_image_bytes`` (即
-        ``CLASSROOM_AI_ALLOW_IMAGE_BYTES=true`` 装配) + 受管文件可读且
+        ``LOOMIND_AI_ALLOW_IMAGE_BYTES=true`` 装配) + 受管文件可读且
         不超过 ``MAX_IMAGE_BYTES``。任一不满足即 None —— 调用方走纯 OCR
         路径, 材料不受影响。
         """
