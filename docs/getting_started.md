@@ -6,7 +6,7 @@
 
 ## 1. 环境
 
-- Python **3.10+**（仓库自带可移植解释器 `Python/pythoncore-3.14-64/python.exe`，3.14.7）
+- Python **3.13 或 3.14**（仓库不自带解释器，需自行安装；见 README 的「源码运行（开发者）」）
 - 操作系统：Windows 优先（启动脚本是 `.bat`）；Linux / macOS 可用命令行方式
 - 不需要 GPU，不需要 FFmpeg 可执行文件（PyAV 自带库），不需要联网（模型下载除外）
 
