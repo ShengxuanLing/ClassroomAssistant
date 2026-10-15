@@ -137,7 +137,7 @@ function materialAnalysisCell(m, analysis) {
     html += '<br><span class="pill pill-bad">' + esc(t('ai.autoFailed')) + '</span>' +
       '<br><span class="tiny muted">' + esc(t('mat.failedStage')) + ': ' + esc(stage) + '</span>';
     if (analysis.error_message) {
-      html += '<br><span class="tiny pill pill-bad">' + esc(analysis.error_message) + '</span>';
+      html += '<br><span class="pill pill-bad" style="font-size: 0.85em;">' + esc(analysis.error_message) + '</span>';
     }
   } else if (status === 'SKIPPED') {
     html += '<br><span class="pill pill-warn">' + esc(t('mat.aiSkipped')) + '</span>';
@@ -147,7 +147,7 @@ function materialAnalysisCell(m, analysis) {
   html += analysisKnowledgeHint(analysis);
   // 摄取层自己的错误行 (FAILED / warning / 零证据) 原样保留 —— 它们是
   // 服务端诊断, 不是用户可执行的内部操作。
-  if (m.error) html += '<br><span class="tiny pill pill-bad">' + esc(m.error) + '</span>';
+  if (m.error) html += '<br><span class="pill pill-bad" style="font-size: 0.85em;">' + esc(m.error) + '</span>';
   html += warningRow(m) + zeroEvidenceHint(m);
   return html;
 }
@@ -269,6 +269,7 @@ function renderAiStages(report) {
   const items = stages.map((st) => {
     const done = st.state === 'done';
     const mark = done ? '✓' : '○';
+    // 使用 design token: 完成用 --ok-line, 进行中用 --accent-line
     const cls = done ? 'pill-ok' : 'pill-warn';
     return '<li><span class="pill ' + cls + '">' + esc(mark) + '</span> ' +
       '<span class="mono tiny">' + esc(st.stage || '') + '</span>' +
@@ -282,9 +283,9 @@ function aiAutoLine(ai) {
   if (!ai || ai.status === 'disabled') return '';
   if (ai.status === 'completed') {
     return '<span class="tiny muted">' + esc(t('ai.autoDone')) + ': ' +
-      esc(t('ai.autoAccepted')) + ' ' + esc(ai.auto_accepted || 0) + ' · ' +
-      esc(t('ai.needsReview')) + ' ' + esc(ai.needs_review || 0) + ' · ' +
-      esc(t('ai.conflicts')) + ' ' + esc(ai.conflicts || 0) + '</span>';
+      '<span class="pill pill-ok">' + esc(t('ai.autoAccepted')) + ' ' + esc(ai.auto_accepted || 0) + '</span>' + ' · ' +
+      '<span class="pill pill-warn">' + esc(t('ai.needsReview')) + ' ' + esc(ai.needs_review || 0) + '</span>' + ' · ' +
+      '<span class="pill pill-bad">' + esc(t('ai.conflicts')) + ' ' + esc(ai.conflicts || 0) + '</span>' + '</span>';
   }
   if (ai.status === 'failed') {
     return '<span class="tiny pill pill-bad">' + esc(t('ai.autoFailed')) + '</span> ' +
@@ -600,6 +601,117 @@ function manualImportSummary(result) {
     (result.bundle_id ? ' · ' + esc(result.bundle_id) : '') + '</p>';
 }
 
+function manualNormalizeResponseText(text) {
+  if (typeof text !== 'string') return '';
+  let s = text;
+  if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1); // 去 UTF-8 BOM
+  // 去一层最外层 markdown 代码围栏（三反引号 + 可选 json 标注）
+  const fence = s.match(/^\s*```(?:\s*json\s*)?\r?\n(.*?)\r?\n\s*```\s*$/s);
+  if (fence) s = fence[1];
+  return s.trim();
+}
+
+function manualFileProblem(payload, bundle) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return 'manual.fileBare';
+  }
+  if (Array.isArray(payload.requests) && !Array.isArray(payload.responses)) {
+    return 'manual.fileIsBundle';
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'protocol_version')) {
+    return 'manual.fileMissingProtocol';
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'bundle_id')) {
+    return 'manual.fileMissingBundle';
+  }
+  if (bundle && bundle.bundle_id && payload.bundle_id !== bundle.bundle_id) {
+    return 'manual.fileBundleMismatch';
+  }
+  if (!Array.isArray(payload.responses)) {
+    return 'manual.fileMissingResponses';
+  }
+  const proto = payload.protocol_version;
+  if (proto !== 'manual-ai/v1' && proto !== 'v1') {
+    return 'manual.fileBadProtocol';
+  }
+  return '';
+}
+
+function wireManualAiFileInput(panel) {
+  const input = panel.querySelector('#manual-ai-file');
+  if (!input || typeof input.addEventListener !== 'function') return;
+  input.addEventListener('change', () => {
+    const state = __manualAi[input.dataset.materialId];
+    if (!state) return;
+    const file = input.files && input.files[0];
+    if (!file) {
+      state.file = null;
+      renderManualAiPanel(state);
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      state.file = { name: file.name, bytes: file.size, payload: null, errorKey: 'manual.fileTooLarge', errorDetail: '', responseCount: 0 };
+      renderManualAiPanel(state);
+      return;
+    }
+    if (typeof FileReader === 'undefined') {
+      state.file = { name: file.name, bytes: file.size, payload: null, errorKey: 'manual.fileReadUnsupported', errorDetail: '', responseCount: 0 };
+      renderManualAiPanel(state);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      let text = '';
+      try { text = String(reader.result || ''); } catch (e) { text = ''; }
+      const normalized = manualNormalizeResponseText(text);
+      let payload = null;
+      let errorKey = '';
+      let errorDetail = '';
+      if (!normalized) {
+        errorKey = 'manual.fileNotJson';
+      } else {
+        try { payload = JSON.parse(normalized); } catch (err) {
+          errorKey = 'manual.fileNotJson';
+          // 解析器的原话是给排错用的技术细节, 与 err.code 同性质, 原样展示不翻译。
+          errorDetail = String((err && err.message) || '');
+        }
+      }
+      if (payload && !errorKey) {
+        errorKey = manualFileProblem(payload, state.bundle);
+        if (!errorKey) {
+          // 合法 payload：读响应数
+          const count = Array.isArray(payload.responses) ? payload.responses.length : 0;
+          state.file = { name: file.name, bytes: file.size, payload, errorKey: '', errorDetail: '', responseCount: count };
+        } else {
+          state.file = { name: file.name, bytes: file.size, payload, errorKey, errorDetail: '', responseCount: 0 };
+        }
+      } else if (!errorKey) {
+        state.file = { name: file.name, bytes: file.size, payload: null, errorKey: 'manual.fileNotJson', errorDetail, responseCount: 0 };
+      } else {
+        state.file = { name: file.name, bytes: file.size, payload: null, errorKey, errorDetail, responseCount: 0 };
+      }
+      renderManualAiPanel(state);
+    };
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+function manualFileSummaryRow(state) {
+  if (!state.file) return '';
+  if (state.file.errorKey) {
+    return '<p class="small">' + esc(t(state.file.errorKey)) +
+      (state.file.errorDetail
+        ? ' <span class="tiny muted mono">' + esc(state.file.errorDetail) + '</span>'
+        : '') +
+      '</p>';
+  }
+  const count = state.file.responseCount;
+  // 体积用共享的 fmtBytes (与材料列表同一口径): 单位是符号不是词, 无需翻译。
+  return '<p class="small"><strong>' + esc(t('manual.fileChosen')) + '</strong> ' +
+    esc(state.file.name) + ' · ' + esc(fmtBytes(state.file.bytes)) + ' · ' +
+    esc(String(count)) + ' ' + esc(t('manual.fileResponses')) + '</p>';
+}
+
 function renderManualAiPanel(state) {
   const panel = document.getElementById('manual-ai-panel');
   if (!panel) return;
@@ -632,12 +744,20 @@ function renderManualAiPanel(state) {
     '<textarea id="manual-ai-bundle" class="mono" rows="8" readonly>' + esc(bundleJson) + '</textarea></label>';
   html += '<details><summary class="small">' + esc(t('manual.instructionsTitle')) + '</summary>' +
     '<pre class="mono tiny">' + esc(bundle.instructions_markdown || t('manual.instructionsMissing')) + '</pre></details>';
-  html += '<label class="field"><span>' + esc(t('manual.responsesTitle')) + '</span>' +
-    '<textarea id="manual-ai-responses" class="mono" rows="8" placeholder="' + esc(t('manual.responsesPlaceholder')) + '"></textarea></label>';
+  // 文件上传（主路径）
+  html += '<label class="field"><span>' + esc(t('manual.fileTitle')) + '</span><br>' +
+    '<input type="file" id="manual-ai-file" accept=".json,application/json" data-material-id="' + esc(state.materialId) + '"></label>' +
+    '<p class="small muted">' + esc(t('manual.fileHint')) + '</p>';
+  // 粘贴框仍作为折叠备选（D1 默认）
+  html += '<details><summary class="small">' + esc(t('manual.responsesTitle')) + '</summary>' +
+    '<label class="field"><textarea id="manual-ai-responses" class="mono" rows="6" placeholder="' + esc(t('manual.responsesPlaceholder')) + '"></textarea></label></details>';
+  // 已选文件的摘要 / 问题提示
+  html += manualFileSummaryRow(state);
   html += manualImportSummary(state.result);
   if (state.result) html += manualRequestRows(state.result);
   html += '</div>';
   panel.innerHTML = html;
+  wireManualAiFileInput(panel);
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -681,16 +801,20 @@ function actionManualAiCopy(courseId, materialId) {
 async function actionManualAiImport(courseId, materialId, button) {
   if (!courseId || !materialId) return;
   const state = __manualAi[materialId] || { courseId, materialId, bundle: null, result: null };
-  const area = document.getElementById('manual-ai-responses');
-  const raw = area ? String(area.value || '').trim() : '';
-  if (!raw) { toast(t('manual.emptyPaste'), 'bad'); return; }
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch (err) {
-    // 非法 JSON 在网络请求之前就拦下 (后端同样会拒, 但没必要发这一趟)。
-    toast(t('manual.invalidJson'), 'bad');
-    return;
+  // 优先用选中的文件里的 payload；没有再回落到粘贴框（D1 折叠备选）
+  let payload = state.file && state.file.payload;
+  if (!payload) {
+    // 选了文件但文件本身不合格: 直接说文件的问题, 不要报"请先选择文件"
+    // (那会让用户以为自己的点击没生效)。
+    if (state.file && state.file.errorKey) { toast(t(state.file.errorKey), 'bad'); return; }
+    const area = document.getElementById('manual-ai-responses');
+    const raw = area ? manualNormalizeResponseText(String(area.value || '')) : '';
+    if (!raw) { toast(t('manual.emptyPaste'), 'bad'); return; }
+    try { payload = JSON.parse(raw); }
+    catch (err) { toast(t('manual.invalidJson'), 'bad'); return; }
+    // 粘贴路径也过一遍客户端预检（与文件路径一致）
+    const problem = manualFileProblem(payload, state.bundle);
+    if (problem) { toast(t(problem), 'bad'); return; }
   }
   if (button) button.disabled = true;
   const taskId = startTask(t('manual.importTask') + ' · ' + materialId);

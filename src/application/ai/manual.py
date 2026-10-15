@@ -404,7 +404,7 @@ def build_manual_bundle(
 def render_instructions_markdown(bundle: ManualBundle, *, response_wrapper: bool = True) -> str:
     """人类可读的操作说明 (第二部分)。只讲流程与协议, 不夹带内部路径/密钥。"""
     lines: list[str] = []
-    lines.append("# 手动 AI 分析任务包")
+    lines.append("# 本地 AI 分析任务包")
     lines.append("")
     lines.append("- 任务包 ID: `%s`" % bundle.bundle_id)
     lines.append("- 协议版本: `%s`" % bundle.protocol_version)
@@ -415,12 +415,15 @@ def render_instructions_markdown(bundle: ManualBundle, *, response_wrapper: bool
     lines.append("")
     lines.append("## 怎么用")
     lines.append("")
-    lines.append("1. 把随包导出的原始材料**和** `requests[].prompt` 里的提示词一起交给网页版模型")
-    lines.append("   （ChatGPT / Claude / Gemini 等均可）。")
+    lines.append("1. 把随包导出的原始材料**和** `requests[].prompt` 里的提示词一起交给本地模型")
+    lines.append("   （任何能按 `/chat/completions` 契约发请求、且你能在本机运行的模型均可）。")
     lines.append("2. 一次把所有请求发完（不要一条一条发）。若模型上下文放不下，先换更大的窗口，")
     lines.append("   或者只发一部分请求——但**回复里的 request_id 必须与请求一一对应**。")
-    lines.append("3. 让模型对每个请求各返回一个 JSON 对象，**不要合并、不要改写 request_id**。")
-    lines.append("4. 按下面的格式把结果贴回「手动 AI 分析」面板并导入。")
+    lines.append("3. **让模型把结果写成一个 JSON 文件保存下来**（不要只把 JSON 贴在对话里）。")
+    lines.append("   文件名建议 `manual-ai-<bundle_id>.json`，编码用 UTF-8。")
+    lines.append("   直接输出 JSON 本体即可；如果模型习惯用「三反引号 + json 标注」包起来也能用，")
+    lines.append("   但不要依赖它。")
+    lines.append("4. 把模型保存的 JSON 文件上传回本面板（见下方「上传模型返回的 JSON 文件」）。")
     lines.append("")
     lines.append("## 回复格式")
     lines.append("")
@@ -431,7 +434,8 @@ def render_instructions_markdown(bundle: ManualBundle, *, response_wrapper: bool
     lines.append("```")
     lines.append("")
     if response_wrapper and bundle.requests:
-        lines.append("导入时使用下面这个外壳（`content` 里放该请求的模型输出原文，字符串形式）：")
+        lines.append("导入时使用下面这个外壳——**把它原样保存为 `.json` 文件**，")
+        lines.append("只需把每个 `content` 替换成模型对该请求返回的 JSON 文本即可：")
         lines.append("")
         lines.append("```json")
         lines.append(
@@ -439,12 +443,13 @@ def render_instructions_markdown(bundle: ManualBundle, *, response_wrapper: bool
                 {
                     "protocol_version": bundle.protocol_version,
                     "bundle_id": bundle.bundle_id,
-                    "model_name": "（可选，你用的模型名；仅记录，不作为已验证身份）",
+                    "model_name": "",
                     "responses": [
                         {
-                            "request_id": bundle.requests[0].request_id,
-                            "content": "{...模型对该请求返回的 JSON...}",
+                            "request_id": request.request_id,
+                            "content": "",
                         }
+                        for request in bundle.requests
                     ],
                 },
                 ensure_ascii=False,
@@ -471,7 +476,7 @@ def render_instructions_markdown(bundle: ManualBundle, *, response_wrapper: bool
     lines.append("- 逐请求给出状态（成功 / 缺响应 / 未知请求 / 重复 / 格式错误 / grounding 失败），")
     lines.append("  可以只重试失败的那几条。")
     lines.append("- 重复导入同一份响应是幂等的，不会重复产生知识点。")
-    lines.append("- 手动导入的来源会如实记为 `%s`，不会冒充真实 API 调用。" % USER_PASTED_PROVIDER_NAME)
+    lines.append("- 本地模型返回的文件会如实记为 `%s`，不会冒充真实 API 调用。" % USER_PASTED_PROVIDER_NAME)
     return "\n".join(lines) + "\n"
 
 

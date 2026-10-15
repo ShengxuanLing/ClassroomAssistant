@@ -1737,6 +1737,38 @@ function largeRoutes(kpCount, studentCount, exerciseCount) {
   return table;
 }
 
+/**
+ * Task-109: 手动 AI（本地 AI 分析）面板的夹具。
+ *
+ * **全 ASCII**: 任何 CJK 出现在 es/ca 渲染结果里都只能是界面文案漏译。
+ */
+function manualAiBundleFixture() {
+  return {
+    bundle_id: 'mab-fixture00000000',
+    protocol_version: 'manual-ai/v1',
+    prompt_version: 'ai-prompts-v1:extract-v3',
+    material: { material_id: MATERIAL_ID, filename: 'FIXTURE-material.pdf' },
+    requests: [
+      {
+        request_id: 'req-fixture00000000',
+        chunk_id: 'chunk-fixture00000000',
+        chunk_index: 0,
+        page: 1,
+        char_start: 0,
+        char_end: 10,
+        prompt: 'FIXTURE PROMPT',
+        evidence_scope: { material_id: MATERIAL_ID },
+        stage: 'chunk_extraction',
+        response_schema: { fields: { knowledge_points: {} } },
+      },
+    ],
+    limits: { max_response_chars: 20000, max_requests: 200 },
+    chunking: { chunk_count: 1, material_chunk_count: 1, truncated: false, request_limit: 200 },
+    notes: ['FIXTURE note'],
+    instructions_markdown: 'FIXTURE instructions markdown',
+  };
+}
+
 // ---------------------------------------------------------------- DOM 桩
 
 function makeElement(id) {
@@ -2179,6 +2211,121 @@ async function audit() {
     // 400 字符的内容哈希也必须原样出现 (溯源链靠它)
     const detail = await renderPage(pageByName('knowledgeDetail'), table, 'zh');
     check('long content hash is rendered verbatim', html(detail).includes(LONG_TOKEN));
+
+    // ---- Task-109: 手动 AI（本地 AI 分析）面板 ----
+    //
+    // 面板只有拿到 bundle 才渲染 (renderManualAiPanel), 审计平时从不构造那个
+    // 状态 —— 所以这里显式传一份 state 进去。
+    //
+    // ⚠️ 断言必须读 **#manual-ai-panel** 的 innerHTML, **不能**读 html(sandbox)
+    // (= #view)。沙箱里 getElementById 返回的是**独立桩元素**, 页面骨架里那个
+    // 同名 <div> 只是一段字符串 —— 面板内容永远不在 #view 里, 读 #view 的断言
+    // 恒为真、抓不到任何漏译。(TASK-109 验收时实测: 原写法就是这么空转的。)
+    const manualPanelHtml = (sandbox, state) => {
+      if (typeof sandbox.renderManualAiPanel === 'function') {
+        sandbox.renderManualAiPanel(state);
+      } else {
+        check('manual AI renderManualAiPanel is defined', false, 'renderManualAiPanel not found in sandbox');
+      }
+      const el = sandbox.document.getElementById('manual-ai-panel');
+      return el ? el.innerHTML : '';
+    };
+    //: 已选文件的状态 —— 摘要行是唯一把文件名/体积/条数写进界面的地方,
+    //: 也是漏译最容易出现的位置 (体积单位曾经硬编码成中文)。
+    const manualFileState = (bundle) => ({
+      courseId: COURSE_ID,
+      materialId: MATERIAL_ID,
+      bundle,
+      result: null,
+      file: {
+        name: 'FIXTURE-response.json',
+        bytes: 2048,
+        payload: {},
+        errorKey: '',
+        errorDetail: '',
+        responseCount: 3,
+      },
+    });
+    {
+      const sandbox = await renderPage(pageByName('materials'), table, 'zh');
+      const panelOut = manualPanelHtml(sandbox, {
+        courseId: COURSE_ID, materialId: MATERIAL_ID,
+        bundle: manualAiBundleFixture(), result: null, file: null,
+      });
+      check('manual AI panel renders with file input', panelOut.includes('type="file"'));
+      check(
+        'manual AI file input accepts json',
+        panelOut.includes('accept=".json,application/json"')
+      );
+      // 上传是主路径: 文件输入必须排在粘贴备选之前。
+      check(
+        'manual AI file input precedes the paste fallback',
+        panelOut.indexOf('manual-ai-file') >= 0 &&
+          panelOut.indexOf('manual-ai-file') < panelOut.indexOf('manual-ai-responses')
+      );
+    }
+    {
+      // es/ca 下把面板渲染成"已选文件"状态: 界面文案里不得出现任何 CJK。
+      // 夹具全 ASCII, 所以出现 CJK 只可能是界面漏译 —— 与全局那条断言同口径。
+      for (const lang of ['es', 'ca']) {
+        const sandbox = await renderPage(pageByName('materials'), table, lang);
+        const panelOut = manualPanelHtml(sandbox, manualFileState(manualAiBundleFixture()));
+        check(
+          'manual AI panel (' + lang + ') renders the chosen file summary',
+          panelOut.includes('FIXTURE-response.json')
+        );
+        const cjk = firstCjk(panelOut);
+        check(
+          'manual AI panel (' + lang + ') has no CJK with a file selected',
+          !cjk,
+          cjk ? 'found ' + cjk : ''
+        );
+      }
+    }
+    {
+      // 纯函数断言: manualNormalizeResponseText / manualFileProblem
+      // 这些函数已由 loadApp 加载到全局，无需重新运行 materials.js。
+      // 但为了隔离，我们从 WEB_SOURCES 中提取并运行在独立的上下文中。
+      const materialsJs = WEB_SOURCES.filter((s) => s.name === 'views/materials.js')[0].code;
+      let normalize, fileProblem;
+      try {
+        // 创建独立的上下文用于纯函数测试，避免与主沙箱冲突
+        const pureSandbox = {
+          console,
+          setTimeout,
+          clearTimeout,
+          URLSearchParams,
+          FormData,
+          ApiError: class ApiError extends Error {},
+        };
+        vm.createContext(pureSandbox);
+        // 只运行 materials.js  once in this isolated context
+        vm.runInContext(materialsJs, pureSandbox, { filename: 'views/materials.js' });
+        normalize = pureSandbox.manualNormalizeResponseText;
+        fileProblem = pureSandbox.manualFileProblem;
+      } catch (e) {
+        check('manual AI pure functions load', false, 'could not load pure functions: ' + e.message);
+      }
+      if (typeof normalize === 'function') {
+        // 注意: \uFEFF 会被 trim() 去掉，所以即使注释掉 BOM 剥离代码，这个测试也会通过。
+        // 更严格的测试: 确保函数不会错误地剥离非 BOM 的内容。
+        check('manualNormalizeResponseText does not strip non-BOM prefix', normalize('x{"a":1}') === 'x{"a":1}');
+        check('manualNormalizeResponseText strips BOM', normalize('\uFEFF{"a":1}') === '{"a":1}');
+        check('manualNormalizeResponseText strips one fence', normalize('```json\r\n{"a":1}\r\n```') === '{"a":1}');
+        check('manualNormalizeResponseText does not strip double fence', normalize('```json\r\n```json\r\n{"a":1}\r\n```\r\n```') === '```json\r\n{"a":1}\r\n```');
+      } else {
+        check('manualNormalizeResponseText is defined', false, 'manualNormalizeResponseText not found');
+      }
+      if (typeof fileProblem === 'function') {
+        const fixture = manualAiBundleFixture();
+        check('manualFileProblem rejects bare array', fileProblem([{}], fixture) === 'manual.fileBare');
+        check('manualFileProblem rejects bundle', fileProblem({ requests: [] }, fixture) === 'manual.fileIsBundle');
+        check('manualFileProblem rejects missing bundle_id', fileProblem({ protocol_version: 'manual-ai/v1', responses: [] }, fixture) === 'manual.fileMissingBundle');
+        check('manualFileProblem accepts valid payload', fileProblem({ protocol_version: 'manual-ai/v1', bundle_id: fixture.bundle_id, responses: [{ request_id: 'req-1', content: '{}' }] }, fixture) === '');
+      } else {
+        check('manualFileProblem is defined', false, 'manualFileProblem not found');
+      }
+    }
     // CSS 必须为长 token 提供折行规则, 否则窄视口会横向溢出
     check('css allows long tokens to wrap', /overflow-wrap:\s*anywhere/.test(CSS));
   }

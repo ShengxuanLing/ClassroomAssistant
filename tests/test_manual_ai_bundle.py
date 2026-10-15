@@ -252,6 +252,40 @@ class TestBundleProtocol:
         assert "classroom-data" not in markdown
         # 必须说明导入会重算 bundle_id (这是拒绝旧包的机制)
         assert "bundle_id" in markdown
+        # R3: 说明里必须要求模型把结果写成 .json 文件（而不仅仅是贴在对话里）
+        markdown_lower = markdown.lower()
+        assert (".json" in markdown) and ("保存" in markdown or "save" in markdown_lower or "guardar" in markdown_lower or "desa" in markdown_lower)
+        # R3: 回复格式骨架里必须预填全部 request_id（否则用户拿到的骨架上传不了）
+        requests = bundle["requests"]
+        if requests:
+            # 骨架里的 request_id 条数必须 >= 请求数（逐个核对）
+            assert str(requests[0]["request_id"]) in markdown
+            assert markdown.count('"request_id"') >= len(requests)
+
+    def test_markdown_requests_fully_prefilled_in_response_skeleton(self, tmp_path):
+        """R3 专项：response_wrapper 骨架里的 request_id 条数 == 请求数。"""
+        ws, course_id, material_id = _prepared(tmp_path)
+        bundle = _bundle_for(ws, course_id, material_id)
+        markdown = bundle["instructions_markdown"]
+        requests = bundle["requests"]
+        if not requests:
+            pytest.skip("此材料没有请求，不适合本断言")
+        # 取出 response_wrapper 骨架（第二个 ```json 块）
+        blocks = markdown.split("```json")
+        assert len(blocks) >= 3, repr(markdown[:300])
+        skeleton_text = blocks[2].split("```")[0]
+        skeleton_obj = json.loads(skeleton_text)
+        assert skeleton_obj["protocol_version"] == bundle["protocol_version"]
+        assert skeleton_obj["bundle_id"] == bundle["bundle_id"]
+        responses = skeleton_obj["responses"]
+        assert len(responses) == len(requests)
+        expected_ids = {r["request_id"] for r in requests}
+        got_ids = {r["request_id"] for r in responses}
+        assert got_ids == expected_ids, (got_ids, expected_ids)
+        # 每个 content 预填为空串（模型来填）
+        for r in responses:
+            assert isinstance(r["request_id"], str)
+            assert isinstance(r["content"], str)
 
     def test_material_without_evidence_gets_an_explained_empty_bundle(self):
         bundle = build_manual_bundle(
