@@ -39,7 +39,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+from logging.handlers import RotatingFileHandler
 from typing import Any, Mapping, Optional
 
 from src.application.config import (
@@ -62,6 +64,7 @@ __all__ = [
     "DEFAULT_EXCERPT_LIMIT",
     "StructuredFormatter",
     "PrivacyFilter",
+    "attach_file_logging",
     "configure_logging",
     "get_logger",
     "log_event",
@@ -116,6 +119,13 @@ DEFAULT_EXCERPT_LIMIT = 200
 
 #: 打在本模块安装的 handler 上的标记, 用于幂等安装与精确卸载。
 _HANDLER_MARKER = "_classroom_assistant_handler"
+
+#: 文件日志的标记（与 ``_HANDLER_MARKER`` 分开：同一个 logger 上会同时挂
+#: 一个控制台 handler 和一个文件 handler，两个幂等机制互不干扰）。
+_FILE_HANDLER_MARKER = "_classroom_assistant_file_handler"
+
+#: 运行日志文件名（落在 ``<data_dir>/logs/`` 下）。
+LOG_FILENAME = "classroom.log"
 
 
 def _one_line(text: str) -> str:
@@ -306,7 +316,15 @@ def configure_logging(
         target.removeHandler(existing)
         existing.close()
 
-    handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
+    stream_target = stream if stream is not None else sys.stderr
+    if stream_target is None:
+        # 无控制台（PyInstaller ``--noconsole`` 下 ``sys.stderr`` 是 ``None``）：
+        # StreamHandler(None) 每次 emit 都抛 AttributeError 并被 logging 静默吞掉，
+        # 日志看起来"没有"，事后排查时最误导。此时挂 NullHandler 占位，
+        # 真正的落盘出口交给 attach_file_logging。
+        handler: logging.Handler = logging.NullHandler()
+    else:
+        handler = logging.StreamHandler(stream_target)
     handler.setLevel(numeric)
     handler.setFormatter(
         StructuredFormatter(clock=clock, json_output=json_output, excerpt_limit=excerpt_limit)
@@ -318,12 +336,77 @@ def configure_logging(
     return handler
 
 
+def attach_file_logging(
+    log_dir: str,
+    *,
+    level: Optional[Any] = None,
+    clock: Optional[Clock] = None,
+    json_output: bool = False,
+    excerpt_limit: int = DEFAULT_EXCERPT_LIMIT,
+    name: Optional[str] = None,
+    force: bool = False,
+    max_bytes: int = 1_000_000,
+    backup_count: int = 3,
+) -> Optional[logging.Handler]:
+    """给 logger 再挂一个**滚动文件** handler，返回它。
+
+    分工：``configure_logging`` 管"看得见的输出"（控制台 / ``sys.stderr``），
+    本函数管"留得下的输出"（``<log_dir>/classroom.log``）。安装版没有控制台，
+    此时文件日志是唯一能事后排查的线索。
+
+    幂等：按 ``_FILE_HANDLER_MARKER`` 识别自己装的，不重复叠加；``force=True``
+    显式重建。目录不存在就建（多级）；建失败不抛异常 —— 日志不可写不该让
+    服务起不来，此时返回 ``None``。
+    """
+    target = logging.getLogger(name) if name else logging.getLogger()
+    resolved = _resolve_level(level if level is not None else DEFAULT_LOG_LEVEL)
+
+    existing = None
+    for handler in target.handlers:
+        if getattr(handler, _FILE_HANDLER_MARKER, False):
+            existing = handler
+            break
+    if existing is not None and not force:
+        existing.setLevel(resolved)
+        return existing
+    if existing is not None:
+        target.removeHandler(existing)
+        existing.close()
+
+    os.makedirs(log_dir, exist_ok=True)
+    path = os.path.join(log_dir, LOG_FILENAME)
+    try:
+        handler = RotatingFileHandler(
+            path,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+    except OSError:
+        return None
+
+    handler.setLevel(resolved)
+    handler.setFormatter(
+        StructuredFormatter(clock=clock, json_output=json_output, excerpt_limit=excerpt_limit)
+    )
+    handler.addFilter(PrivacyFilter(excerpt_limit=excerpt_limit))
+    setattr(handler, _FILE_HANDLER_MARKER, True)
+    if target.level == logging.NOTSET or target.level > resolved:
+        # 只调 attach_file_logging 而没调 configure_logging 时，root logger
+        # 仍是默认的 WARNING —— 文件会建出来却是空的。
+        target.setLevel(resolved)
+    target.addHandler(handler)
+    return handler
+
+
 def reset_logging(name: Optional[str] = None) -> int:
     """卸载本模块安装的 handler; 返回卸载数量 (测试与进程重启用)。"""
     target = logging.getLogger(name) if name else logging.getLogger()
     removed = 0
     for handler in list(target.handlers):
-        if getattr(handler, _HANDLER_MARKER, False):
+        if getattr(handler, _HANDLER_MARKER, False) or getattr(
+            handler, _FILE_HANDLER_MARKER, False
+        ):
             target.removeHandler(handler)
             handler.close()
             removed += 1

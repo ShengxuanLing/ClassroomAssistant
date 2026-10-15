@@ -282,6 +282,27 @@ def test_environment_asr_real_missing_fails(tmp_path, free_port) -> None:
     assert not _check(report, "model availability").ok
 
 
+def test_environment_accepts_multi_level_missing_data_dir(tmp_path, free_port) -> None:
+    """data_dir 允许**多级**尚未创建 (安装版落在两级新建的用户目录下)。
+
+    回归守卫: 这里曾经只检查一层父目录, 于是
+    ``<base>/ClassroomAssistant/classroom-data`` 这种两级新建的路径被判成
+    "parent not writable" —— 安装版第一次启动直接起不来。开发态数据目录
+    是 ``<cwd>/classroom-data``, 父目录必然存在, 所以这个缺陷一直休眠,
+    直到数据目录改成落在用户目录才显形。
+    """
+    nested = tmp_path / "ClassroomAssistant" / "classroom-data"
+    assert not nested.parent.exists()
+
+    cfg = AppConfig.load(
+        cwd=str(tmp_path),
+        cli_overrides={"port": free_port, "data_dir": str(nested)},
+    )
+    check = _check(validate_environment(cfg), "data directory")
+    assert check.ok
+    assert check.detail == f"will be created: {nested}"
+
+
 def test_environment_report_ok_true(base_config) -> None:
     assert validate_environment(base_config).ok is True
 

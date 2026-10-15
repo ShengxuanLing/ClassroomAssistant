@@ -30,6 +30,20 @@
 
 ## 怎么安装
 
+### Windows 安装包（普通用户，推荐）
+
+不需要 Python。下载 `ClassroomAssistant-1.0.1-Setup.exe`（随 Release 发布），双击安装：
+
+- 装到当前用户目录 `%LOCALAPPDATA%\Programs\ClassroomAssistant`，**不弹 UAC、不需要管理员**；
+- 装完在开始菜单出现「课堂助手」，双击启动：托盘图标常驻、浏览器自动打开界面；
+- 会弹 SmartScreen 警告（安装包未做代码签名，属预期）：点「更多信息 → 仍要运行」；
+- 数据目录固定为 `%LOCALAPPDATA%\ClassroomAssistant\classroom-data`，**卸载不会删数据**。
+
+完整说明（卸载、Whisper 模型首次下载、构建方法）见
+[docs/installer-windows.md](docs/installer-windows.md)。
+
+### 源码运行（开发者）
+
 需要 Python **3.13 或 3.14**。本仓库自带的可移植解释器是 **3.14.7**，也是唯一
 **实测验证**过的版本（全量回归 3716 条都在它上面跑）。3.13 由依赖约束间接覆盖
 （见下），更低版本没有测过，也没有 `python_requires` 之类的下限声明，因此不保证可用。
@@ -87,7 +101,11 @@ JSON 模式等全部可调项见 [docs/configuration.md](docs/configuration.md) 
 
 ## 怎么启动
 
-Windows 下双击即可：
+**安装版**：开始菜单 →「课堂助手」。托盘图标常驻（双击托盘图标重新打开界面；
+右键菜单：打开界面 / 打开数据目录 / 退出）。双击第二次不会起第二个实例，而是直接
+把已有界面打开。退出走托盘菜单的「退出」—— 服务与端口标记会一并清理。
+
+**源码版**：Windows 下双击即可：
 
 ```text
 scripts\start.bat      # 启动本地服务并自动打开浏览器
@@ -124,7 +142,9 @@ python -m src.application.cli --check        # 完整装配一遍后退出
 
 ## 数据放在哪
 
-默认在**当前工作目录**下建 `classroom-data/`，它是本应用**唯一**的数据真相源
+源码运行时默认在**当前工作目录**下建 `classroom-data/`；安装版固定为
+`%LOCALAPPDATA%\ClassroomAssistant\classroom-data`（与安装目录分离，卸载不删）。
+它是本应用**唯一**的数据真相源
 （与 `src/application/data_dirs.py` 的 8 目录一字对应）：
 
 ```text
@@ -152,6 +172,7 @@ classroom-data/
 | 文档 | 内容 |
 | --- | --- |
 | [docs/getting_started.md](docs/getting_started.md) | 安装、启动、跑通第一条完整流程 |
+| [docs/installer-windows.md](docs/installer-windows.md) | Windows 安装包：下载 / 安装 / 卸载 / 数据位置 / 从源码构建 |
 | [docs/user_guide.md](docs/user_guide.md) | 课程 / 材料 / 处理 / 审核 / 学生 / 练习 / 计划 |
 | [docs/configuration.md](docs/configuration.md) | 全部配置项、环境变量、数据目录、安全边界 |
 | [docs/architecture.md](docs/architecture.md) | 分层、依赖守卫、确定性、错误码、测试策略 |

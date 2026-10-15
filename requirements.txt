@@ -42,3 +42,12 @@ numpy>=1.24
 # ``onnxruntime`` and pass a CUDA provider to the engine.  CPU is the
 # default and requires nothing extra.
 rapidocr-onnxruntime==1.2.3
+
+# TASK-110: system-tray entry (``src/application/tray.py``), used by the
+# installed Windows build and by ``python -m src.application.tray``.
+# Pure Python; the Windows backend uses ctypes from the standard library.
+# Pillow (the other tray dependency) already arrives transitively with
+# python-pptx, but it is imported directly by the tray module, so it is
+# declared here explicitly for the same reason as ``av`` / ``numpy`` above.
+pystray>=0.19,<0.20
+Pillow>=10.0

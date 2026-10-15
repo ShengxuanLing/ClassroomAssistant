@@ -1016,6 +1016,9 @@ class TestDependencyAudit:
             "av",
             "numpy",
             "rapidocr-onnxruntime",
+            # TASK-110: 托盘入口 (src/application/tray.py) 的直接依赖。
+            "pystray",
+            "pillow",
         }
         assert declared == expected, (
             f"运行时依赖集合变了: 多了 {sorted(declared - expected)}, "

@@ -45,6 +45,10 @@ classroom-data/
 /cache/
 *.log
 
+# TASK-110 打包产物 (PyInstaller onedir + Inno Setup 安装包)
+/dist/
+/build/
+
 # 测试 / 编辑器 / 系统
 .pytest_cache/
 .idea/

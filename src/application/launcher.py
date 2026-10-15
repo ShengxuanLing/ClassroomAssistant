@@ -400,8 +400,13 @@ def validate_environment(config: AppConfig) -> EnvironmentReport:
             )
         )
     else:
-        parent = os.path.dirname(data_dir)
-        if parent and os.path.isdir(parent) and os.access(parent, os.W_OK):
+        # data_dir 可能要**多级**新建 (安装版落在
+        # ``%LOCALAPPDATA%\ClassroomAssistant\classroom-data``, 两级都不存在),
+        # 所以不能只看一层父目录 —— 向上找到最近的"已存在且可写"的祖先即可,
+        # 真正建目录由 ``ensure_data_layout`` 负责。
+        # 刻意复用第 4 段数据库检查用的同一个助手, 避免两处规则再次漂移。
+        ancestor = _nearest_existing_writable(os.path.dirname(data_dir))
+        if ancestor is not None:
             report.checks.append(
                 CheckResult("data directory", ok=True, detail=f"will be created: {data_dir}")
             )
@@ -410,7 +415,7 @@ def validate_environment(config: AppConfig) -> EnvironmentReport:
                 CheckResult(
                     "data directory",
                     ok=False,
-                    detail=f"cannot create data_dir (parent not writable): {parent}",
+                    detail=f"cannot create data_dir (no writable ancestor): {data_dir}",
                 )
             )
 

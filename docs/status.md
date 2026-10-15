@@ -9008,3 +9008,73 @@ i18n `manual.*` 三语各 45 键（键集完全一致）。
 - `views/*.js` 里 5 处 `style="margin-bottom:16px"` 内联魔数未动（属「JS 里写版式魔数」
   的欠账，会带来既有间距漂移）。
 - `#/students` 的既有路由红（期望重定向到「我的课程」）未修 —— 属路由行为，不在本轮范围。
+
+## TASK-110 Windows 安装包（setup.exe）— 2026-10-15
+
+**依据**：`docs/task-110-windows-installer-plan.md`（§2 已实测事实不复述：PyInstaller
+onedir 可用、冻结 OCR 与源码逐位一致、`%LOCALAPPDATA%` 数据目录与文件日志改造已就位）。
+
+**交付物**
+
+- `src/application/tray.py` —— 托盘入口，B 档形态（无控制台）的**唯一**实现：
+  退出顺序 `launcher.stop()` → `icon.stop()`，`run()` 的 `finally` 再兜底一次
+  （两处都幂等）；「端口被占但握手确认是本应用」→ 打开既有界面并正常退出，非本应用
+  才报错（EXIT_STARTUP_ERROR=3）；pystray / PIL 函数内延迟导入，源码环境缺依赖时给
+  可照做的安装命令；冻结态启动失败弹 ctypes `MessageBoxW`（不拖 tkinter 链）。
+- `src/application/assets/app.ico` —— 托盘 / exe / Setup 三个位置同一份图标。
+- `packaging/entry.py` —— 冻结入口：默认 → `tray.main`；`verify-ocr` /
+  `verify-static [--out PATH]` 两个探针（窗口程序没有控制台，结果写文件是验收链条的一环）。
+- `packaging/classroom-assistant.spec` —— `console=False`；datas 收 `src/web` +
+  `src/application/assets`；ASR / OCR 五件套 `collect_all`；裁
+  `opencv_videoio_ffmpeg*`。`ROOT` 从 `SPECPATH` 上跳**一层**
+  （照抄 spike 双 `dirname` 的 bug 在构建时被抓出 —— `Unable to find
+  D:\Project\src\web`；已补「对 ROOT 表达式直接求值」守卫）。
+- `packaging/build.py` —— 一条命令：解析打包 Python / ISCC → 读
+  `APPLICATION_VERSION` → PyInstaller → `ISCC /DAppVersion`；`--skip-exe` /
+  `--skip-installer`。
+- `packaging/installer.iss` —— `PrivilegesRequired=lowest`（不弹 UAC）、
+  `{localappdata}\Programs\ClassroomAssistant`、固定 AppId GUID、lzma2/max、
+  UTF-8 **BOM**（无 BOM 会被 Inno 按 ANSI 读）；**无 `[UninstallDelete]`** ——
+  卸载不删用户数据是有意设计；`AppVersion` 回退值 = `APPLICATION_VERSION`（测试钉住）。
+- `tests/test_tray.py`（23 条）+ `tests/test_packaging.py`（24 条）—— 菜单 / 动作 /
+  生命周期 / attach 分支 / 错误出口 / 真实 pystray `build_icon`；iss、spec（AST）、
+  build.py、entry 的漂移守卫。
+- `requirements.txt` 增 `pystray>=0.19,<0.20`、`Pillow>=10.0`（两者都被 `src` 真实
+  import：`dependency_audit` 的 import↔发行名注册表与 `production_gate` 依赖白名单已同步）。
+- README 三处（安装 / 启动 / 数据位置）+ 新建 `docs/installer-windows.md`。
+
+**验收（真实链路，逐环实际输出）**
+
+1. 构建：`python packaging/build.py` → `dist/ClassroomAssistant/`（370.7 MB）+
+   `dist/installer/ClassroomAssistant-1.0.1-Setup.exe`（**105.3 MB**）。
+2. 冻结探针（安装前直跑 dist 产物）：`verify-static` OK（5 个 web 文件）；
+   `verify-ocr` OK —— `confidence 0.820281`、`TEXT 'Classroom\n12345\nHello'`、
+   3 区域，与 spike 数值一致。
+3. E2E 真机（29 项断言**全过**）：静默安装 exit 0 → 开始菜单
+   `课堂助手\课堂助手.lnk` → 以快捷方式启动（真实打开浏览器，安装版默认行为）→
+   health **1.3s** 响应（application / version 1.0.1 / `storage.data_dir` =
+   `%LOCALAPPDATA%\ClassroomAssistant\classroom-data`）→ 托盘窗口存在（类前缀
+   `classroom-assistant…SystemTrayIcon`）→ 8 个子目录 + `.run` 标记（port=8765）→
+   日志 1084 行 → 建课 / 传 `probe.png` / 处理：job `SUCCEEDED / DONE`、
+   证据 3 条 = `['12345', 'Classroom', 'Hello']`、全 `OCR` 类型、bounding box 齐、
+   confidence `[0.824, 0.827, 0.809]` → `WM_STOP (0x40A)` 投递托盘窗口退出 →
+   `.run` 标记清理、日志记 `tray_stopped` → 静默卸载 exit 0 → 程序目录与开始菜单
+   项消失、**数据目录与 `classroom.sqlite` 保留**。
+4. 变异测试 9 个（iss 版本回退 / spec `console` / ROOT 双 dirname / 输出命名 /
+   quit 不 stop / 菜单默认项 / 数据目录动作 / `run` 兜底 / entry 缺 token 判据）
+   **全部精准报红**，还原后逐字节校验。
+5. 回归：`test_tray` + `test_packaging` 46 passed；+ startup / logging / bootstrap /
+   dependency_audit 236 passed（dependency_audit 因新依赖先红后修注册表）；
+   production_gate + release_gate 98 passed / 1 failed（见遗留）。
+
+**已知遗留 / 记录**
+
+- `production_gate` 的 `test_no_stray_python_file_outside_src_and_tests` 失败为
+  **既有**：根目录 `fix_ex.py`（2026-10-13 由 commit `1cf14b1` 误提交）与另一 agent
+  未跟踪的 `temp_appjs.py`，非 TASK-110 引入，未动。
+- `%LOCALAPPDATA%\ClassroomAssistant\classroom-data` 里留有 E2E 验证课程
+  （名称「E2E 安装验证」、`probe.png`、`mat-8fcf…`）—— 用户决定是否清理。
+- `git push` 本机无凭据（计划书 §8）：提交在本地，Release 由用户在有凭据环境发。
+- 本机 dev Python（3.14.5）缺 pystray 曾让一条测试 skip；已 `pip install
+  "pystray>=0.19,<0.20"`（仅本机开发环境，非代码变更）。
+

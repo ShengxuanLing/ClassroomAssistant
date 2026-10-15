@@ -58,7 +58,12 @@ from typing import Any, Optional
 from src.application.config import AppConfig, load_local_environment
 from src.application.data_dirs import DataLayout, ensure_data_layout
 from src.application.errors import ConfigurationError
-from src.application.logging_setup import configure_logging, get_logger, log_event
+from src.application.logging_setup import (
+    attach_file_logging,
+    configure_logging,
+    get_logger,
+    log_event,
+)
 from src.application.persistence_wiring import WorkspacePersistence
 from src.application.runtime import Clock, utc_now_iso
 from src.application.workspace import APPLICATION_NAME, APPLICATION_VERSION, Workspace
@@ -310,6 +315,10 @@ def build_runtime(
     if logger is None:
         configure_logging(config, stream=log_stream, clock=resolved_clock)
         logger = get_logger(APPLICATION_LOGGER_NAME)
+        if not os.environ.get("PYTEST_CURRENT_TEST"):
+            # 安装版没有控制台，文件日志是唯一可事后排查的线索。
+            # 目录由上面的 ensure_data_layout 建好；失败不致命（函数内部容错）。
+            attach_file_logging(config.logs_dir, clock=resolved_clock)
 
     notes: list[str] = []
     asr_provider, asr_mode = _build_asr_provider(config, notes)

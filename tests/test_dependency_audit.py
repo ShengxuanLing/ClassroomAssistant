@@ -35,6 +35,10 @@ IMPORT_TO_REQUIREMENT = {
     "pptx": "python-pptx",
     "faster_whisper": "faster-whisper",
     "rapidocr_onnxruntime": "rapidocr-onnxruntime",
+    # TASK-110 托盘入口 (src/application/tray.py, 函数内延迟导入):
+    "pystray": "pystray",
+    # ``PIL`` 是 Pillow 的 import 名 (与 pptx / python-pptx 同类)。
+    "PIL": "Pillow",
 }
 
 

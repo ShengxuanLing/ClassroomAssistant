@@ -17,6 +17,10 @@
 *.yaml text eol=lf
 *.sh text eol=lf
 
+# TASK-110 打包资产 (PyInstaller spec / Inno Setup 脚本) 同样保持 LF
+*.spec text eol=lf
+*.iss text eol=lf
+
 # 二进制不做换行转换
 *.png binary
 *.jpg binary

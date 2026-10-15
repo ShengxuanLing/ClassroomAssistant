@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
@@ -552,16 +553,44 @@ def resolve_data_dir(
     return os.path.join(os.path.abspath(base), chosen)
 
 
+def is_frozen() -> bool:
+    """是否运行在冻结产物里 (PyInstaller 打包后 ``sys.frozen`` 为真)。
+
+    这个判定**只用来改变默认路径的落点**, 不改变任何业务行为 —— 于是开发态
+    与测试态 (未冻结) 走的分支与打包前逐字相同, 既有测试不受影响。
+    """
+    return bool(getattr(sys, "frozen", False))
+
+
+def installed_data_root() -> str:
+    """安装版的数据根目录 (用户级)。
+
+    打包安装后程序位于 ``Program Files`` 或 ``%LOCALAPPDATA%\\Programs``,
+    那里对普通用户**只读**; 若仍按"启动目录下建 classroom-data"解析, 第一次
+    建库就会撞权限失败。所以冻结态把基准目录换到用户目录。
+
+    ``CLASSROOM_DATA_DIR`` 环境变量仍然优先 (它在更上层解析), 用户想换位置
+    随时可以覆盖。
+    """
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "ClassroomAssistant")
+
+
 def default_values(cwd: Optional[str] = None) -> dict[str, Any]:
     """第 0 层: 默认值。
 
     ``data_dir`` 相对**启动时的工作目录**, 而不是用户 home 目录 ——
     本地单用户工具里, "数据就在我启动它的地方" 比 "藏在 home 里" 好排查。
 
+    冻结态 (安装版) 是唯一的例外: 基准目录换成 :func:`installed_data_root`,
+    因为程序目录只读 (见该函数说明)。
+
     ``database_path`` 故意**不**在这里出现: 它由 ``data_dir`` 派生,
     来源会被标成 ``DERIVED``, 而不是伪装成一个默认值。
     """
     base = os.path.abspath(cwd or os.getcwd())
+    if is_frozen():
+        base = installed_data_root()
     return {
         "data_dir": os.path.join(base, default_data_dir_name()),
         "host": DEFAULT_HOST,
