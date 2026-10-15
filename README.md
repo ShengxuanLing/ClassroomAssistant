@@ -32,7 +32,7 @@
 
 ### Windows 安装包（普通用户，推荐）
 
-不需要 Python。下载 `ClassroomAssistant-1.0.1-Setup.exe`（随 Release 发布），双击安装：
+不需要 Python。下载 `ClassroomAssistant-1.1.0-Setup.exe`（随 Release 发布），双击安装：
 
 - 装到当前用户目录 `%LOCALAPPDATA%\Programs\ClassroomAssistant`，**不弹 UAC、不需要管理员**；
 - 装完在开始菜单出现「课堂助手」，双击启动：托盘图标常驻、浏览器自动打开界面；

@@ -1,7 +1,7 @@
 # Productization Phase 34–55 Final Report
 
 生成时间：2026-09-17
-适用代码版本：`Classroom Assistant 1.0.1`（`src/application/workspace.py::APPLICATION_VERSION`）
+适用代码版本：`Classroom Assistant 1.1.0`（`src/application/workspace.py::APPLICATION_VERSION`）
 数据库 schema 版本：2（`src/persistence/migrations/`，迁移链 `m001` + `m002`）
 
 > 本文件覆盖 Task 34–55。Task 48–55（业务持久化真正接线 / 重启恢复）的详细验收

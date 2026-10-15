@@ -1,6 +1,6 @@
 # Windows 安装包使用说明（TASK-110）
 
-适用版本：**1.0.1**（产物：`ClassroomAssistant-1.0.1-Setup.exe`，105.3 MB，
+适用版本：**1.1.0**（产物：`ClassroomAssistant-1.1.0-Setup.exe`，105.3 MB，
 Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物 370.7 MB）。
 
 ## 下载与安装
