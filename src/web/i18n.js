@@ -34,7 +34,41 @@ function pickInitialLang() {
 const I18N = {
   zh: {
     'nav.overview': '概览', 'nav.knowledge': '知识地图', 'nav.materials': '材料',
-    'nav.reviews': '待审核', 'nav.courses': '课程',
+    'nav.reviews': '待审核',
+    'nav.settings': '设置',
+    // ---- 侧栏 (Freebuff 式: 搜索 + 新建课程) ----
+    'sidebar.search': '搜索课程…', 'sidebar.newCourse': '新建课程',
+    'sidebar.noMatch': '无匹配课程',
+    // ---- 设置页 (Freebuff 式: 左分类 + 右卡片) ----
+    'settings.title': '设置',
+    'settings.nav.general': '通用', 'settings.nav.ai': '智能', 'settings.nav.system': '系统',
+    'settings.general.language': '界面语言',
+    'settings.general.languageHint': '只影响界面文案；课程原文（西语 / 加泰语）永不翻译。',
+    'settings.ai.title': '本地 AI',
+    'settings.ai.toggle': '启用本地 AI 分析',
+    'settings.ai.desc': '材料摄取成功后自动进行语义分析。关闭时，确定性处理（转录 / OCR）照常工作。',
+    'settings.ai.statusLabel': '当前状态',
+    'settings.ai.status.disabled': '已关闭',
+    'settings.ai.status.fake': '确定性模拟（非真实模型）',
+    'settings.ai.status.real': '外部模型（已配置凭证）',
+    'settings.ai.status.manual': '手动导出 / 导入',
+    'settings.ai.envLabel': '环境默认值',
+    'settings.ai.providerLabel': '提供方',
+    'settings.ai.noProvider': '未配置提供方：调用真实模型需要配置凭证（LOOMIND_AI_API_KEY）。',
+    'settings.system.title': '系统',
+    'settings.system.autostart': '开机自启',
+    'settings.system.autostartDesc': '登录 Windows 时自动启动 Loomind。',
+    'settings.system.autostartUnsupported': '仅 Windows 支持。',
+    'settings.system.autoUpdate': '自动检查更新',
+    'settings.system.autoUpdateDesc': '启动时检查 GitHub 上的新版本（只检查，不自动安装）。',
+    'settings.system.version': '当前版本',
+    'settings.system.checkNow': '立即检查',
+    'settings.system.checking': '检查中…',
+    'settings.system.upToDate': '已是最新版本。',
+    'settings.system.updateAvailable': '有新版本：{v}',
+    'settings.system.gotoDownload': '前往下载',
+    'settings.system.checkFailed': '检查失败：{e}',
+    'settings.saveFailed': '设置保存失败',
     'nav.exercises': '练习',
     'nav.reviewPack': '复习包',
     // ---- P1/§2: 复习包 (pack.*) ----
@@ -626,7 +660,41 @@ const I18N = {
   },
   es: {
     'nav.overview': 'Resumen', 'nav.knowledge': 'Mapa de conocimiento', 'nav.materials': 'Materiales',
-    'nav.reviews': 'Revisión', 'nav.courses': 'Cursos',
+    'nav.reviews': 'Revisión',
+    'nav.settings': 'Ajustes',
+    // ---- 侧栏 (Freebuff 式: 搜索 + 新建课程) ----
+    'sidebar.search': 'Buscar cursos…', 'sidebar.newCourse': 'Nuevo curso',
+    'sidebar.noMatch': 'Ningún curso coincide',
+    // ---- 设置页 (Freebuff 式: 左分类 + 右卡片) ----
+    'settings.title': 'Ajustes',
+    'settings.nav.general': 'General', 'settings.nav.ai': 'IA', 'settings.nav.system': 'Sistema',
+    'settings.general.language': 'Idioma de la interfaz',
+    'settings.general.languageHint': 'Solo afecta a los textos de la interfaz; los originales de los cursos (español / catalán) nunca se traducen.',
+    'settings.ai.title': 'IA local',
+    'settings.ai.toggle': 'Activar el análisis con IA local',
+    'settings.ai.desc': 'Tras ingerir un material, el análisis semántico se ejecuta automáticamente. Con la IA desactivada, el procesamiento determinista (transcripción / OCR) sigue funcionando.',
+    'settings.ai.statusLabel': 'Estado actual',
+    'settings.ai.status.disabled': 'Desactivada',
+    'settings.ai.status.fake': 'Simulación determinista (no es un modelo real)',
+    'settings.ai.status.real': 'Modelo externo (credenciales configuradas)',
+    'settings.ai.status.manual': 'Exportación / importación manual',
+    'settings.ai.envLabel': 'Valor por defecto del entorno',
+    'settings.ai.providerLabel': 'Proveedor',
+    'settings.ai.noProvider': 'Sin proveedor configurado: para usar un modelo real hacen falta credenciales (LOOMIND_AI_API_KEY).',
+    'settings.system.title': 'Sistema',
+    'settings.system.autostart': 'Inicio automático',
+    'settings.system.autostartDesc': 'Iniciar Loomind al abrir sesión en Windows.',
+    'settings.system.autostartUnsupported': 'Solo compatible con Windows.',
+    'settings.system.autoUpdate': 'Comprobar actualizaciones automáticamente',
+    'settings.system.autoUpdateDesc': 'Comprueba si hay versiones nuevas en GitHub al iniciar (solo comprueba; no instala automáticamente).',
+    'settings.system.version': 'Versión actual',
+    'settings.system.checkNow': 'Comprobar ahora',
+    'settings.system.checking': 'Comprobando…',
+    'settings.system.upToDate': 'Ya tienes la última versión.',
+    'settings.system.updateAvailable': 'Hay una versión nueva: {v}',
+    'settings.system.gotoDownload': 'Ir a la descarga',
+    'settings.system.checkFailed': 'Error al comprobar: {e}',
+    'settings.saveFailed': 'No se pudo guardar el ajuste',
     'nav.exercises': 'Ejercicios',
     'nav.reviewPack': 'Paquete de repaso',
     // ---- P1/§2: pack.* ----
@@ -1199,7 +1267,41 @@ const I18N = {
   },
   ca: {
     'nav.overview': 'Resum', 'nav.knowledge': 'Mapa de coneixement', 'nav.materials': 'Materials',
-    'nav.reviews': 'Revisió', 'nav.courses': 'Assignatures',
+    'nav.reviews': 'Revisió',
+    'nav.settings': 'Configuració',
+    // ---- 侧栏 (Freebuff 式: 搜索 + 新建课程) ----
+    'sidebar.search': 'Cerca cursos…', 'sidebar.newCourse': 'Nou curs',
+    'sidebar.noMatch': 'Cap curs coincideix',
+    // ---- 设置页 (Freebuff 式: 左分类 + 右卡片) ----
+    'settings.title': 'Configuració',
+    'settings.nav.general': 'General', 'settings.nav.ai': 'IA', 'settings.nav.system': 'Sistema',
+    'settings.general.language': "Idioma de la interfície",
+    'settings.general.languageHint': 'Només afecta els textos de la interfície; els originals dels cursos (espanyol / català) mai es tradueixen.',
+    'settings.ai.title': 'IA local',
+    'settings.ai.toggle': "Activa l'anàlisi amb IA local",
+    'settings.ai.desc': "Després d'ingerir un material, l'anàlisi semàntica s'executa automàticament. Amb la IA desactivada, el processament determinista (transcripció / OCR) continua funcionant.",
+    'settings.ai.statusLabel': 'Estat actual',
+    'settings.ai.status.disabled': 'Desactivada',
+    'settings.ai.status.fake': 'Simulació determinista (no és un model real)',
+    'settings.ai.status.real': 'Model extern (credencials configurades)',
+    'settings.ai.status.manual': 'Exportació / importació manual',
+    'settings.ai.envLabel': 'Valor per defecte del entorn',
+    'settings.ai.providerLabel': 'Proveïdor',
+    'settings.ai.noProvider': 'Sense proveïdor configurat: per fer servir un model real calen credencials (LOOMIND_AI_API_KEY).',
+    'settings.system.title': 'Sistema',
+    'settings.system.autostart': 'Inici automàtic',
+    'settings.system.autostartDesc': 'Iniciar Loomind en obrir sessió a Windows.',
+    'settings.system.autostartUnsupported': 'Només compatible amb Windows.',
+    'settings.system.autoUpdate': 'Comprovar actualitzacions automàticament',
+    'settings.system.autoUpdateDesc': 'Comprova si hi ha versions noves a GitHub en iniciar (només comprova; no instal·la automàticament).',
+    'settings.system.version': 'Versió actual',
+    'settings.system.checkNow': 'Comprovar ara',
+    'settings.system.checking': 'Comprovant…',
+    'settings.system.upToDate': "Ja tens l'última versió.",
+    'settings.system.updateAvailable': 'Hi ha una versió nova: {v}',
+    'settings.system.gotoDownload': 'Anar a la descàrrega',
+    'settings.system.checkFailed': 'Error en comprovar: {e}',
+    'settings.saveFailed': "No s'ha pogut desar l'ajust",
     'nav.exercises': 'Exercicis',
     'nav.reviewPack': 'Paquet de repàs',
     'sidebar.note': 'Dades de l\'/api local. Tot el text original (castellà / català / xinès) es mostra tal com és, sense reescriure.',
@@ -2210,6 +2312,18 @@ function t(key, vars) {
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach((node) => {
     node.textContent = t(node.getAttribute('data-i18n'));
+  });
+  // 图标按钮没有可见文本 (图标栏的 <a> 里只有 SVG): 可访问名与 tooltip 走
+  // title / aria-label, 语言切换时同步更新 —— 用 textContent 会把图标抹掉。
+  document.querySelectorAll('[data-i18n-title]').forEach((node) => {
+    const label = t(node.getAttribute('data-i18n-title'));
+    node.setAttribute('title', label);
+    node.setAttribute('aria-label', label);
+  });
+  // 静态 HTML 里的输入框占位符 (侧栏课程搜索) —— 与页面内 JS 渲染的
+  // placeholder 同一条规则, 只是骨架元素没有可见文本。
+  document.querySelectorAll('[data-i18n-ph]').forEach((node) => {
+    node.setAttribute('placeholder', t(node.getAttribute('data-i18n-ph')));
   });
   document.documentElement.lang = state.lang === 'zh' ? 'zh-CN' : state.lang;
   const picker = document.getElementById('ui-language');

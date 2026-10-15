@@ -379,24 +379,26 @@ class TestHashRoutesAreReachable:
         """四个暂不开发的学习入口必须是禁用 span，不能是可点击的 <a href>。
 
         2026-10-15 用户决定暂不开发考前复习 / 复习包 / 练习 / 错题本这四项内容，
-        顶栏入口退回为无 href 的 <span class="nav-disabled">。路由分支与页面函数
-        **原样保留**（深链仍可达），所以本条只断言顶栏形状，不断言可达性。
-        解禁时把四个 <span> 换回 <a href>，并把本条改回 enabled 版本即可。
+        入口退回为无 href 的 <span class="nav-disabled">。路由分支与页面函数
+        **原样保留**（深链仍可达），所以本条只断言入口形状，不断言可达性。
+        同日导航从顶栏搬到左侧图标栏 (.rail)，禁用项随之搬过去，可访问名走
+        data-i18n-title（图标按钮没有可见文本，data-i18n 的 textContent 会抹掉
+        SVG）。解禁时把四个 <span> 换回 <a href>，并把本条改回 enabled 版本即可。
         """
         html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
         match = re.search(
-            r'<nav class="topnav">(?P<body>.*?)</nav>', html, re.DOTALL
+            r'<nav class="rail"[^>]*>(?P<body>.*?)</nav>', html, re.DOTALL
         )
-        assert match is not None, "index.html 缺少 .topnav"
+        assert match is not None, "index.html 缺少 .rail"
         nav = match.group("body")
         assert "nav-disabled" in nav
         expected = {"#/review", "#/review-pack", "#/exercises", "#/mistakes"}
         actual = set(re.findall(r'<a\s+href="(#/[^"]+)"', nav))
-        assert not (expected & actual), f"顶栏里仍有可用学习入口: {sorted(expected & actual)}"
+        assert not (expected & actual), f"图标栏里仍有可用学习入口: {sorted(expected & actual)}"
         # 四个禁用 span 必须各出现一次，且带 aria-disabled
         for key in ("nav.reviewMode", "nav.reviewPack", "nav.exercises", "nav.mistakes"):
-            assert f'data-i18n="{key}"' in nav, f"顶栏缺少 {key}"
-        assert nav.count('class="nav-disabled"') == 4, nav.count('class="nav-disabled"')
+            assert f'data-i18n-title="{key}"' in nav, f"图标栏缺少 {key}"
+        assert nav.count('class="rail-link nav-disabled"') == 4, nav.count('class="rail-link nav-disabled"')
         assert nav.count('aria-disabled="true"') == 4
 
     def test_branches_that_read_later_segments_pin_the_length(self):

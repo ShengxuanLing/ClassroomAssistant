@@ -718,8 +718,9 @@ function declareRoute(hash) {
  * 这条路由是不是**全局页** —— 内容不跟随"当前课程" (state.courseId)。
  *
  * 页面层级 (2026-09-22, 任务书 §2):
- *   全局页   ``#/`` (概览) / ``#/today`` —— 默认按全部课程聚合, 顶栏选择器
- *            在这两页上只作**本页筛选** (state.scope), 不改 course context;
+ *   全局页   ``#/`` (概览) / ``#/today`` / ``#/settings`` —— 默认按全部课程
+ *            聚合 (设置页则与课程无关), 顶栏选择器在前两页上只作**本页筛选**
+ *            (state.scope), 不改 course context;
  *   课程页   其余全部 —— 数据跟随 state.courseId。
  *
  * switchCourse() 用它来决定换课后要不要把 scope 归位; renderCourseSwitcher()
@@ -728,7 +729,7 @@ function declareRoute(hash) {
 function isGlobalRoute() {
   if (__activeRoute === null) return false;
   const parts = hashParts(__activeRoute);
-  return parts.length === 0 || parts[0] === 'today';
+  return parts.length === 0 || parts[0] === 'today' || parts[0] === 'settings';
 }
 
 /** parseHash() 的纯函数版: 解析任意 hash 字符串, 不读 window。 */
@@ -1097,6 +1098,45 @@ function syncCourseChrome() {
   const list = document.getElementById('course-list');
   if (list) list.innerHTML = courseListHtml(__courseCache);
   renderCourseSwitcher(__courseCache);
+  // 列表刚被重绘 (换课 / 路由刷新), 搜索框里的过滤条件必须重新套上 ——
+  // 否则"输入了关键词 -> 切到别的页再切回来"会看到全量列表, 像是过滤丢了。
+  applyCourseFilter();
+}
+
+/**
+ * 侧栏课程搜索 (纯前端, 不发请求)。
+ *
+ * 课程列表已在 ``__courseCache`` 里 (loadSidebar 每次路由刷新), 所以过滤
+ * 只对 ``#course-list`` 的 ``<li>`` 做文本匹配; 一个都不剩时给一条
+ * "无匹配课程" 的提示行, 而不是留一片空白。
+ *
+ * 搜索框是 index.html 里的**静态**元素 (不在 #course-list 内), 因此
+ * loadSidebar() 重绘列表时它不会被重建 —— 这是刻意的: 重建会让输入内容
+ * 与焦点一起丢失。事件在 DOMContentLoaded 里只接一次线。
+ */
+function applyCourseFilter() {
+  const input = document.getElementById('course-filter');
+  const list = document.getElementById('course-list');
+  if (!input || !list) return;
+  const query = String(input.value || '').trim().toLowerCase();
+  // 上一次的"无匹配"提示先撤掉: 它本身也会进过滤循环, 留着会累积。
+  const stale = list.querySelector('[data-filter-hint]');
+  if (stale) stale.remove();
+  const items = list.querySelectorAll('li');
+  let visible = 0;
+  for (let i = 0; i < items.length; i += 1) {
+    const text = (items[i].textContent || '').toLowerCase();
+    const show = !query || text.indexOf(query) >= 0;
+    items[i].hidden = !show;
+    if (show) visible += 1;
+  }
+  if (query && visible === 0) {
+    const hint = document.createElement('li');
+    hint.setAttribute('data-filter-hint', '1');
+    hint.className = 'muted small';
+    hint.textContent = t('sidebar.noMatch');
+    list.appendChild(hint);
+  }
 }
 
 //: 历史种子脚本在"教师未知"时写入的技术占位串 —— 绝不渲染给用户。
@@ -1338,17 +1378,17 @@ function renderCourseSwitcher(courses) {
 }
 
 /**
- * 顶栏导航的高亮。
+ * 全局导航的高亮 (图标栏 .rail; 2026-10-15 起导航从顶栏搬到左侧图标栏)。
  *
- * 高亮**完全由页面函数声明** —— ``index.html`` 的 topnav 里没有任何硬编码
+ * 高亮**完全由页面函数声明** —— ``index.html`` 的图标栏里没有任何硬编码
  * ``active``。所以"没人调用它"和"高亮留在上一页"是同一件事: 漏调一个页面函数,
  * 那一页的高亮就继承上一页; 若是刷新后直接落在这一页, 整条导航都没有高亮。
  * 因此**每个** pageXxx() 都必须恰好调用一次 (由
  * ``test_every_page_function_sets_the_top_nav_highlight`` 清点)。
  *
- * 归属规则 —— **跟随用户所在页面所属的顶栏分区; 不属于任何分区的页面清空**:
+ * 归属规则 —— **跟随用户所在页面所属的导航分区; 不属于任何分区的页面清空**:
  *
- *   顶栏项              归属它的路由
+ *   导航项              归属它的路由
  *   #/today             #/today, #/learn, #/learn/<kp>, #/courses/<c>/learn/<kp>
  *   #/review            #/review, #/courses/<c>/review
  *   #/                  #/
@@ -1359,16 +1399,18 @@ function renderCourseSwitcher(courses) {
  *   #/exercises         #/exercises, #/courses/<c>/exercises/<e>/<sid>
  *   #/mistakes          #/mistakes, #/mistakes/<c>/<k>
  *   #/review-pack       #/review-pack
+ *   #/settings          #/settings, #/settings/<section>
  *
- * 2026-10-15: 右侧四个页面（考前复习 / 复习包 / 练习 / 错题本）的**顶栏入口**
- * 已改为无 href 的 <span class="nav-disabled">，不可点击、不发路由、不进 active。
- * 但**路由分支与页面函数原样保留** —— 上面四行的归属关系不变，深链仍可达。
- * 解禁时把四个 <span> 换回 <a href> 即可，本表无需改动。
+ * 2026-10-15: 考前复习 / 复习包 / 练习 / 错题本四个入口在图标栏底部是无 href 的
+ * <span class="rail-link nav-disabled">，不可点击、不发路由、不进 active
+ * (markActiveNav() 只扫 .rail a)。但**路由分支与页面函数原样保留** ——
+ * 上面四行的归属关系不变，深链仍可达。解禁时把四个 <span> 换回 <a href> 即可，
+ * 本表无需改动。
  *
  *   清空 ('')           #/courses/<c>, #/courses/<c>/sessions/<s>,
  *                       #/courses/<c>/knowledge/<k>, #/courses/<c>/knowledge-map
  *
- * 清空的那三页是"课程内部"的详情, 顶栏没有对应分区, 而且它们各有多条进入路径
+ * 清空的那三页是"课程内部"的详情, 导航没有对应分区, 而且它们各有多条进入路径
  * (课程页 / 知识点 / 今日 / 错题本…) —— 跟随"上一页"会得到一个由
  * 用户上一秒在看哪页决定的高亮, 那不是"确定"。**关键不是"选哪一个", 而是"确定"。**
  *
@@ -1376,7 +1418,7 @@ function renderCourseSwitcher(courses) {
  * 改任何一个目标都必须同步改那张表 —— 让改动是**刻意**的, 而不是顺手漂移的。
  */
 function markActiveNav(hash) {
-  document.querySelectorAll('.topnav a').forEach((link) => {
+  document.querySelectorAll('.rail a').forEach((link) => {
     const href = link.getAttribute('href') || '';
     if (href === hash) link.classList.add('active');
     else link.classList.remove('active');
@@ -1592,6 +1634,10 @@ async function route() {
     else if (parts[0] === 'review') await pageReview();
     else if (parts[0] === 'review-pack') await pageReviewPack();
     else if (parts[0] === 'knowledge') await pageKnowledge();
+    // 设置页: ``#/settings`` 与 ``#/settings/<section>`` (general / ai / system)。
+    // 不钉 parts.length —— section 由页面函数自己校验 (白名单之外回落
+    // 'general'), 三段以上的多余段被忽略而不是掉进"未找到页面"。
+    else if (parts[0] === 'settings') await pageSettings(parts[1]);
     
     else if (parts[0] === 'materials') await pageMaterials();
     else if (parts[0] === 'reviews') await pageReviews();
@@ -1653,6 +1699,10 @@ window.addEventListener('DOMContentLoaded', () => {
       route();
     });
   }
+  // 侧栏课程搜索: 静态元素只接一次线 (loadSidebar 每次重绘的是 #course-list,
+  // 不会重建这个输入框)。空输入 = 清空过滤, 由 applyCourseFilter 统一处理。
+  const filter = document.getElementById('course-filter');
+  if (filter) filter.addEventListener('input', () => { applyCourseFilter(); });
   // 刷新前仍在跑的任务接回坞里 (P3-2)。**不 await** —— 它是一次额外的
   // 网络往返, 不能挡在首屏渲染前面; 坞是挂在 #view 之外的, 晚一点出现不影响
   // 页面本身。

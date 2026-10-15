@@ -146,6 +146,8 @@
 
   /* ---- 布局 ------------------------------------------------------------ */
   --shell-max: 1400px;
+  /* 左侧图标栏 (Freebuff 式全局导航) 的列宽: 40px 图标 + 2×8px 内边距。 */
+  --rail-w: 56px;
   --sidebar-w: 250px;
   /* 顶栏实测高度。默认值只是"还没量过"时的占位 —— 真实值由 app.js 的
    * syncTopbarHeight() 写进 :root 的内联样式 (它会随视口折行而变,
@@ -378,47 +380,38 @@ html {
 .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .brand-text small { color: var(--text-muted); font-size: var(--fs-2xs); }
 
-.topnav { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; }
-.topnav a {
-  padding: 5px 10px; border-radius: var(--radius-sm);
-  color: var(--text-muted); font-size: var(--fs-md);
-  transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
-}
-.topnav a:hover { background: var(--surface-2); text-decoration: none; color: var(--text); }
-/* 当前分区 (由 app.js 的 markActiveNav() 设置)。
+/* 左侧图标栏 (Freebuff 式全局导航; 2026-10-15 从顶栏搬来)。
+ *
+ * 图标按钮 40×40, 列宽 --rail-w (56px)。高亮 .active 由 app.js 的
+ * markActiveNav() 按当前路由设置, 取值与侧栏"当前课程"一致
+ * (--accent-soft 底 + --accent-ink 文字), 不新造第二套"选中"语言。
  *
  * **这是一个真实的缺失**: markActiveNav() 一直在给匹配的导航项加 .active,
- * 但 styles.css 里从来没有 .topnav a.active 这条规则 —— 于是"我在哪一页"
- * 在界面上完全不可见, 用户只能靠 #view 里的标题反推。之所以没被静态检查
- * 抓到: 那个检查只扫 class="..." 字面量, 而这里的类名是 classList.add()
- * 加上去的 (看不见的类名 = 看不见的缺失)。
- *
- * 取值与本项目既有的"当前项"完全一致 (侧栏当前课程、课表当前月份都是
- * --accent-soft 底 + --accent 文字), 不新造第二套"选中"语言。 */
-.topnav a.active {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  font-weight: 600;
+ * 但搬来之前 styles.css 里只有 .topnav a.active —— 高亮规则跟着选择器
+ * 一起搬, 少搬一条就等于"我在哪一页"在界面上完全不可见。 */
+.rail { display: flex; flex-direction: column; gap: 2px; align-self: start;
+  position: sticky; top: var(--sticky-top); }
+.rail-link {
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
-.topnav a.active:hover { background: var(--accent-soft); color: var(--accent-ink); }
-
-/* 当前禁用的顶栏入口 (2026-10-15 起)。用户决定暂不开发考前复习 / 复习包 / 练习 / 错题本
- * 这四项内容, 顶栏入口退回为无 href 的 <span class="nav-disabled">: 不可点击、
- * 不发路由、不进 active (markActiveNav() 只扫 .topnav a)。
- * 与 2026-09-22 那版同一条样式, 只是这次是**刻意**恢复而非回归:
- * 解禁时把四个 <span> 换回 <a href> 即可, 这条规则可以跟着删。 */
-.topnav .nav-disabled {
-  padding: 5px 10px; border-radius: var(--radius-sm);
-  font-size: var(--fs-md); color: var(--text-muted); opacity: 0.65;
-  cursor: default; white-space: nowrap;
+.rail-link:hover { background: var(--surface-2); text-decoration: none; color: var(--text); }
+.rail-link.active { background: var(--accent-soft); color: var(--accent-ink); }
+.rail-link.active:hover { background: var(--accent-soft); color: var(--accent-ink); }
+.rail-icon {
+  width: 20px; height: 20px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
 }
-
-/* 顶栏两组之间的分隔符 (P3-3)。刻意不是 `border-left` —— 它要参与 flex 的
-   gap 计算, 而且折行后仍应贴在它右边那一组的前面。aria-hidden 见 index.html。 */
-.topnav-sep {
-  width: 1px; height: 16px; margin: 0 var(--sp-2);
-  background: var(--border-strong); flex: none;
-}
+/* 禁用的入口 (考前复习 / 复习包 / 练习 / 错题本): 与 2026-10-15 顶栏版
+ * 同一条语义 —— 看得见、不可点、不进 active。解禁时把 <span> 换回 <a href>
+ * 即可, 这条规则可以跟着删。 */
+.rail-link.nav-disabled { opacity: 0.55; cursor: default; }
+.rail-link.nav-disabled:hover { background: none; color: var(--text-muted); }
+/* 图标栏里的分组分隔 (纯装饰, aria-hidden)。 */
+.rail-sep { height: 1px; margin: var(--sp-2) var(--sp-1); background: var(--border); flex: none; }
 
 /* 顶栏控件组: 自身可换行。
  *
@@ -436,17 +429,16 @@ html {
  * 长文本会撑破容器; 区别只在于这里撑破的是整页而不是一张表)。 */
 .topbar-meta .pill { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 
-/* 两行页眉 (品牌+导航 / 控件+状态), 由 .topbar 的 flex-wrap 自然产生。
+/* 顶栏只剩品牌 + 控件组 (2026-10-15 起导航搬到左侧图标栏), 由 .topbar 的
+ * flex-wrap 自然产生换行。
  *
  * 曾经试过在宽屏上用 `flex-wrap: nowrap` 把三者压成一行 (看着更紧凑), 实测
  * **适得其反**: 课程选择器的选项文本是数据驱动的 (最长的那门课决定宽度,
  * 实测一个 label 就到 344px), 加上两个状态 pill 的完整文案, 一行放不下 ——
- * nowrap 下浏览器只能反过来**挤压导航**, 10 个导航项被挤成 3 行 (实测页眉
- * 118px), 比"控件换到第二行"更局。所以这里刻意保留 wrap: 一行放不下就
- * 整齐地换成两行, 而不是把导航压碎。
+ * nowrap 下浏览器只能反过来**挤压控件组**, 比"控件换到第二行"更局。
+ * 所以这里刻意保留 wrap: 一行放不下就整齐地换成两行, 而不是把控件压碎。
  * 注: 用户数据 (课程名 / 状态文案) 的长度不该被 CSS 猜, 只截断又会让状态
  * 变得不可读 (见 AGENTS.md 的证据优先原则)。 */
-.topnav { min-width: 0; }
 
 /* 顶栏那两个 <select> 的标签壳。
  *
@@ -524,13 +516,46 @@ html {
 
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr);
   gap: var(--sp-5);
   padding: var(--sp-5);
   max-width: var(--shell-max);
   margin: 0 auto;
   align-items: start;
 }
+
+/* 侧栏头部 (Freebuff 式: 课程搜索 + 新建课程主按钮)。
+ * 搜索框是静态 HTML (见 index.html), 不在 #course-list 内 —— 这样
+ * loadSidebar() 每次重绘列表都不会把用户的输入与焦点一起抹掉。 */
+.sidebar-head { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.sidebar-search {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2); color: var(--text-muted);
+}
+.sidebar-search:focus-within { border-color: var(--accent-line); }
+.sidebar-search svg {
+  width: 15px; height: 15px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.sidebar-search input {
+  border: none; background: none;
+  color: var(--text); font-size: var(--fs-sm); width: 100%; min-width: 0;
+}
+/* 输入框自己的焦点环 (WCAG 2.4.7): 容器的 :focus-within 描边是**辅助**提示,
+   键盘焦点必须落在可聚焦元素本身 —— 且样式表里任何一处都不许 outline:none
+   (审计有一条专门查这个)。 */
+.sidebar-search input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px;
+}
+.sidebar-new {
+  display: block; text-align: center; padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--accent); color: var(--on-accent);
+  font-size: var(--fs-sm); font-weight: 600;
+}
+.sidebar-new:hover { background: var(--accent-hover); text-decoration: none; }
 
 .sidebar {
   background: var(--surface);
@@ -553,6 +578,74 @@ html {
 .course-list a:hover { background: var(--surface-2); text-decoration: none; }
 .course-list a.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
 .sidebar-note { margin: var(--sp-3) 0 0; padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+
+/* ---------------------------------------------------------- 设置页 (Freebuff 式) */
+
+.settings-layout {
+  display: grid; grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--sp-5); align-items: start;
+}
+/* 左侧分类导航: 与侧栏"当前课程"同一套选中语言 (--accent-soft 底 +
+ * --accent-ink 文字), 高亮由页面函数按当前 section 渲染。 */
+.settings-nav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: var(--sticky-top); }
+.settings-nav a {
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  color: var(--text-muted); font-size: var(--fs-md);
+  transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.settings-nav a:hover { background: var(--surface-2); text-decoration: none; color: var(--text); }
+.settings-nav a.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+.settings-body h1 { margin: 0 0 var(--sp-4); font-size: var(--fs-xl); }
+/* 卡片: 一个设置主题一块, 标题 + 说明 + 行。 */
+.settings-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--sp-4); margin-bottom: var(--sp-3);
+}
+.settings-card h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-md); }
+.settings-desc { margin: 0 0 var(--sp-2); color: var(--text-muted); font-size: var(--fs-sm); }
+/* 行: 左标签 + 右控件 (开关 / 分段器)。同卡多行时用细线分隔。 */
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3); padding: var(--sp-3) 0;
+}
+.settings-row + .settings-row { border-top: 1px solid var(--border); }
+.settings-row-label { font-size: var(--fs-md); }
+.settings-row-note { color: var(--text-muted); font-size: var(--fs-sm); margin: var(--sp-1) 0 0; }
+
+/* 开关 (checkbox 视觉隐藏, 轨道 + 滑块是可见部分)。 */
+.switch { position: relative; display: inline-flex; flex: none; cursor: pointer; }
+.switch input {
+  position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer;
+  /* 让隐藏的 input 仍然可聚焦 (键盘可达), 焦点环画在轨道上。 */
+}
+.switch-track {
+  width: 38px; height: 22px; border-radius: 999px; display: block; position: relative;
+  background: var(--surface-3); border: 1px solid var(--border-strong);
+  transition: background-color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+.switch-knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--text-muted);
+  transition: transform var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
+}
+.switch input:checked + .switch-track { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + .switch-track .switch-knob { transform: translateX(16px); background: var(--on-accent); }
+.switch input:disabled { cursor: not-allowed; }
+.switch input:disabled + .switch-track { opacity: 0.5; }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 语言分段器 (通用卡): 三个按钮一段, 选中项与导航同一套选中语言。 */
+.lang-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.lang-seg .lang-btn {
+  padding: 6px 14px; border: none; background: var(--surface);
+  color: var(--text-muted); font-size: var(--fs-sm); cursor: pointer;
+}
+.lang-seg .lang-btn + .lang-btn { border-left: 1px solid var(--border); }
+.lang-seg .lang-btn:hover { background: var(--surface-2); color: var(--text); }
+.lang-seg .lang-btn.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+
+.update-result { margin-top: var(--sp-2); font-size: var(--fs-sm); }
+.update-result a { font-weight: 600; }
 
 .view { min-width: 0; }
 
@@ -1134,8 +1227,11 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
 #evaluation-panel .kv { margin-top: var(--sp-1); }
 
 @media (max-width: 900px) {
-  .shell { grid-template-columns: minmax(0, 1fr); }
+  /* 窄视口: 图标栏保留 (它只有 56px), 侧栏与主区收进第二列上下堆叠。 */
+  .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
   .sidebar { position: static; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
   /* 窄视口下多列表格 (溯源链 / 材料 / 练习) 放不进一栏。让**卡片自己**横向
      滚动, 而不是把整个页面撑宽 —— 后者会让导航和正文一起跑出屏幕。 */
   .card { overflow-x: auto; }

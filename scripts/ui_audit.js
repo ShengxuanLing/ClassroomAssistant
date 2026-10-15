@@ -88,6 +88,7 @@ const WEB_FILES = [
   'views/exercises.js',
   'views/mistakes.js',
   'views/review-pack.js',
+  'views/settings.js',
 ];
 
 const WEB_SOURCES = WEB_FILES.map((rel) => ({
@@ -1084,6 +1085,17 @@ function routes() {
   };
   table['/api/courses'] = { courses: [course()] };
   table['/api/courses/' + COURSE_ID] = course();
+  // 设置页快照 (形状与 workspace.settings_snapshot() 一致; 审计用它渲染
+  // #/settings 的三个分区 —— 缺这条会让设置页在审计里掉进错误态)。
+  table['/api/settings'] = {
+    settings: { local_ai_enabled: false, autostart: false, auto_update_check: true },
+    ai: { enabled: false, mode: 'disabled', provider: 'none',
+          env_default_enabled: false, env_has_credentials: false },
+    autostart: { supported: true, enabled: false, command: null },
+    auto_update: { enabled: true },
+    version: '0.0.0-audit',
+    platform: 'windows',
+  };
   table['/api/courses/' + COURSE_ID + '/workspace'] = courseWorkspace();
   // Knowledge Map: 3 KP / 2 材料 / 2 独立证据 / 3 处引用 (kp-1 与 kp-2 共享)。
   table['/api/courses/' + COURSE_ID + '/knowledge-map'] = knowledgeMap();
@@ -1936,6 +1948,8 @@ const PAGES = [
   { name: 'myCourses', args: [] },
   // Knowledge Map Premium: 按材料分簇的知识点探索器。
   { name: 'knowledgeMap', args: [COURSE_ID] },
+  // 设置页 (Freebuff 式: 左分类 + 右卡片; 三语渲染进本审计)。
+  { name: 'settings', args: [] },
 ];
 
 function pageByName(name) {
@@ -2084,19 +2098,22 @@ async function preview(lang, outfile, pageName) {
 }
 
 async function audit() {
-  // ---- 0) 顶栏零禁用入口：四个学习入口必须保持可点击。 ----
+  // ---- 0) 图标栏四个禁用入口: 暂不开发的四项必须保持禁用形状 ----
   {
-    const navMatch = INDEX_HTML.match(/<nav class="topnav">([\s\S]*?)<\/nav>/);
+    // 2026-10-15: 导航从顶栏搬到左侧图标栏 (.rail), 四个禁用项随之搬过去
+    // (无 href 的 <span class="rail-link nav-disabled">)。本条的语义不变:
+    // 恰好四个禁用项、都不暴露可点的 href、都带 aria-disabled。
+    const navMatch = INDEX_HTML.match(/<nav class="rail"[^>]*>([\s\S]*?)<\/nav>/);
     const nav = navMatch ? navMatch[1] : '';
     const disabled = nav.match(/class="[^"]*\bnav-disabled\b[^"]*"/g) || [];
-    check('top nav has exactly four disabled entries', disabled.length === 4,
+    check('nav rail has exactly four disabled entries', disabled.length === 4,
       disabled.join(','));
     for (const href of ['#/review', '#/review-pack', '#/exercises', '#/mistakes']) {
-      check('top nav does NOT expose enabled ' + href,
+      check('nav rail does NOT expose enabled ' + href,
         !nav.includes('<a href="' + href + '"'), nav);
     }
-    check('top nav keeps the four disabled spans with aria-disabled',
-      nav.split('class="nav-disabled"').length - 1 === 4 &&
+    check('nav rail keeps the four disabled spans with aria-disabled',
+      nav.split('class="rail-link nav-disabled"').length - 1 === 4 &&
       nav.split('aria-disabled="true"').length - 1 === 4, nav);
   }
 
@@ -2113,7 +2130,13 @@ async function audit() {
       }
       check('page ' + page.name + ' renders in ' + lang, out.length > 0);
       if (lang !== 'zh') {
-        const leaked = firstCjk(out);
+        // 语言分段器 (.lang-seg) 里的端名 (中文 / Español / Català) 是**专有
+        // 名词**: 每种语言用其自己的名字显示, 三语界面下都一样, 不做翻译 ——
+        // 与 index.html 里 #ui-language 的 <option> 同口径 (那三个 <option>
+        // 写在静态骨架里, 本来就不在这条检查的视野内)。扫描前先摘掉这一段,
+        // 否则"中文"这个端名会被误报成未翻译文案。
+        const scanned = out.replace(/<div class="lang-seg">[\s\S]*?<\/div>/g, '');
+        const leaked = firstCjk(scanned);
         check(
           'page ' + page.name + ' has no untranslated CJK in ' + lang,
           leaked === null,
@@ -3403,14 +3426,14 @@ async function audit() {
       reduceBlock !== null && /animation-duration/.test(reduceBlock[1]) &&
       /transition-duration/.test(reduceBlock[1]));
 
-    // 顶栏当前分区的高亮。
+    // 图标栏当前分区的高亮 (2026-10-15 起导航从顶栏搬到 .rail)。
     //
     // 这里有一个**真实缺失**: markActiveNav() 一直在给匹配的导航项加 .active,
-    // 而 styles.css 里从来没有 .topnav a.active —— 于是"我在哪一页"在界面上
+    // 而 styles.css 里从来没有 .rail a.active —— 于是"我在哪一页"在界面上
     // 完全不可见。它之所以躲过了既有检查: 那个检查只扫 class="..." 字面量,
     // 而这个类名是 classList.add('active') 加上去的。两侧一起断言。
-    check('css styles the active top-nav item', /\.topnav a\.active\s*\{/.test(CSS));
-    check('the active top-nav class is still emitted by app.js',
+    check('css styles the active rail item', /\.rail-link\.active\s*\{/.test(CSS));
+    check('the active rail class is still emitted by app.js',
       APP_JS.includes("link.classList.add('active')"));
 
     // 高度层级: 卡片是平的 (靠边框分界), 只有真的浮在内容之上的层才带投影。
@@ -4273,8 +4296,8 @@ async function audit() {
         !CJK.test(tables[lang]['nav.knowledge'] || ''), String(tables[lang]['nav.knowledge']));
     }
     const navItem = INDEX_HTML.split('\n')
-      .filter((line) => line.indexOf('data-i18n="nav.knowledge"') >= 0)[0] || '';
-    check('the shell nav entry keeps its href and i18n key',
+      .filter((line) => line.indexOf('data-i18n-title="nav.knowledge"') >= 0)[0] || '';
+    check('the rail knowledge entry keeps its href and i18n key',
       navItem.indexOf('href="#/knowledge"') >= 0, navItem);
     const kmEntry = await renderPage(pageByName('knowledge'), routes(), 'zh');
     const kmEntryOut = html(kmEntry);

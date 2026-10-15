@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -40,6 +41,8 @@ from src.application.data_dirs import (
     safe_join,
 )
 from src.application.errors import (
+    ERROR_CODES,
+    ConfigurationError,
     InvalidInputError,
     NotFoundError,
     ProcessingError,
@@ -67,6 +70,7 @@ from src.application.processing_service import (
     ClassroomProcessingService,
 )
 from src.application.runtime import Clock, utc_now_iso
+from src.application.settings import SettingsStore, UserSettings
 from src.application.student_today_view import StudentTodayView
 from src.evidence_ingestion import EvidenceIngestionService
 from src.evidence_store import EvidenceStore
@@ -80,7 +84,11 @@ from src.models import ClassSession, Course
 __all__ = ["CourseContext", "Workspace", "APPLICATION_NAME", "APPLICATION_VERSION"]
 
 APPLICATION_NAME = "Loomind"
-APPLICATION_VERSION = "1.2.0"
+APPLICATION_VERSION = "1.3.0"
+
+#: update_settings 的哨兵: 区分"没传这个字段"与"传了 None"。
+#: ``local_ai_enabled`` 的 None 是有意义的 (显式跟随环境), 不能用 None 当默认。
+_UNSET = object()
 
 #: TASK-77: 自动 AI 触发状态 (``process_material`` 返回作业字典里 ``ai``
 #: 子对象的 ``status`` 取值)。这是对既有 ``JOB_SUCCEEDED / JOB_FAILED``
@@ -243,6 +251,10 @@ class Workspace:
         if not isinstance(data_dir, str) or not data_dir.strip():
             raise InvalidInputError("data_dir must be a non-empty string")
         self._layout = ensure_data_layout(data_dir)
+        # 设置页开关的持久化真相源 (<data_dir>/settings.json)。构造即读一次;
+        # 损坏回落默认值并记 note (见 SettingsStore.load), 绝不阻断启动。
+        self._settings_store = SettingsStore(self._layout.root)
+        self._settings, self._settings_notes = self._settings_store.load()
         self._clock: Clock = clock or utc_now_iso
         self._max_file_size = max_file_size
         self._max_attempts = max_attempts
@@ -2423,6 +2435,133 @@ class Workspace:
     @property
     def ai_enabled(self) -> bool:
         return self._ai_enabled
+
+    # ------------------------------------------------------------------
+    # 用户设置 (设置页开关; 真相源 <data_dir>/settings.json)
+    # ------------------------------------------------------------------
+
+    @property
+    def settings(self) -> UserSettings:
+        """当前持久化设置 (只读投影; 修改走 update_settings)。"""
+        return self._settings
+
+    @property
+    def settings_notes(self) -> tuple[str, ...]:
+        """加载设置文件时的诊断 (损坏回落等)。"""
+        return tuple(self._settings_notes)
+
+    def settings_snapshot(self) -> dict[str, Any]:
+        """设置页要展示的**全部**状态 (一次 GET 拿齐)。
+
+        ``ai`` 块是**生效状态** (workspace 内存里的真相), 不是设置文件里的
+        ``local_ai_enabled`` —— 后者可能是 None (跟随环境)。设置页要显示
+        "现在实际在用什么", 所以两块都给。
+        """
+        from src.application.ai.config import load_ai_config
+
+        ai_config = load_ai_config()
+        return {
+            "settings": self._settings.to_dict(),
+            "ai": {
+                "enabled": self._ai_enabled,
+                "mode": self._ai_mode,
+                "provider": getattr(self._ai_provider, "name", None)
+                or ("none" if self._ai_provider is None else "custom"),
+                # 环境默认 (settings 未覆盖时的行为) —— 设置页要能解释
+                # "为什么开关是关的: 环境里 LOOMIND_AI_ENABLED 没开"。
+                "env_default_enabled": bool(ai_config.enabled),
+                "env_has_credentials": bool(ai_config.has_credentials),
+            },
+            "autostart": self._autostart_state(),
+            "auto_update": {"enabled": bool(self._settings.auto_update_check)},
+            "version": APPLICATION_VERSION,
+            "platform": "windows" if os.name == "nt" else sys.platform,
+        }
+
+    def _autostart_state(self) -> dict[str, Any]:
+        """开机自启的**实际**状态 (读注册表, 不是读设置文件)。
+
+        设置文件里的 ``autostart`` 是"用户的选择", 注册表是"系统的事实" ——
+        两者可能不一致 (手工删了注册表值、组策略锁定), 所以显示读注册表。
+        """
+        from src.application.autostart import (
+            is_supported,
+            read_run_command,
+        )
+
+        if not is_supported():
+            return {"supported": False, "enabled": False, "command": None}
+        command = read_run_command()
+        return {
+            "supported": True,
+            "enabled": command is not None,
+            "command": command,
+        }
+
+    def update_settings(
+        self,
+        *,
+        local_ai_enabled: Any = _UNSET,
+        autostart: Any = _UNSET,
+        auto_update_check: Any = _UNSET,
+    ) -> dict[str, Any]:
+        """应用一组设置改动 (校验 -> 生效 -> 落盘 -> 快照)。
+
+        - ``local_ai_enabled``: 直接改 workspace 的 AI 开关 (configure_ai),
+          随后落盘。``True`` 但环境没有 provider 时**不**自动造 Fake ——
+          那会悄悄产生"不是真模型输出"的知识点; 设置页显示 provider=none
+          并提示配置凭证。
+        - ``autostart``: 写/删注册表 Run 键 (非 Windows 抛 ConfigurationError)。
+        - 字段值非法 -> ValueError (端点层 -> INVALID_INPUT), 不写盘。
+        """
+        patch: dict[str, Any] = {}
+        if local_ai_enabled is not _UNSET:
+            patch["local_ai_enabled"] = local_ai_enabled
+        if autostart is not _UNSET:
+            patch["autostart"] = autostart
+        if auto_update_check is not _UNSET:
+            patch["auto_update_check"] = auto_update_check
+
+        if not patch:
+            return self.settings_snapshot()
+
+        # 先做**能预先判定的**校验 (非 Windows 的开机自启), 再落盘 ——
+        # 落盘之后才失败的副作用 (注册表写入) 会把设置文件留在
+        # "用户选了但系统没生效" 的不一致状态。
+        autostart_requested = "autostart" in patch
+        if autostart_requested:
+            from src.application.autostart import is_supported
+
+            if not is_supported():
+                raise ConfigurationError(
+                    "autostart is only supported on Windows",
+                    code=ERROR_CODES.CONFIGURATION_ERROR.value,
+                )
+
+        # 校验 + 落盘 (非法值在这里抛, 任何副作用都不发生)。
+        previous = self._settings
+        updated, notes = self._settings_store.update(**patch)
+        self._settings = updated
+        self._settings_notes = notes
+
+        # 再生效: AI 开关是内存状态, 注册表是系统状态。
+        if "local_ai_enabled" in patch:
+            self.configure_ai(enabled=updated.local_ai_enabled)
+        if autostart_requested:
+            from src.application.autostart import (
+                default_launch_command,
+                set_autostart,
+            )
+
+            try:
+                set_autostart(bool(updated.autostart), default_launch_command(self._layout.root))
+            except OSError:
+                # 注册表写入失败 (权限 / 组策略锁定): 回滚设置文件, 让文件
+                # 与系统事实保持一致, 错误抛给端点层 (CONFIGURATION_ERROR)。
+                self._settings = previous
+                self._settings_store.save(previous)
+                raise
+        return self.settings_snapshot()
 
     def analyze_material_with_ai(
         self,

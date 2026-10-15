@@ -9078,3 +9078,139 @@ onedir 可用、冻结 OCR 与源码逐位一致、`%LOCALAPPDATA%` 数据目录
 - 本机 dev Python（3.14.5）缺 pystray 曾让一条测试 skip；已 `pip install
   "pystray>=0.19,<0.20"`（仅本机开发环境，非代码变更）。
 
+
+## TASK-111 侧边栏 + 设置页（Freebuff 式设计）— 2026-10-15
+
+Goal
+----------------------------------------
+按用户提供的 Freebuff 截图（左侧图标栏 + 第二列侧栏 + 卡片式设置页）重构界面
+外壳，并新增设置页（`#/settings`）：界面语言、本地 AI、开机自启、自动检查更新。
+版本 1.2.0 → 1.3.0。
+
+设计取舍
+----------------------------------------
+- **导航从顶栏搬到左侧图标栏（.rail）**，顶栏只留品牌 + 课程切换器 + 语言选择器
+  + 状态 pill（VS Code / Freebuff 混合式）。图标按钮没有可见文本，可访问名与
+  tooltip 走新增的 `data-i18n-title`（applyI18n 扩展处理 title / aria-label /
+  placeholder 两种新属性）。高亮规则一字未改：`markActiveNav()` 只把选择器从
+  `.topnav a` 换成 `.rail a`，归属表新增 `#/settings` 一行，由既有守卫钉住。
+- **四个暂不开发的入口（考前复习 / 复习包 / 练习 / 错题本）保持禁用形状**，
+  随导航搬进图标栏底部（无 href 的 `<span class="rail-link nav-disabled">`）：
+  用户 2026-10-15 的决定不变，深链仍可达。
+- **设置分三个区**：通用（语言）、智能（本地 AI）、系统（开机自启 + 自动更新
+  检查 + 版本 + 立即检查）。语言刻意**不**进服务端 settings.json —— 它是
+  "这个浏览器看什么语言"（localStorage `ca.lang`），服务端持久化会让多浏览器
+  行为不确定；其余三个开关走 `PATCH /api/settings` 落盘 `<data_dir>/settings.json`。
+- **local AI 开关的优先级**：settings.json（用户显式选择）> `LOOMIND_AI_ENABLED`
+  （环境默认）。用户开启但环境无凭证时用确定性 FakeAIProvider 顶上并记 runtime
+  note —— 与 `_build_ai_provider` "无凭证回落 fake" 同口径，绝不静默升级成 real。
+- **开机自启只做注册表 Run 键**（HKCU，当前用户）：刻意不碰 HKLM（需管理员、
+  语义错）。命令形状分两种：dev（`python -m src.application.launcher start
+  --data-dir <dir>`）与冻结 exe（exe 自身，即托盘入口）。写后**读回**才是生效
+  判据；注册表写失败会**回滚 settings.json**（文件与系统事实保持一致）。
+- **自动更新只检查不安装**：打 GitHub releases/latest 与当前版本比较，返回
+  下载链接由用户决定。自动安装替换 exe 是不可逆操作，需要独立确认流程，本期不做。
+- 设置页开关失败时**回滚 checkbox**（change 事件里 checked 已经变了，不还原
+  等于界面撒谎）。
+
+交付文件
+----------------------------------------
+新增：
+- `src/application/settings.py` —— `UserSettings` + `SettingsStore`
+  （`<data_dir>/settings.json`，原子写、白名单校验、损坏回落默认 + note、
+  未知字段忽略做前向兼容）。
+- `src/application/autostart.py` —— 注册表 Run 键（reader/writer/deleter 可注入，
+  测试全走内存字典，绝不碰真实 HKCU）。
+- `src/application/update_check.py` —— GitHub releases 比较（fetch 可注入、
+  8s 超时、网络失败不抛异常）。
+- `src/web/views/settings.js` —— 设置页（左分类 + 右卡片 + 开关）。
+- `tests/test_user_settings.py` —— 39 条（store 10 / from_dict 3 / autostart 7 /
+  update_check 5 / workspace 接线 5 / 端点契约 8 / bootstrap 覆盖 2）。
+- `cache/preview-settings-zh.html` / `cache/preview-dashboard-zh.html` —— 静态
+  快照（真实骨架 + 内联 CSS + 真实渲染）。
+
+修改：
+- `src/web/index.html` —— shell 重构（rail + 侧栏头部：课程搜索 + 新建课程），
+  顶栏移除 topnav，新增 `views/settings.js` script。
+- `src/web/app.js` —— `markActiveNav` 选择器改 `.rail a`（注释表同步）；
+  `isGlobalRoute` 加入 settings；route 加 settings 分支；`applyCourseFilter`
+  （纯前端课程搜索，含"无匹配"提示与重绘后重新过滤）。
+- `src/web/i18n.js` —— 新增 nav/sidebar/settings 三语 key；`applyI18n` 扩展
+  `data-i18n-title` / `data-i18n-ph`；删除随 sidebar-title 移除而孤立的
+  `nav.courses`（三语同步删，键集合保持 parity）。
+- `src/web/styles.css` —— rail / 侧栏头部 / 设置页（含开关、分段器）样式；
+  移除全部 topnav 规则；900px 断点改 rail + 堆叠。
+- `src/application/workspace.py` —— 持有 SettingsStore；`settings_snapshot()` /
+  `update_settings()`（AI 开关联动 `configure_ai`，自启联动注册表）。
+- `src/application/bootstrap.py` —— 启动时应用持久化的 local_ai_enabled 覆盖
+  （None 沿用 env；True 无凭证时 Fake + note）。
+- `src/api/endpoints.py` —— `GET/PATCH /api/settings`、`POST
+  /api/settings/update-check`。
+- 守卫同步：`tests/support.py::WEB_SOURCE_ORDER`、`scripts/ui_audit.js`
+  （WEB_FILES / PAGES / rail 解析 / 禁用项计数 / active 样式断言 / CJK 检查对
+  lang-seg 端名开豁免 / `/api/settings` 夹具）、`scripts/ui_render_check.js`
+  （TOPNAV→RAIL + 选择器 + pageSettings 高亮检查）、`scripts/e2e_session_picker.js`、
+  `tests/test_multi_course.py` 归属表、`tests/test_exercise_ui.py`、
+  `tests/test_web_ui_invariants.py`。
+- 版本 1.3.0：14 处真源/断言/文档（workspace / src / tests / installer.iss /
+  production_gate / release_gate / tray / README / 三份文档）。
+
+发现并修复的真实缺陷
+----------------------------------------
+1. **`state.courseId` 双写入点（既有红，HEAD 即失败）**：`materials.js` 的手动 AI
+   面板里有局部 `const state` **遮蔽**全局 `state`，被
+   `test_every_persisted_ui_choice_has_exactly_one_write_entry` 误计成第二个写入点
+   （HEAD 对照实验证实：HEAD 拼接全部前端源码计数同样是 2）。修法是改名局部变量
+   `state` → `panelState`（消除遮蔽，守卫恢复诚实）。
+2. **语言按钮双 class 属性**：预览快照实测抓到 ——
+   `class="lang-btn" ... class="active"` 是非法 HTML，浏览器只认第一个，选中样式
+   静默失效。修为单属性 `class="lang-btn active"`。
+
+测试清单（N tests）
+----------------------------------------
+- `tests/test_user_settings.py`（39）：store 读写/校验/损坏回落/原子写/前向兼容；
+  from_dict 类型强制；autostart 注入往返/幂等/命令形状（dev 与冻结两种）；
+  update_check 注入（有更新/最新/网络失败/缺 tag/版本解析）；workspace 接线
+  （快照/生效/重启读回/非法值零改动/注册表失败回滚）；端点契约（GET 默认、
+  PATCH 生效+落盘+重启、autostart 读写删、400 三种、update-check）；
+  bootstrap 覆盖两条（无凭证启用→fake+note、环境开+设置关→以设置为准）。
+- 受影响既有测试全绿：test_multi_course（归属表）、test_web_ui_invariants
+  （路由谓词 + 禁用项形状）、test_exercise_ui、test_learning_view（i18n 两层）、
+  test_bootstrap、test_web_ui、test_student_ui、test_config、test_tray。
+
+Test Summary
+----------------------------------------
+- test_user_settings.py: 39 passed。
+- 受影响既有测试: 362 passed（test_exercise_ui / learning_view / student_ui /
+  web_ui 四组合跑；2 个失败为已知既有红，见 Known limitation）。
+- production_gate: 76 passed, 1 failed（既有红，同名）。
+- ui_audit.js: 700/700 OK。
+- ui_render_check.js: 314/316 —— 2 个失败与 HEAD 对照实验**逐项同名**
+  （git worktree 跑 HEAD 快照：312/314，同样两条；本次 +2 条为新加的
+  pageSettings 高亮检查，全过）。
+- 真实 HTTP 端到端（临时数据目录，16 项断言）：GET 默认 / PATCH 三开关 /
+  400 三种 / POST update-check（真打 GitHub，1.2.0 即最新）/ 静态资源
+  Content-Type / 服务提供的 settings.js 与磁盘逐字节相同。
+- 用户真实数据目录只读验证：设置默认值读取、5 门课加载正常。
+
+Validation
+----------------------------------------
+- compileall: src + tests 全过。
+- 版本门禁：test_release_gate / test_production_gate 的版本断言随 14 处同步全过。
+- 三语渲染：ui_audit 的三语页面渲染 + es/ca 无 CJK 泄漏全过（语言端名按专有
+  名词豁免，理由写在检查注释里）。
+
+Known limitation (explicit, not hidden)
+----------------------------------------
+- `ui_render_check.js` 2 条既有红（`#/students` 与 `#/courses/<c>/students/<s>`
+  期望重定向到「我的课程」、实际渲染「未找到页面」）：HEAD 对照实验同红，失败名
+  一致，非本次引入，未动（学生页早已按用户决定移除，是产品语义问题）。
+- `production_gate::test_no_stray_python_file_outside_src_and_tests` 既有红
+  （根目录 `fix_ex.py` / `temp_appjs.py`）。
+- `test_student_ui.py::TestTheLiveSessionPickerEndToEnd::test_the_live_script_passes`
+  既有环境红（e2e 脚本硬编码已消失的便携解释器路径，spawn ENOENT）。
+- 自动更新**只检查不安装**；`auto_update_check` 开关当前只持久化选择，开机时
+  的自动检查接线（托盘/launcher 启动路径）本期未做 —— 设置页「立即检查」可用。
+- 开机自启命令写入的是**当前运行方式**（dev: python 模块；安装版: exe 托盘），
+  中途切换运行方式后需要重新开一次开关。
+- 语言设置仍是浏览器侧（localStorage），多浏览器不同步 —— 有意设计。

@@ -25,7 +25,7 @@ from src.application.errors import (
     ERROR_CODES,
     InvalidInputError,
 )
-from src.application.workspace import Workspace
+from src.application.workspace import APPLICATION_VERSION, Workspace
 from src.api.responses import ApiResponse, failure, success
 from src.api.router import Request, Router, parse_multipart_file
 
@@ -1378,5 +1378,35 @@ def build_router(workspace: Workspace) -> Router:
         )
 
     router.get("/api/students/{student_id}/review-set", student_review_set)
+
+    # ------------------------------------------------------------------
+    # settings (设置页: 语言之外的开关; 语言是浏览器侧状态)
+    # ------------------------------------------------------------------
+
+    def get_settings(request: Request) -> ApiResponse:
+        return success(workspace.settings_snapshot())
+
+    def patch_settings(request: Request) -> ApiResponse:
+        body = request.json_body()
+        allowed = {"local_ai_enabled", "autostart", "auto_update_check"}
+        fields = {k: v for k, v in body.items() if k in allowed}
+        if not fields:
+            raise InvalidInputError(
+                f"no updatable setting supplied; allowed: {sorted(allowed)}"
+            )
+        try:
+            snapshot = workspace.update_settings(**fields)
+        except ValueError as exc:
+            raise InvalidInputError(str(exc)) from exc
+        return success(snapshot)
+
+    def update_check(request: Request) -> ApiResponse:
+        from src.application.update_check import check_for_update
+
+        return success(check_for_update(APPLICATION_VERSION))
+
+    router.get("/api/settings", get_settings)
+    router.patch("/api/settings", patch_settings)
+    router.post("/api/settings/update-check", update_check)
 
     return router

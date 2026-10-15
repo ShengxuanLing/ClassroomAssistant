@@ -401,6 +401,31 @@ def build_runtime(
     if ai_mode != "disabled":
         workspace.configure_ai(enabled=True, provider=ai_provider, mode=ai_mode)
 
+    # 设置页的 local_ai_enabled 覆盖环境默认 (settings.json 是用户显式选择,
+    # 优先级高于 LOOMIND_AI_ENABLED):
+    #   None  -> 沿用 env (上面已装配的形状);
+    #   False -> 无论 env 如何都关;
+    #   True  -> 开。环境没装配 provider 时 (env disabled) 用确定性 Fake
+    #            顶上 —— 与 _build_ai_provider "无凭证回落 fake" 同口径,
+    #            绝不静默升级成 real: provider 只由凭证决定。
+    persisted_ai = workspace.settings.local_ai_enabled
+    if persisted_ai is not None and persisted_ai != workspace.ai_enabled:
+        if persisted_ai and ai_provider is None:
+            from src.application.ai.provider import FakeAIProvider
+
+            workspace.configure_ai(enabled=True, provider=FakeAIProvider(), mode="fake")
+            notes.append(
+                "settings.json enables local AI but no provider is configured "
+                "(LOOMIND_AI_ENABLED off): using the deterministic FakeAIProvider, "
+                "so knowledge points are NOT from a real model"
+            )
+        else:
+            workspace.configure_ai(enabled=persisted_ai)
+            notes.append(
+                "settings.json overrides LOOMIND_AI_ENABLED: AI %s"
+                % ("enabled" if persisted_ai else "disabled")
+            )
+
     from src.api.server import create_server
 
     server = create_server(

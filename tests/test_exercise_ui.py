@@ -1131,12 +1131,15 @@ class TestUiContract:
     def test_index_html_nav_disables_exercises(self):
         # 2026-10-15 用户决定暂不开发考前复习 / 复习包 / 练习 / 错题本这四项内容，
         # 练习入口退回为无 href 的 <span class="nav-disabled">。路由分支与页面函数
-        # **原样保留**（深链 #/exercises 仍可达），本条只断言顶栏形状。
+        # **原样保留**（深链 #/exercises 仍可达），本条只断言入口形状。
+        # 2026-10-15 同日导航搬到左侧图标栏 (.rail): 禁用项随之搬过去, 可访问名
+        # 走 data-i18n-title (图标按钮没有可见文本, data-i18n 的 textContent
+        # 会把 SVG 抹掉)。
         # 解禁时把 <span> 换回 <a href>，并把本条改回 exposes 版本即可。
         html = read_asset("index.html")
-        assert 'data-i18n="nav.exercises"' in html
+        assert 'data-i18n-title="nav.exercises"' in html
         assert 'href="#/exercises"' not in html
-        assert 'class="nav-disabled"' in html
+        assert 'class="rail-link nav-disabled"' in html
 
     def test_app_js_renders_the_evaluation_panel_with_an_explicit_warning(self):
         source = read_asset("app.js")
@@ -1420,7 +1423,10 @@ class TestI18nTables:
     def test_every_data_i18n_key_is_defined(self):
         _, tables = self._tables()
         html = read_asset("index.html")
-        keys = set(re.findall(r'data-i18n="([^"]+)"', html))
+        # data-i18n-title 与 data-i18n 走同一个 key 空间 (applyI18n 两侧都译),
+        # 所以静态骨架里的两种写法都要过这道"key 必须已定义"的检查 —— 只扫
+        # data-i18n 会让图标栏的 title key 悄悄漂移而没人发现。
+        keys = set(re.findall(r'data-i18n(?:-title)?="([^"]+)"', html))
         assert keys
         assert not sorted(keys - tables["zh"])
 

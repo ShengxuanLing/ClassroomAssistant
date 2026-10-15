@@ -46,6 +46,7 @@ const WEB_FILES = [
   'views/exercises.js',
   'views/mistakes.js',
   'views/review-pack.js',
+  'views/settings.js',
 ];
 
 let checks = 0;

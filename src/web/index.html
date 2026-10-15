@@ -23,27 +23,16 @@
         <small>Weave Knowledge Together.</small>
       </span>
     </a>
-    <!-- 右侧四个页面（考前复习 / 复习包 / 练习 / 错题本）当前禁用：
-         顶栏入口是无 href 的 <span class="nav-disabled">，不可点击、不发路由、
-         不进 active（markActiveNav() 只扫 .topnav a）。
-         路由分支与页面函数**原样保留** —— 深链（#/review、#/review-pack、
-         #/exercises、#/mistakes/<c>/<kp>）仍可达，方便后续解禁时只改 HTML。
-         2026-10-15: 用户决定暂不开发这四项内容，入口禁用。
-         解禁时：把下面四个 <span> 换回 <a href> 即可，同时恢复
-         styles.css 的 .topnav .nav-disabled 规则与两处守卫的期望值。 -->
-    <nav class="topnav">
-      <a href="#/" data-i18n="nav.overview">概览</a>
-      <a href="#/today" data-i18n="nav.today">今日</a>
-      <a href="#/reviews" data-i18n="nav.reviews">待审核</a>
-      <a href="#/courses" data-i18n="nav.myCourses">我的课程</a>
-      <a href="#/materials" data-i18n="nav.materials">材料</a>
-      <a href="#/knowledge" data-i18n="nav.knowledge">知识地图</a>
-      <span class="topnav-sep" aria-hidden="true"></span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewMode">考前复习</span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.reviewPack">复习包</span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.exercises">练习</span>
-      <span class="nav-disabled" aria-disabled="true" data-i18n="nav.mistakes">错题本</span>
-    </nav>
+    <!-- 全局导航在左侧图标栏 (.rail), 不在顶栏 —— Freebuff 式布局:
+         图标栏承担"我在哪个模块", 侧栏 (#sidebar) 承担"我在看哪门课",
+         顶栏只留品牌、课程切换器、界面语言与状态 pill。
+         高亮规则不变: 完全由页面函数的 markActiveNav() 设置 (归属表在
+         app.js markActiveNav() 上方, 由 test_multi_course 的归属表测试钉住)。
+         四个暂不开发的页面 (考前复习 / 复习包 / 练习 / 错题本) 在图标栏底部
+         以禁用的 .nav-disabled 呈现: 不可点击、不发路由、不进 active;
+         路由分支与页面函数**原样保留** (深链仍可达)。
+         解禁时: 把对应的 <span class="rail-link nav-disabled"> 换成 <a href>
+         即可, 同时恢复 scripts/ui_audit.js 里"恰好四个禁用项"的期望。 -->
     <div class="topbar-meta">
       <!-- 两个 <select> 都**不再**写 aria-label。
            它们各自被包在 <label> 里, 而那个 <label> 的文本就是旁边那个
@@ -76,8 +65,91 @@
   <div id="banner" class="banner" hidden></div>
 
   <div class="shell">
+    <!-- 图标栏: 全局导航 (高亮由 markActiveNav() 按当前路由设置)。
+         图标是纯装饰 (aria-hidden), 可访问名与 tooltip 由
+         data-i18n-title 经 applyI18n() 写入 title / aria-label ——
+         图标按钮没有可见文本, 可访问名不能靠 data-i18n 的 textContent。 -->
+    <nav class="rail" aria-label="主导航">
+      <a href="#/" class="rail-link" data-i18n-title="nav.overview">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 11.2 12 3.5l9 7.7"/><path d="M5.5 9.6V20h13V9.6"/>
+        </svg>
+      </a>
+      <a href="#/today" class="rail-link" data-i18n-title="nav.today">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.5" y="5" width="17" height="15.5" rx="2"/>
+          <path d="M3.5 9.5h17M8 3v4M16 3v4"/>
+        </svg>
+      </a>
+      <a href="#/reviews" class="rail-link" data-i18n-title="nav.reviews">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="5" y="4.5" width="14" height="16" rx="2"/>
+          <path d="M9 4.5V3h6v1.5"/><path d="M9 13.2l2.2 2.2 4-4.4"/>
+        </svg>
+      </a>
+      <a href="#/courses" class="rail-link" data-i18n-title="nav.myCourses">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8A1.5 1.5 0 0 1 20.5 9.5V18a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V7z"/>
+        </svg>
+      </a>
+      <a href="#/materials" class="rail-link" data-i18n-title="nav.materials">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 3.5h7l4.5 4.5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"/>
+          <path d="M13.5 3.5V8H18"/><path d="M9.5 12.5h6M9.5 16h6"/>
+        </svg>
+      </a>
+      <a href="#/knowledge" class="rail-link" data-i18n-title="nav.knowledge">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="5" r="2.2"/><circle cx="5.5" cy="18" r="2.2"/>
+          <circle cx="18.5" cy="18" r="2.2"/>
+          <path d="M10.6 6.8 6.9 15.9M13.4 6.8l3.7 9.1M7.7 18h8.6"/>
+        </svg>
+      </a>
+      <span class="rail-sep" aria-hidden="true"></span>
+      <a href="#/settings" class="rail-link" data-i18n-title="nav.settings">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2.5v2.8M12 18.7v2.8M2.5 12h2.8M18.7 12h2.8M5.3 5.3l2 2M16.7 16.7l2 2M18.7 5.3l-2 2M7.3 16.7l-2 2"/>
+        </svg>
+      </a>
+      <span class="rail-sep" aria-hidden="true"></span>
+      <!-- 四个暂不开发的入口: 无 href 的 <span>, 不可点击、不进 active。 -->
+      <span class="rail-link nav-disabled" data-i18n-title="nav.reviewMode" aria-disabled="true">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3.5 14 9l5.5 2-5.5 2-2 5.5-2-5.5L4.5 11 10 9z"/>
+        </svg>
+      </span>
+      <span class="rail-link nav-disabled" data-i18n-title="nav.reviewPack" aria-disabled="true">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3.2 20 7v10l-8 3.8L4 17V7z"/><path d="M4 7l8 3.8L20 7M12 10.8v9.8"/>
+        </svg>
+      </span>
+      <span class="rail-link nav-disabled" data-i18n-title="nav.exercises" aria-disabled="true">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/>
+        </svg>
+      </span>
+      <span class="rail-link nav-disabled" data-i18n-title="nav.mistakes" aria-disabled="true">
+        <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V13M12 16.2v.3"/>
+        </svg>
+      </span>
+    </nav>
+
     <aside id="sidebar" class="sidebar">
-      <p class="sidebar-title" data-i18n="nav.courses">课程</p>
+      <!-- 侧栏头部 (Freebuff 式): 课程搜索 + 新建课程。搜索是纯前端过滤
+           (不发请求), 输入即筛 #course-list, 由 app.js 的 applyCourseFilter()
+           实现; 静态 HTML 保证它在 loadSidebar() 每次重绘后依然存在。 -->
+      <div class="sidebar-head">
+        <label class="sidebar-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>
+          </svg>
+          <input id="course-filter" type="search" autocomplete="off"
+                 data-i18n-ph="sidebar.search">
+        </label>
+        <a class="sidebar-new" href="#/courses" data-i18n="sidebar.newCourse">新建课程</a>
+      </div>
       <ul id="course-list" class="course-list">
         <li class="muted small">加载中…</li>
       </ul>
@@ -125,5 +197,6 @@
   <script src="/views/exercises.js"></script>
   <script src="/views/mistakes.js"></script>
   <script src="/views/review-pack.js"></script>
+  <script src="/views/settings.js"></script>
 </body>
 </html>

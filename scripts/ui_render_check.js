@@ -43,6 +43,7 @@ const WEB_FILES = [
   'views/exercises.js',
   'views/mistakes.js',
   'views/review-pack.js',
+  'views/settings.js',
 ];
 
 const WEB_SOURCES = WEB_FILES.map((rel) => ({
@@ -368,6 +369,18 @@ function myCoursesPayload(overrides) {
 
 const ROUTES = {
   '/api/courses': { data: { courses: [{ course_id: COURSE_ID, name: 'Algebra Lineal' }] } },
+  // 设置页快照 (形状与 workspace.settings_snapshot() 一致)。
+  '/api/settings': {
+    data: {
+      settings: { local_ai_enabled: false, autostart: false, auto_update_check: true },
+      ai: { enabled: false, mode: 'disabled', provider: 'none',
+            env_default_enabled: false, env_has_credentials: false },
+      autostart: { supported: true, enabled: false, command: null },
+      auto_update: { enabled: true },
+      version: 't',
+      platform: 'windows',
+    },
+  },
   // Task 68: 全部课程总览。两门课, 其中一门不是当前课程 —— 这样"当前
   // 课程标记"和"逐课程计数"才真的被渲染到。
   '/api/my-courses': { data: myCoursesPayload() },
@@ -996,26 +1009,23 @@ function mistakeDetail(overrides) {
 // ---------------------------------------------------------------- DOM 桩
 
 /**
- * 顶栏导航的 href 列表 (与 index.html 的 `<nav class="topnav">` 一致)。
+ * 图标栏导航的 href 列表 (与 index.html 的 `<nav class="rail">` 一致)。
  *
- * 为什么要在桩里给出这组元素: 顶栏的 `active` **完全由页面函数设置**
+ * 为什么要在桩里给出这组元素: 导航的 `active` **完全由页面函数设置**
  * (index.html 里没有任何硬编码), 而 `markActiveNav()` 只操作
- * `document.querySelectorAll('.topnav a')`。桩返回空数组的话, 它就永远是个
+ * `document.querySelectorAll('.rail a')`。桩返回空数组的话, 它就永远是个
  * 空转调用 —— "高亮的位置不是用户所在的位置" 这类缺陷于是测不出来。
  * 实测代价: `pageLearnKnowledge()` 漏设高亮活了很久, 刷新后整条导航无高亮。
  *
- * 顺序必须与 index.html 的 `<nav class="topnav">` **逐项相同** —— 2026-09-21
- * 按用途分了两组 (P3-3), 概览从第三位提到第一位, 中间多了一个纯装饰的
- * `<span class="topnav-sep">` (它不匹配 `.topnav a`, 所以不进这个数组)。
- * 2026-10-15: 右侧四个页面（考前复习 / 复习包 / 练习 / 错题本）暂不开发，
- * 顶栏入口退回为无 href 的 <span class="nav-disabled">。它们不匹配
- * ``querySelectorAll('.topnav a')``，所以**不进**这个桩数组 —— 否则
- * markActiveNav() 会给禁用项也加上 .active，activeNav() 就会报出假的高亮。
- * 解禁时把四个 <span> 换回 <a href>，并把下面四项加回本数组即可。
+ * 顺序必须与 index.html 的 `<nav class="rail">` **逐项相同**。2026-10-15:
+ * 导航从顶栏搬到图标栏; 四个禁用的 <span> (考前复习 / 复习包 / 练习 / 错题本)
+ * 不匹配 `.rail a`, 所以**不进**这个桩数组 —— 否则 markActiveNav() 会给
+ * 禁用项也加上 .active, activeNav() 就会报出假的高亮。解禁时把四个
+ * <span> 换回 <a href>, 并把下面四项加回本数组即可。
  */
-const TOPNAV = [
+const RAIL = [
   '#/', '#/today', '#/reviews',
-  '#/courses', '#/materials', '#/knowledge',
+  '#/courses', '#/materials', '#/knowledge', '#/settings',
 ];
 
 function makeNavLink(href) {
@@ -1080,7 +1090,7 @@ function makeSandbox(routeTable, initialStorage, initialSession) {
   const session = new Map(Object.entries(initialSession || {}));
   const fetched = [];
   const posted = [];
-  const navLinks = TOPNAV.map(makeNavLink);
+  const navLinks = RAIL.map(makeNavLink);
 
   const getElement = (id) => {
     if (!elements.has(id)) elements.set(id, makeElement(id));
@@ -1090,7 +1100,7 @@ function makeSandbox(routeTable, initialStorage, initialSession) {
   const document = {
     getElementById: getElement,
     querySelector: () => null,
-    querySelectorAll: (selector) => (selector === '.topnav a' ? navLinks : []),
+    querySelectorAll: (selector) => (selector === '.rail a' ? navLinks : []),
     addEventListener() {},
     createElement: (tag) => makeElement(tag),
     documentElement: makeElement('html'),
@@ -2091,8 +2101,8 @@ async function main() {
   //   * 从别的页面点进来        -> 高亮停在上一页。
   // 两种都是"高亮的位置不是用户所在的位置"。
   //
-  // 这组用例能存在, 靠的是桩里补上了 `.topnav a` —— 之前 `querySelectorAll`
-  // 恒返回空数组, `markActiveNav()` 是个空转调用, 整个顶栏高亮都没被测过。
+  // 这组用例能存在, 靠的是桩里补上了 `.rail a` —— 之前 `querySelectorAll`
+  // 恒返回空数组, `markActiveNav()` 是个空转调用, 整个导航高亮都没被测过。
   {
     const routes = Object.assign({}, ROUTES, {
       '/api/course-knowledge': {
@@ -2103,12 +2113,13 @@ async function main() {
     });
 
     // 每个页面函数都必须把高亮设成**恰好一项**, 且指向自己所在的页面。
-    // (2026-09-22: 只抽仍在顶栏可用的分区 —— 考前复习/复习包/练习/错题本
+    // (2026-09-22: 只抽仍在图标栏可用的分区 —— 考前复习/复习包/练习/错题本
     // 已改为无 href 的禁用 span, 真实 DOM 里本就进不了 active。)
     for (const [page, expected] of [
       ['pageMyCourses', '#/courses'],
       ['pageKnowledge', '#/knowledge'],
       ['pageLearn', '#/today'],
+      ['pageSettings', '#/settings'],
     ]) {
       const sandbox = await loadApp(routes);
       await grab(sandbox, 'loadSidebar')();

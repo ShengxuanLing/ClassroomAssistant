@@ -1372,10 +1372,10 @@ class TestUi:
             assert "state.studentId = " not in body, signature
 
     def test_every_page_function_sets_the_top_nav_highlight(self):
-        """**每个**页面函数都必须设置顶栏高亮。
+        """**每个**页面函数都必须设置导航高亮。
 
-        ``index.html`` 的 topnav 里没有任何硬编码 ``active`` —— 高亮完全由页面
-        函数设置, 谁不设谁就继承上一页。
+        ``index.html`` 的图标栏 (.rail, 2026-10-15 起导航从顶栏搬来) 里没有
+        任何硬编码 ``active`` —— 高亮完全由页面函数设置, 谁不设谁就继承上一页。
 
         回归: ``pageLearnKnowledge()`` 曾经是 19 个页面函数里唯一漏掉的那个。
         后果是"高亮的位置不是用户所在的位置": 在 ``#/learn/<kp>`` 上刷新整条导航
@@ -1426,6 +1426,8 @@ class TestUi:
             # 代码里写的是清空 '' —— 与注释表 "#/review-pack -> #/review-pack"
             # 矛盾, 已按注释表改回 '#/review-pack')。
             "pageReviewPack": "#/review-pack",
+            # 设置页: 图标栏的 #/settings 入口 (2026-10-15 导航搬到 .rail 后新增)。
+            "pageSettings": "#/settings",
             "pageCourse": "",
             "pageSession": "",
             "pageKnowledgeDetail": "",

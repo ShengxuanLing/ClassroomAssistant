@@ -25,7 +25,7 @@ G  规模与足迹                  1000 KP / 100 Topics / 50 Sessions / 500 Stu
                                5000 Exercises / 20000 Answers + DB 大小 + 查询计划
 H  文件与数据库一致             记录与文件两半必须同时活着
 I  构建卫生                    compileall 退出码 0, 无语法/导入错误
-J  版本与文档                  版本号已升到 1.2.0 且四处一致
+J  版本与文档                  版本号已升到 1.3.0 且四处一致
 ============================  ====================================================
 
 为什么 A 用真子进程
@@ -63,7 +63,7 @@ PYTHON = sys.executable
 DATASET_DIR = ROOT / "tests" / "fixtures" / "acceptance"
 
 #: 生产就绪版本 (Task 55 收口)。
-EXPECTED_VERSION = "1.2.0"
+EXPECTED_VERSION = "1.3.0"
 
 #: A 门的 13 行 —— 与 ``src/application/persistence_wiring.py::FAULT_POINTS``
 #: 一一对应。那 13 个名字是**落盘步骤**, 不是表名: 一个步骤可能写多张表

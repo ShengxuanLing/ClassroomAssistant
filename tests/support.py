@@ -53,6 +53,7 @@ WEB_SOURCE_ORDER = (
     "views/exercises.js",
     "views/mistakes.js",
     "views/review-pack.js",
+    "views/settings.js",
 )
 
 #: 内置 Web UI 资源目录 (``src/web``)。用路径推导, 避免本模块反向依赖

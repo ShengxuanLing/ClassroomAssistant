@@ -800,20 +800,20 @@ function actionManualAiCopy(courseId, materialId) {
 
 async function actionManualAiImport(courseId, materialId, button) {
   if (!courseId || !materialId) return;
-  const state = __manualAi[materialId] || { courseId, materialId, bundle: null, result: null };
+  const panelState = __manualAi[materialId] || { courseId, materialId, bundle: null, result: null };
   // 优先用选中的文件里的 payload；没有再回落到粘贴框（D1 折叠备选）
-  let payload = state.file && state.file.payload;
+  let payload = panelState.file && panelState.file.payload;
   if (!payload) {
     // 选了文件但文件本身不合格: 直接说文件的问题, 不要报"请先选择文件"
     // (那会让用户以为自己的点击没生效)。
-    if (state.file && state.file.errorKey) { toast(t(state.file.errorKey), 'bad'); return; }
+    if (panelState.file && panelState.file.errorKey) { toast(t(panelState.file.errorKey), 'bad'); return; }
     const area = document.getElementById('manual-ai-responses');
     const raw = area ? manualNormalizeResponseText(String(area.value || '')) : '';
     if (!raw) { toast(t('manual.emptyPaste'), 'bad'); return; }
     try { payload = JSON.parse(raw); }
     catch (err) { toast(t('manual.invalidJson'), 'bad'); return; }
     // 粘贴路径也过一遍客户端预检（与文件路径一致）
-    const problem = manualFileProblem(payload, state.bundle);
+    const problem = manualFileProblem(payload, panelState.bundle);
     if (problem) { toast(t(problem), 'bad'); return; }
   }
   if (button) button.disabled = true;
@@ -823,16 +823,16 @@ async function actionManualAiImport(courseId, materialId, button) {
       '/materials/' + encodeURIComponent(materialId) + '/manual-ai/import',
       { method: 'POST', query: { course_id: courseId }, body: payload }
     );
-    state.result = result;
-    state.courseId = courseId;
-    state.materialId = materialId;
-    __manualAi[materialId] = state;
+    panelState.result = result;
+    panelState.courseId = courseId;
+    panelState.materialId = materialId;
+    __manualAi[materialId] = panelState;
     finishTask(taskId, (result.requests_failed || 0) === 0,
       t('manual.applied') + ' ' + result.requests_applied + ' / ' + result.requests_total);
     toast(t('manual.imported') + ' ' + result.requests_applied + '/' + result.requests_total, 'ok');
     // 入库成功 -> 重绘列表 (知识点计数/状态) 后再把面板画回去。
     await route();
-    renderManualAiPanel(state);
+    renderManualAiPanel(panelState);
   } catch (err) {
     finishTask(taskId, false, err.code + ' ' + err.message);
     toast(t('manual.importFailed') + ' [' + err.code + '] ' + err.message, 'bad');
