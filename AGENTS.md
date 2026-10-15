@@ -303,7 +303,7 @@ loomind-data/
 
   **历史文档刻意保留旧名** —— `status.md` / `task-*.md` / `final_*.md` / `reports/*` 记录的是当时的事实，改了就是篡改；本条目即两者之间的对照说明。
 
-  **版本号未动**（仍 `1.1.1`）—— 改名 + 数据布局变更建议升 `1.2.0`，留待用户拍板。
+  **版本号**：`1.1.1` → **`1.2.0`**（品牌重塑 + 数据布局变更是破坏性改动；`v1.1.1` 标签已被旧提交占用，发新 Release 必须换号）。四处真源 + 门禁断言 + `docs/final_report.md` / `docs/final_persistence_report.md` 版本头已同步。
 
 
 - **2026-09-20（P0-1 目录规范统一，决策 A）**：`classroom-data/` 确立为唯一数据真相源；重写「文件组织规范」章，以 8 目录布局为准，删除旧 `input/` `output/` 目录树描述；将「YAML frontmatter / 小写连字符命名」降级为「导出文件建议」（受管材料改用内容寻址 ID）。新增 `docs/legacy-input-output.md` 旧布局对照表。`input/` `output/` 各只剩一个占位说明 `README.md`、不含任何业务数据，新代码禁止写入。

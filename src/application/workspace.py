@@ -80,7 +80,7 @@ from src.models import ClassSession, Course
 __all__ = ["CourseContext", "Workspace", "APPLICATION_NAME", "APPLICATION_VERSION"]
 
 APPLICATION_NAME = "Loomind"
-APPLICATION_VERSION = "1.1.1"
+APPLICATION_VERSION = "1.2.0"
 
 #: TASK-77: 自动 AI 触发状态 (``process_material`` 返回作业字典里 ``ai``
 #: 子对象的 ``status`` 取值)。这是对既有 ``JOB_SUCCEEDED / JOB_FAILED``

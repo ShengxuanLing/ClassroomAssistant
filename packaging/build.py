@@ -10,11 +10,11 @@
 打包解释器解析次序 (第一个通过 ``import PyInstaller`` 检查的生效):
 
 1. ``--python``;
-2. 环境变量 ``CLASSROOM_PACK_PYTHON``;
+2. 环境变量 ``LOOMIND_PACK_PYTHON`` (旧名 ``CLASSROOM_PACK_PYTHON`` 仍可用);
 3. 开发机默认打包 venv (``C:/Users/Rafae/.workbuddy-ai/.../clases-pack``);
 4. ``sys.executable``。
 
-ISCC 同理: ``--iscc`` > ``CLASSROOM_ISCC`` > ``D:/Program Files/Inno Setup 7/ISCC.exe``
+ISCC 同理: ``--iscc`` > ``LOOMIND_ISCC`` (旧名 ``CLASSROOM_ISCC``) > ``D:/Program Files/Inno Setup 7/ISCC.exe``
 > ``Program Files (x86)/Inno Setup 6`` > PATH 上的 ``ISCC.exe``。
 
 产物:
@@ -80,6 +80,7 @@ def _python_can_build(candidate: str) -> bool:
 def resolve_python(explicit: Optional[str]) -> str:
     candidates = [
         explicit,
+        os.environ.get("LOOMIND_PACK_PYTHON"),
         os.environ.get("CLASSROOM_PACK_PYTHON"),
         DEFAULT_PACK_PYTHON,
         sys.executable,
@@ -88,12 +89,18 @@ def resolve_python(explicit: Optional[str]) -> str:
         if candidate and _python_can_build(candidate):
             return candidate
     raise SystemExit(
-        "no python with PyInstaller found; pass --python or set CLASSROOM_PACK_PYTHON"
+        "no python with PyInstaller found; pass --python or set LOOMIND_PACK_PYTHON"
     )
 
 
 def resolve_iscc(explicit: Optional[str]) -> str:
-    candidates = [explicit, os.environ.get("CLASSROOM_ISCC"), DEFAULT_ISCC, *ISCC_FALLBACKS]
+    candidates = [
+        explicit,
+        os.environ.get("LOOMIND_ISCC"),
+        os.environ.get("CLASSROOM_ISCC"),
+        DEFAULT_ISCC,
+        *ISCC_FALLBACKS,
+    ]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):
             _emit(f"iscc          : {candidate}")
@@ -102,7 +109,7 @@ def resolve_iscc(explicit: Optional[str]) -> str:
     if found:
         _emit(f"iscc          : {found}")
         return found
-    raise SystemExit("ISCC.exe not found; pass --iscc or set CLASSROOM_ISCC")
+    raise SystemExit("ISCC.exe not found; pass --iscc or set LOOMIND_ISCC")
 
 
 def read_version() -> str:
