@@ -9448,3 +9448,82 @@ Known limitation (explicit, not hidden)
 - 自动安装的**端到端**路径（真的下载 100MB 安装包 → 静默安装 → 自退）未在真机
   跑过 —— 单测覆盖的是注入桩下的逻辑分支。真机验证需要一份「比当前版本更新」
   的 release 存在，而本版刚发布时 `releases/latest` 就是它自己。
+
+## Loomind 1.3.2 发布 — 2026-10-16
+
+版本 1.3.1 → **1.3.2**（TASK-112）。用户实测反馈两条界面窗口缺陷：
+
+1. 「每次从菜单栏打开项目都是这种半个窗口」—— 位置 / 尺寸 / 最大化状态不被记住；
+2. 「菜单栏那个图标，每点一次就出一个新窗口」—— 窗口不复用。
+
+**根因（2026-10-16 本机实测，不是推断）**
+
+界面是 Chromium `--app=<url>` 窗口，缺陷全部来自浏览器行为：
+
+- 同一参数再跑一次 `--app=` 会**多出一个顶层窗口**（实测两个 hwnd 并存），
+  这正是"点一次菜单就多一个界面"；
+- `--window-position` / `--window-size` **只在浏览器需要新起进程时生效**：用户
+  已经有 Edge 在跑时，新窗口请求被转发给既有实例，这两个启动参数在转发中丢失
+  （实测传 `--window-size=900,600` 得到的是 Edge 默认的 1050x796）；
+- `--start-maximized` 对 `--app` 窗口**无效**（实测 showCmd 仍为 1）；
+- Chromium 自己也**不记**窗口几何：不传参数重启，得到的是它的默认尺寸。
+
+**做法**：新增 `src/application/ui_window.py`（纯 `ctypes`，零新依赖，非 Windows
+全部退化为安全空操作）：
+
+- `find_existing_window()` 按**精确标题 + 窗口类**（`Chrome_WidgetWin_1`）认出自己
+  的窗口 —— 用户用普通 Edge 打开同一页面时标题带 " - 个人 - Microsoft Edge" 后缀，
+  不会被误认；`focus_window()` 还原 + 置前，**复用而不是新开**；
+- `watch_window()` 在窗口存活期间每秒跟踪几何，变化即落盘；窗口关闭后最后一次记录
+  就是"上次关闭时的样式"；`load_geometry()` / `apply_geometry()` 负责下次恢复；
+- 几何落 `<data_dir>/.run/ui-window.json`（运行期元数据，与 PID / 端口标记同处，
+  不污染被配置门禁逐键钉死的 `settings.json`）；
+- `apply_geometry` **先 `SetWindowPos` 摆好还原尺寸再 `ShowWindow(SW_MAXIMIZE)`**：
+  因为位置尺寸靠不住（见上），而且这样用户点"还原"回到的是当初的大小；
+- `watch_window` **同步**等窗口出现并套用几何，之后那半段跟踪才交给后台线程：
+  调用方常常是"服务已经在跑，打开界面就退出"的短命托盘进程 —— 第一轮实现把
+  等待整个丢给 daemon 线程，进程一退出线程就没了。**安装版实测复现**：装完
+  第一版 1.3.2 后，最大化状态在"关窗口 → 点开始菜单"这条路径上丢掉了（源码态
+  的单进程验收却是过的，因为那里调用方是长驻脚本）。改成同步等待后复测通过。
+- `launcher.open_ui_window(url, shell, *, state_dir=None)` 加参数；`tray.open_in_browser`
+  同步加；托盘与 CLI `start` 都传 `config.data_dir`。没有数据目录时行为与旧版一致。
+
+**测试**：新增 `tests/test_ui_window.py`（14 条：标题与 `index.html` 一致性、几何
+往返、坏记忆回落、屏幕外几何丢弃、非 Windows 空操作、跟踪线程的三段行为）；
+`tests/test_startup.py::TestUiShell` 新增 4 条（复用不新开、复用前补记几何、有记忆
+时按记忆开窗、无数据目录时不碰记忆）。
+
+**实机验收**（真 Edge 窗口，非桩）：手动调成 900x640 半屏 → 关闭 → 重开 = 900x640
+半屏；最大化 → 关闭 → 重开 = 最大化且还原尺寸仍是 900x640；第二次打开时窗口数恒为
+1；结束时桌面无残留窗口。**安装版复测**（装好后走真实"开始菜单 → exe"路径）：
+日志出现 `tray_attach_existing`、窗口数恒为 1；关掉窗口再启动，窗口直接以最大化
+出现 ✓。
+
+**门禁**：`test_tray` / `test_startup` / `test_ui_window` / `test_packaging` /
+`test_bootstrap`（版本）全过；`test_production_gate` 仅剩既有红
+（`fix_ex.py` / `temp_appjs.py` 游离脚本）。冻结产物核对：PYZ 内
+`src.application.workspace` 的常量含 `'1.3.2'`、**不含** `'1.3.1'`；
+`src.application.ui_window` 已进包。
+
+**产物**：`dist/installer/Loomind-1.3.2-Setup.exe`，**111,263,303 字节 (106.1 MB)**，
+SHA-256
+`12ebdcb1f303c0150d91e2e2ba62367940310ca85ae78180828c4ab9dcd96776`。
+（前两版产物已作废：111,272,956 B / `964d9134…` 丢了最大化状态；111,273,174 B /
+`209c0e16…` 漏了下面那条品牌改名修正。）
+
+**已知既有红（非本次）**：`fix_ex.py` / `temp_appjs.py` 游离脚本；e2e 便携解释器
+ENOENT；`#/students` 路由 2 条。
+
+**品牌改名漏网（本轮一并修）**：`CLASSROOM_*` 前缀在**活文档**里仍有残留 ——
+`docs/configuration.md`（整张配置表 + §3 界面外壳 + §8 AI 环境变量）、
+`getting_started.md`、`troubleshooting.md`、`architecture.md`、`agent-handoff-context.md`、
+`README.md`、`installer-windows.md`，外加 `--print-config` 的输出标题
+`"Classroom Assistant configuration"`（**用户可见**）。全部改为 `LOOMIND_*` /
+`Loomind configuration`。
+
+**刻意保留旧名**（改了会失真或破坏兼容）：历史文档 `status.md` / `task-*.md` /
+`reports/*` / `final_*.md` / `AGENTS.md` 变更记录 / `task.txt`；代码里的旧前缀回落
+（`config.py` 的 `LEGACY_*` 常量、`data_migration.py`、`packaging/build.py` 的
+`CLASSROOM_PACK_PYTHON` / `CLASSROOM_ISCC`、`tests/test_config.py` 与
+`test_data_migration.py` 的回落断言）。判据是"这份文档描述当前该怎么做，还是记录
+当时发生了什么"。
