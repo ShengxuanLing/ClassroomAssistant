@@ -9527,3 +9527,13 @@ ENOENT；`#/students` 路由 2 条。
 `CLASSROOM_PACK_PYTHON` / `CLASSROOM_ISCC`、`tests/test_config.py` 与
 `test_data_migration.py` 的回落断言）。判据是"这份文档描述当前该怎么做，还是记录
 当时发生了什么"。
+
+**发布**：`b154461`（TASK-112 功能）+ `b859a55`（品牌漏改）+ `f7a9150`（release）
+→ push main → annotated tag `v1.3.2` → `gh release create v1.3.2 --title "Loomind 1.3.2"
+--notes-file release-notes.md dist/installer/Loomind-1.3.2-Setup.exe`。Release 为
+**Latest**，asset 111,263,303 B（与本地逐字节一致）。
+
+最终安装包已静默安装到 `D:\Program Files\Loomind` 并复验：`/api/health` 报
+`version: 1.3.2` / `application: Loomind`；走真实"开始菜单 → exe"路径启动后界面窗口
+按上次关闭时的样式（最大化）打开；`--print-config` 的输出标题已是
+`Loomind configuration`。
