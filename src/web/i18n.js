@@ -34,7 +34,7 @@ function pickInitialLang() {
 const I18N = {
   zh: {
     'nav.overview': '概览', 'nav.knowledge': '知识地图', 'nav.materials': '材料',
-    'nav.reviews': '待审核',
+    'nav.reviews': '待审核', 'nav.rail': '主导航',
     'nav.settings': '设置',
     // ---- 侧栏 (Freebuff 式: 搜索 + 新建课程) ----
     'sidebar.search': '搜索课程…', 'sidebar.newCourse': '新建课程',
@@ -60,7 +60,9 @@ const I18N = {
     'settings.system.autostartDesc': '登录 Windows 时自动启动 Loomind。',
     'settings.system.autostartUnsupported': '仅 Windows 支持。',
     'settings.system.autoUpdate': '自动检查更新',
-    'settings.system.autoUpdateDesc': '启动时检查 GitHub 上的新版本（只检查，不自动安装）。',
+    // 实际行为: 开关只保存偏好, 启动期自动检查尚未接线 (docs/status.md
+    // 已声明本期未做) —— 文案必须说清, 不能暗示启动时会自动检查。
+    'settings.system.autoUpdateDesc': '保存你的选择；当前版本启动时还不会自动检查更新（该功能尚未接入）。需要检查新版本时，请用下方的「立即检查」按钮。',
     'settings.system.version': '当前版本',
     'settings.system.checkNow': '立即检查',
     'settings.system.checking': '检查中…',
@@ -660,7 +662,7 @@ const I18N = {
   },
   es: {
     'nav.overview': 'Resumen', 'nav.knowledge': 'Mapa de conocimiento', 'nav.materials': 'Materiales',
-    'nav.reviews': 'Revisión',
+    'nav.reviews': 'Revisión', 'nav.rail': 'Navegación principal',
     'nav.settings': 'Ajustes',
     // ---- 侧栏 (Freebuff 式: 搜索 + 新建课程) ----
     'sidebar.search': 'Buscar cursos…', 'sidebar.newCourse': 'Nuevo curso',
@@ -686,7 +688,9 @@ const I18N = {
     'settings.system.autostartDesc': 'Iniciar Loomind al abrir sesión en Windows.',
     'settings.system.autostartUnsupported': 'Solo compatible con Windows.',
     'settings.system.autoUpdate': 'Comprobar actualizaciones automáticamente',
-    'settings.system.autoUpdateDesc': 'Comprueba si hay versiones nuevas en GitHub al iniciar (solo comprueba; no instala automáticamente).',
+    // 实际行为: 开关只保存偏好, 启动期自动检查尚未接线 (docs/status.md
+    // 已声明本期未做) —— 文案必须说清, 不能暗示启动时会自动检查。
+    'settings.system.autoUpdateDesc': 'Guarda tu preferencia; esta versión todavía no comprueba actualizaciones al iniciar (función no implementada). Para buscar versiones nuevas, usa el botón «Comprobar ahora» de abajo.',
     'settings.system.version': 'Versión actual',
     'settings.system.checkNow': 'Comprobar ahora',
     'settings.system.checking': 'Comprobando…',
@@ -1267,7 +1271,7 @@ const I18N = {
   },
   ca: {
     'nav.overview': 'Resum', 'nav.knowledge': 'Mapa de coneixement', 'nav.materials': 'Materials',
-    'nav.reviews': 'Revisió',
+    'nav.reviews': 'Revisió', 'nav.rail': 'Navegació principal',
     'nav.settings': 'Configuració',
     // ---- 侧栏 (Freebuff 式: 搜索 + 新建课程) ----
     'sidebar.search': 'Cerca cursos…', 'sidebar.newCourse': 'Nou curs',
@@ -1293,7 +1297,9 @@ const I18N = {
     'settings.system.autostartDesc': 'Iniciar Loomind en obrir sessió a Windows.',
     'settings.system.autostartUnsupported': 'Només compatible amb Windows.',
     'settings.system.autoUpdate': 'Comprovar actualitzacions automàticament',
-    'settings.system.autoUpdateDesc': 'Comprova si hi ha versions noves a GitHub en iniciar (només comprova; no instal·la automàticament).',
+    // 实际行为: 开关只保存偏好, 启动期自动检查尚未接线 (docs/status.md
+    // 已声明本期未做) —— 文案必须说清, 不能暗示启动时会自动检查。
+    'settings.system.autoUpdateDesc': 'Desa la teva preferència; aquesta versió encara no comprova actualitzacions en iniciar (funció no implementada). Per cercar versions noves, fes servir el botó «Comprovar ara» de sota.',
     'settings.system.version': 'Versió actual',
     'settings.system.checkNow': 'Comprovar ara',
     'settings.system.checking': 'Comprovant…',
@@ -2324,6 +2330,11 @@ function applyI18n() {
   // placeholder 同一条规则, 只是骨架元素没有可见文本。
   document.querySelectorAll('[data-i18n-ph]').forEach((node) => {
     node.setAttribute('placeholder', t(node.getAttribute('data-i18n-ph')));
+  });
+  // 只写 aria-label 不写 title: 导航 landmark 这类元素需要可访问名,
+  // 但 hover 出 tooltip 是噪音 (2026-10-16 P1-3)。
+  document.querySelectorAll('[data-i18n-aria-label]').forEach((node) => {
+    node.setAttribute('aria-label', t(node.getAttribute('data-i18n-aria-label')));
   });
   document.documentElement.lang = state.lang === 'zh' ? 'zh-CN' : state.lang;
   const picker = document.getElementById('ui-language');

@@ -1030,9 +1030,13 @@ const RAIL = [
 
 function makeNavLink(href) {
   const classes = new Set();
+  const attrs = new Map();
   return {
     href,
-    getAttribute: (name) => (name === 'href' ? href : null),
+    getAttribute: (name) =>
+      attrs.has(name) ? attrs.get(name) : (name === 'href' ? href : null),
+    setAttribute: (name, value) => attrs.set(name, String(value)),
+    removeAttribute: (name) => attrs.delete(name),
     classList: {
       add: (name) => classes.add(name),
       remove: (name) => classes.delete(name),
@@ -1040,6 +1044,9 @@ function makeNavLink(href) {
       toggle: (name) => (classes.has(name) ? classes.delete(name) : classes.add(name)),
     },
     __classes: classes,
+    // 2026-10-16 P1-3: markActiveNav() 还写 aria-current="page" —— 桩必须
+    // 记账, 否则这个读屏语义没被测过 (与 __classes 同目的)。
+    __attrs: attrs,
   };
 }
 
@@ -1240,6 +1247,14 @@ function html(sandbox) {
 /** 当前处于 `active` 的顶栏项 (应当**恰好一个**, 且与所在页面一致)。 */
 function activeNav(sandbox) {
   return sandbox.__nav.filter((link) => link.__classes.has('active')).map((link) => link.href);
+}
+
+/** 当前带 `aria-current="page"` 的顶栏项 —— 读屏软件的"你在哪一页"
+ *  (2026-10-16 P1-3; .active 只是视觉, 读屏听不到)。 */
+function ariaCurrentNav(sandbox) {
+  return sandbox.__nav
+    .filter((link) => link.__attrs.get('aria-current') === 'page')
+    .map((link) => link.href);
 }
 
 // ---------------------------------------------------------------- 用例
@@ -2129,6 +2144,13 @@ async function main() {
         active.length === 1, active.join(','));
       check(page + ' highlights its own nav entry',
         active.join(',') === expected, active.join(','));
+      // 读屏语义与视觉高亮同组互斥 (2026-10-16 P1-3): 恰好一个
+      // aria-current="page", 且与 .active 指向同一项。
+      const current = ariaCurrentNav(sandbox);
+      check(page + ' marks exactly one nav entry as current for screen readers',
+        current.length === 1, current.join(','));
+      check(page + ' marks its own nav entry as current for screen readers',
+        current.join(',') === expected, current.join(','));
     }
 
     // 回归本体 (a): 刷新后深链到知识点学习页 —— 高亮必须跟着流程入口 `#/learn`。

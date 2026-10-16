@@ -1950,6 +1950,11 @@ const PAGES = [
   { name: 'knowledgeMap', args: [COURSE_ID] },
   // 设置页 (Freebuff 式: 左分类 + 右卡片; 三语渲染进本审计)。
   { name: 'settings', args: [] },
+  // 设置页的两个非默认分区 (checkbox 在 ai / system 区; general 区只有
+  // 语言分段器)。page 字段指向真实页面函数, args 是 section 名 ——
+  // 2026-10-16 P1-3: checkbox 的可访问名要在这里的快照里验。
+  { name: 'settingsAi', page: 'settings', args: ['ai'] },
+  { name: 'settingsSystem', page: 'settings', args: ['system'] },
 ];
 
 function pageByName(name) {
@@ -1964,7 +1969,11 @@ async function renderPage(page, table, lang, withSidebar) {
   // 的场合必须先跑侧边栏 —— 否则测到的是"缓存为空时的兜底", 不是用户看到的界面。
   // 注意顺序: 页面函数一旦渲染完, 再补跑侧边栏也不会重画 #view。
   if (withSidebar) await sandbox.loadSidebar();
-  await sandbox['page' + page.name[0].toUpperCase() + page.name.slice(1)](...page.args);
+  // page.page || page.name: 同一页面函数的不同分区 (如 settings 的
+  // ai / system) 共享 pageSettings, 只有 section 参数不同。
+  const fnName = 'page' + (page.page || page.name)[0].toUpperCase() +
+    (page.page || page.name).slice(1);
+  await sandbox[fnName](...page.args);
   // Task 64: 单题页的"出题依据链"是异步补上的 (页面先渲染骨架, 再拉链路)。
   // 页面内部发起的那个 promise 没有被 await, 所以审计要显式等一次 ——
   // 否则检查到的只是"加载中…"这个中间态。
@@ -3614,7 +3623,9 @@ async function audit() {
       const table = routes();
       const sandbox = await loadApp(table, 'zh');
       await sandbox.loadSidebar();
-      await sandbox['page' + page.name[0].toUpperCase() + page.name.slice(1)](...page.args);
+      const fnName = 'page' + (page.page || page.name)[0].toUpperCase() +
+        (page.page || page.name).slice(1);
+      await sandbox[fnName](...page.args);
       const out = html(sandbox);
       // 去掉标签 => 只剩**可见文本**; href / data-course 这类属性值随之消失。
       const text = out.replace(/<[^>]*>/g, ' ');

@@ -41,9 +41,11 @@ function settingsNavLabel(name) {
 }
 
 function settingsNavHtml(section) {
+  // aria-current="page" 是给读屏软件的"当前分区" (2026-10-16 P1-3);
+  // .active 只管视觉, 读屏听不到。
   return SETTINGS_SECTIONS.map((name) => {
-    const active = name === section ? ' class="active"' : '';
-    return '<a' + active + ' href="#/settings/' + name + '">' +
+    const attrs = name === section ? ' class="active" aria-current="page"' : '';
+    return '<a' + attrs + ' href="#/settings/' + name + '">' +
       settingsNavLabel(name) + '</a>';
   }).join('');
 }
@@ -55,8 +57,11 @@ function settingsGeneralHtml(snap) {
     const label = lang === 'zh' ? '中文' : (lang === 'es' ? 'Español' : 'Català');
     // active 并进同一个 class 属性 —— 写成第二个 class="..." 是非法 HTML,
     // 浏览器只认第一个, 选中样式会静默失效 (2026-10-15 预览快照实测抓到)。
-    const active = state.lang === lang ? ' active' : '';
-    return '<button type="button" class="lang-btn' + active +
+    // aria-pressed 表达分段控件的"选中"状态: 只有视觉 class 的话, 读屏
+    // 听到的是三个无状态按钮 (2026-10-16 P1-3)。
+    const selected = state.lang === lang;
+    return '<button type="button" class="lang-btn' + (selected ? ' active' : '') +
+      '" aria-pressed="' + (selected ? 'true' : 'false') +
       '" data-lang="' + lang + '">' + esc(label) + '</button>';
   }).join('');
   return '<section class="settings-card">' +
@@ -95,10 +100,14 @@ function settingsAiHtml(snap) {
   return '<section class="settings-card">' +
     '<h2>' + t('settings.ai.title') + '</h2>' +
     '<p class="settings-desc">' + t('settings.ai.desc') + '</p>' +
-    '<div class="settings-row"><span class="settings-row-label">' +
+    // checkbox 的可访问名: label 只包 aria-hidden 的视觉轨道, 可见文字是
+    // 兄弟 span —— 用 aria-labelledby 关联 (2026-10-16 P1-3; label for
+    // 也行, 但 input 在 switch label 内, 双 label 会歧义)。
+    '<div class="settings-row"><span class="settings-row-label" id="label-local-ai">' +
     t('settings.ai.toggle') + '</span>' +
     '<label class="switch"><input type="checkbox" id="toggle-local-ai"' +
-    checked + '><span class="switch-track" aria-hidden="true">' +
+    ' aria-labelledby="label-local-ai"' + checked + '>' +
+    '<span class="switch-track" aria-hidden="true">' +
     '<span class="switch-knob"></span></span></label></div>' +
     statusLine + noProvider +
     '</section>';
@@ -114,10 +123,11 @@ function settingsSystemHtml(snap) {
     ? ''
     : '<p class="settings-row-note">' + t('settings.system.autostartUnsupported') + '</p>';
   const autoRow =
-    '<div class="settings-row"><span class="settings-row-label">' +
+    '<div class="settings-row"><span class="settings-row-label" id="label-autostart">' +
     t('settings.system.autostart') + '</span>' +
     '<label class="switch"><input type="checkbox" id="toggle-autostart"' +
-    autoChecked + autoDisabled + '><span class="switch-track" aria-hidden="true">' +
+    ' aria-labelledby="label-autostart"' + autoChecked + autoDisabled + '>' +
+    '<span class="switch-track" aria-hidden="true">' +
     '<span class="switch-knob"></span></span></label></div>';
   const update = snap.auto_update || {};
   const updateChecked = update.enabled === false ? '' : ' checked';
@@ -129,10 +139,11 @@ function settingsSystemHtml(snap) {
     '<section class="settings-card">' +
     '<h2>' + t('settings.system.autoUpdate') + '</h2>' +
     '<p class="settings-desc">' + t('settings.system.autoUpdateDesc') + '</p>' +
-    '<div class="settings-row"><span class="settings-row-label">' +
+    '<div class="settings-row"><span class="settings-row-label" id="label-auto-update">' +
     t('settings.system.autoUpdate') + '</span>' +
     '<label class="switch"><input type="checkbox" id="toggle-auto-update"' +
-    updateChecked + '><span class="switch-track" aria-hidden="true">' +
+    ' aria-labelledby="label-auto-update"' + updateChecked + '>' +
+    '<span class="switch-track" aria-hidden="true">' +
     '<span class="switch-knob"></span></span></label></div>' +
     '<div class="settings-row"><span class="settings-row-label">' +
     t('settings.system.version') + '</span>' +
@@ -259,5 +270,7 @@ async function pageSettings(section) {
   }
   const active = SETTINGS_SECTIONS.indexOf(section) >= 0 ? section : 'general';
   setView(settingsPageHtml(active, snap));
+  // 设置页不显示课程切换器：在设置页渲染后给 #view 加 settings-page 类。
+  document.getElementById('view').classList.add('settings-page');
   wireSettingsPage(active, snap);
 }

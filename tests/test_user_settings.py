@@ -31,6 +31,7 @@ from src.application.autostart import (
     set_autostart,
     write_run_command,
 )
+from src.application.errors import ConfigurationError
 from src.application.settings import SETTINGS_FILENAME, SettingsStore, UserSettings
 from src.application.update_check import check_for_update, parse_version
 from src.application.workspace import Workspace
@@ -287,6 +288,55 @@ class TestWorkspaceSettings:
         assert workspace.ai_enabled is True
         assert workspace.settings.autostart is False
 
+    def test_autostart_on_unsupported_platform_raises_configuration_error(
+        self, tmp_path, monkeypatch
+    ):
+        """非 Windows 平台拨 autostart: 稳定 ConfigurationError, 不写盘。
+
+        回归 (2026-10-16 外部审查实证): 曾因 ``ConfigurationError(...,
+        code=...)`` 重复传 ``code`` 触发 TypeError, 端点层把它变成 5xx
+        而不是稳定业务错误。平台判定还必须先于落盘。
+        """
+        import src.application.autostart as autostart_mod
+
+        monkeypatch.setattr(autostart_mod, "is_supported", lambda: False)
+        workspace = Workspace(str(tmp_path / "data"), asr_mode="mock", ocr_mode="mock")
+        with pytest.raises(ConfigurationError) as excinfo:
+            workspace.update_settings(autostart=True)
+        assert excinfo.value.code == "CONFIGURATION_ERROR"
+        assert workspace.settings.autostart is False
+        # 落盘文件里也没有 (平台判定先于写盘; 文件不存在时 load 回落默认)。
+        reloaded, _ = SettingsStore(str(tmp_path / "data")).load()
+        assert reloaded.autostart is False
+
+    def test_field_validation_precedes_platform_check(self, tmp_path, monkeypatch):
+        """非 Windows + 字段类型非法: 先 ValueError (INVALID_INPUT),
+        平台错误不遮蔽字段校验 —— 两个错误同时存在时的报告顺序。
+        """
+        import src.application.autostart as autostart_mod
+
+        monkeypatch.setattr(autostart_mod, "is_supported", lambda: False)
+        workspace = Workspace(str(tmp_path / "data"), asr_mode="mock", ocr_mode="mock")
+        with pytest.raises(ValueError):
+            workspace.update_settings(autostart="sometimes")
+        assert workspace.settings.autostart is False
+
+    def test_snapshot_separates_effective_and_configured_provider(self, tmp_path):
+        """启用 AI 但无 provider: 快照 provider=fake-deterministic (生效口径,
+        与分析路径的 FakeAIProvider 回退一致), configured_provider=none
+        (配置口径) —— 之前快照报 provider=none 而实际跑 fake, 诊断误导。
+        """
+        workspace = Workspace(str(tmp_path / "data"), asr_mode="mock", ocr_mode="mock")
+        disabled = workspace.settings_snapshot()["ai"]
+        assert disabled["provider"] == "none"
+        assert disabled["configured_provider"] == "none"
+        workspace.update_settings(local_ai_enabled=True)
+        enabled = workspace.settings_snapshot()["ai"]
+        assert enabled["provider"] == "fake-deterministic"
+        assert enabled["configured_provider"] == "none"
+        # mode 与 effective provider 同口径, 不能自相矛盾。
+        assert enabled["mode"] == "fake"
+
     def test_autostart_side_effects_are_rolled_back_on_registry_failure(
         self, tmp_path, monkeypatch
     ):
@@ -440,6 +490,25 @@ class TestSettingsEndpoints:
         status, payload = client.patch("/api/settings", {"autostart": "sometimes"})
         assert status == 400
         assert payload["error"]["code"] == "INVALID_INPUT"
+
+    def test_patch_autostart_on_unsupported_platform_is_a_stable_error(self, client, monkeypatch):
+        """非 Windows 平台: 端点返回稳定的 CONFIGURATION_ERROR (HTTP 500 是
+        ``HTTP_STATUS_BY_CODE`` 的既定映射), 文案说明平台限制。
+
+        回归 (2026-10-16 外部审查实证): 曾因 ``ConfigurationError(...,
+        code=...)`` 重复传参触发 TypeError, 被 map_application_error 翻成
+        INVALID_INPUT + "got multiple values for argument 'code'" —— 用户
+        看到的是内部实现文本, 错误码语义也是错的。
+        """
+        import src.application.autostart as autostart_mod
+
+        monkeypatch.setattr(autostart_mod, "is_supported", lambda: False)
+        status, payload = client.patch("/api/settings", {"autostart": True})
+        assert status == 500
+        assert payload["error"]["code"] == "CONFIGURATION_ERROR"
+        assert payload["error"]["message"] == "autostart is only supported on Windows"
+        # 不泄漏内部异常文本。
+        assert "argument" not in payload["error"]["message"]
 
     def test_update_check_endpoint(self, client, monkeypatch):
         import src.application.update_check as update_mod

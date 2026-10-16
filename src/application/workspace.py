@@ -41,7 +41,6 @@ from src.application.data_dirs import (
     safe_join,
 )
 from src.application.errors import (
-    ERROR_CODES,
     ConfigurationError,
     InvalidInputError,
     NotFoundError,
@@ -2450,12 +2449,36 @@ class Workspace:
         """加载设置文件时的诊断 (损坏回落等)。"""
         return tuple(self._settings_notes)
 
+    def _configured_ai_provider_name(self) -> str:
+        """配置里显式装配的 provider 名 (``none`` = 没有配置)。"""
+        if self._ai_provider is None:
+            return "none"
+        return str(getattr(self._ai_provider, "name", None) or "custom")
+
+    def _effective_ai_provider_name(self) -> str:
+        """分析路径**实际会用的** provider 名 (effective 口径)。
+
+        ``analyze_material_with_ai`` 构造
+        ``AIUnderstandingPipeline(provider or self._ai_provider)``, pipeline
+        内部 ``provider or FakeAIProvider()`` —— 所以启用且没配 provider 时
+        实际跑的是确定性 Fake (零出站), 与 configure_ai 的返回口径一致。
+        快照必须报告这个真相: 显示 provider=none 会让诊断以为"什么都没
+        配所以不会跑", 与实际行为矛盾 (2026-10-16 外部审查实证)。
+        """
+        if self._ai_provider is not None:
+            return str(getattr(self._ai_provider, "name", None) or "custom")
+        return "fake-deterministic" if self._ai_enabled else "none"
+
     def settings_snapshot(self) -> dict[str, Any]:
         """设置页要展示的**全部**状态 (一次 GET 拿齐)。
 
         ``ai`` 块是**生效状态** (workspace 内存里的真相), 不是设置文件里的
         ``local_ai_enabled`` —— 后者可能是 None (跟随环境)。设置页要显示
         "现在实际在用什么", 所以两块都给。
+
+        ``provider`` 是生效口径 (见 ``_effective_ai_provider_name``);
+        ``configured_provider`` 是原始配置口径 (没配 = ``none``), 供诊断
+        区分"没配置"与"启用后的确定性回退"。
         """
         from src.application.ai.config import load_ai_config
 
@@ -2465,8 +2488,8 @@ class Workspace:
             "ai": {
                 "enabled": self._ai_enabled,
                 "mode": self._ai_mode,
-                "provider": getattr(self._ai_provider, "name", None)
-                or ("none" if self._ai_provider is None else "custom"),
+                "provider": self._effective_ai_provider_name(),
+                "configured_provider": self._configured_ai_provider_name(),
                 # 环境默认 (settings 未覆盖时的行为) —— 设置页要能解释
                 # "为什么开关是关的: 环境里 LOOMIND_AI_ENABLED 没开"。
                 "env_default_enabled": bool(ai_config.enabled),
@@ -2505,14 +2528,20 @@ class Workspace:
         autostart: Any = _UNSET,
         auto_update_check: Any = _UNSET,
     ) -> dict[str, Any]:
-        """应用一组设置改动 (校验 -> 生效 -> 落盘 -> 快照)。
+        """应用一组设置改动 (校验 -> 平台判定 -> 落盘 -> 生效 -> 快照)。
 
         - ``local_ai_enabled``: 直接改 workspace 的 AI 开关 (configure_ai),
           随后落盘。``True`` 但环境没有 provider 时**不**自动造 Fake ——
-          那会悄悄产生"不是真模型输出"的知识点; 设置页显示 provider=none
+          那会悄悄产生"不是真模型输出"的知识点; 设置页显示生效 provider
           并提示配置凭证。
         - ``autostart``: 写/删注册表 Run 键 (非 Windows 抛 ConfigurationError)。
         - 字段值非法 -> ValueError (端点层 -> INVALID_INPUT), 不写盘。
+
+        三步顺序是刻意的: 先纯内存校验字段值 (与 store.update 同一套
+        ``_coerce_optional_bool`` 口径), 再判平台能力, 最后落盘。平台
+        判定在前会遮蔽非法输入 (同时给了坏类型和坏平台时, 用户该先看到
+        INVALID_INPUT); 平台判定仍先于落盘, 保证设置文件不会停在"用户
+        选了但系统没生效"的中间态。
         """
         patch: dict[str, Any] = {}
         if local_ai_enabled is not _UNSET:
@@ -2525,20 +2554,25 @@ class Workspace:
         if not patch:
             return self.settings_snapshot()
 
-        # 先做**能预先判定的**校验 (非 Windows 的开机自启), 再落盘 ——
-        # 落盘之后才失败的副作用 (注册表写入) 会把设置文件留在
-        # "用户选了但系统没生效" 的不一致状态。
+        # ① 字段值校验 (纯内存, 不落盘) —— 与 store.update 同一套口径,
+        # 非法值在这里抛 ValueError, 任何副作用都不发生。
+        candidate = self._settings.to_dict()
+        candidate.update(patch)
+        UserSettings.from_dict(candidate)
+
+        # ② 平台能力判定 (非 Windows 的开机自启) —— 仍先于落盘: 落盘之后
+        # 才失败的副作用 (注册表写入) 会把设置文件留在"用户选了但系统
+        # 没生效"的不一致状态。
         autostart_requested = "autostart" in patch
         if autostart_requested:
             from src.application.autostart import is_supported
 
             if not is_supported():
                 raise ConfigurationError(
-                    "autostart is only supported on Windows",
-                    code=ERROR_CODES.CONFIGURATION_ERROR.value,
+                    "autostart is only supported on Windows"
                 )
 
-        # 校验 + 落盘 (非法值在这里抛, 任何副作用都不发生)。
+        # ③ 落盘 (校验已通过, 这里不该再有校验失败) + 再生效。
         previous = self._settings
         updated, notes = self._settings_store.update(**patch)
         self._settings = updated

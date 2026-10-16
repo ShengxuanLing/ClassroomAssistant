@@ -1418,10 +1418,18 @@ function renderCourseSwitcher(courses) {
  * 改任何一个目标都必须同步改那张表 —— 让改动是**刻意**的, 而不是顺手漂移的。
  */
 function markActiveNav(hash) {
+  // .active 只管视觉; aria-current="page" 才是给读屏软件的"你在哪一页"
+  // (2026-10-16 P1-3)。两者同一组互斥: 清 active 时必须同清 aria-current,
+  // 否则同组会留下多个 current, 读屏会听到好几个"当前页"。
   document.querySelectorAll('.rail a').forEach((link) => {
     const href = link.getAttribute('href') || '';
-    if (href === hash) link.classList.add('active');
-    else link.classList.remove('active');
+    if (href === hash) {
+      link.classList.add('active');
+      link.setAttribute('aria-current', 'page');
+    } else {
+      link.classList.remove('active');
+      link.removeAttribute('aria-current');
+    }
   });
 }
 

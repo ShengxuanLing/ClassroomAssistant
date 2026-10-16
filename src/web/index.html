@@ -69,7 +69,10 @@
          图标是纯装饰 (aria-hidden), 可访问名与 tooltip 由
          data-i18n-title 经 applyI18n() 写入 title / aria-label ——
          图标按钮没有可见文本, 可访问名不能靠 data-i18n 的 textContent。 -->
-    <nav class="rail" aria-label="主导航">
+    <!-- aria-label 初始为中文兜底 (JS 未跑时); data-i18n-aria-label 让
+         applyI18n() 在语言切换时同步更新 —— landmark 名称必须跟随 locale,
+         不能写死 (2026-10-16 P1-3)。 -->
+    <nav class="rail" aria-label="主导航" data-i18n-aria-label="nav.rail">
       <a href="#/" class="rail-link" data-i18n-title="nav.overview">
         <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3 11.2 12 3.5l9 7.7"/><path d="M5.5 9.6V20h13V9.6"/>
