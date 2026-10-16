@@ -1405,8 +1405,25 @@ def build_router(workspace: Workspace) -> Router:
 
         return success(check_for_update(APPLICATION_VERSION))
 
+    def update_install(request: Request) -> ApiResponse:
+        from src.application.update_check import install_supported, install_update
+
+        # 不支持自动安装 (开发模式 / 非 Windows) 是**正常状态**而非错误:
+        # 与下面的 "no update available" 同一口径, 用 200 + ok=False 回报,
+        # 前端据此回落到手动下载。
+        if not install_supported():
+            return success(
+                {"ok": False, "error": "auto-install not supported in this build"}
+            )
+        result = check_for_update(APPLICATION_VERSION)
+        if not result.get("ok") or not result.get("update_available"):
+            return success({"ok": False, "error": "no update available"})
+        inst = install_update(result.get("latest", ""), result.get("release_url", ""))
+        return success(inst)
+
     router.get("/api/settings", get_settings)
     router.patch("/api/settings", patch_settings)
     router.post("/api/settings/update-check", update_check)
+    router.post("/api/settings/update-install", update_install)
 
     return router

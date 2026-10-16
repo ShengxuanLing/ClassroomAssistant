@@ -679,15 +679,13 @@ function originalBlock(text, language) {
 
 const state = {
   courseId: window.localStorage.getItem('ca.course') || null,
-  // 2026-09-22: 全局页 (概览/今日) 的**查看范围** —— 'all' 或某门课的 id。
-  // 刻意**不持久化**: 用户回到概览时默认仍然是"全部课程" (任务书 §11),
-  // 所以它只活在内存里, 每次开新标签页都回到默认值。
-  scope: 'all',
   lang: pickInitialLang(),
   studentId: window.localStorage.getItem('ca.student') || null,
   // Task 65: 错题本分组方式。只影响显示, 不改变任何数据。
   mistakeGroupBy: window.localStorage.getItem('ca.mistakeGroup') || 'knowledge',
   health: null,
+  // 启动时是否已检查过更新（本次会话内只检查一次；Ignore 抑制至下次重启）。
+  updateChecked: false,
 };
 
 // Task 64: 单题页最后发起的"出题依据链"请求。
@@ -695,64 +693,22 @@ const state = {
 let __lastGrounding = null;
 
 /**
- * 当前正在渲染的页面 (由 route() 与页面函数**声明**, 不隨时反解析 hash)。
+ * 设置页的侧栏开关 (2026-10-16): 侧栏的课程面板在设置页没有意义
+ * ("当前课程"不是一个设置项; 顶栏原有的课程/语言两个 <select> 同日**全站
+ * 删除** —— 课程切换在侧栏、界面语言在设置页, 那一半的隐藏规则随之消失)。
+ * 类挂在 <body> 上 —— 侧栏是 #view 的**兄弟节点**, 挂在 #view 上的类选不到
+ * 它 (旧实现正是挂在 #view 上, 只加不清, 且没有任何 CSS 规则引用, 是个死
+ * 钩子)。加与清收在同一个入口: 不存在"离开设置页之后类还留着"的窗口。
  *
- * 顶栏选择器在全局页 / 课程页上有两种语义 (见 renderCourseSwitcher), 它需要
- * 知道"现在屏幕上是哪一页"。反解析 hash 看似等价, 实际有两个洞:
- *   1. 页面函数可以被直接调用 (脚本/审计/测试就是这么做的), 此时 hash 还停
- *      在上一页 —— 视图与 hash 短暂不一致, 反解析读到的是**上一页**;
- *   2. `#/today` 与 `#/learn` 共享同一条顶栏高亮, hash 前缀分不清"哪一页
- *      真正在渲染"。
- * 所以沿用 markActiveNav() 的同一条架构规则: **界面归属由页面自己声明**。
- * 初值 null = "还没有任何页面渲染" —— 此时选择器按课程页语义处理 (与旧版
- * 行为一致), 只有真的渲染出全局页才切换语义。
+ * 为什么是独立函数而不是 route() 里内联的 if: route() 的 if/else-if 条件链
+ * 被 tests/test_web_ui_invariants.py 逐条解析成路由谓词, 一个非路由的 if 会
+ * 被当作路由分支 (解析器看不懂会报错而不是跳过 —— 这正是它该做的)。
+ * body 守卫: 审计的 DOM 桩不一定有 body (ui_render_check 的桩原本就没有),
+ * 真实浏览器里 DOMContentLoaded 之后它必然存在。
  */
-let __activeRoute = null;
-
-/** 声明"现在渲染的是这个 hash"。与 markActiveNav() 同一条声明式契约。 */
-function declareRoute(hash) {
-  __activeRoute = hash || '#/';
-}
-
-/**
- * 这条路由是不是**全局页** —— 内容不跟随"当前课程" (state.courseId)。
- *
- * 页面层级 (2026-09-22, 任务书 §2):
- *   全局页   ``#/`` (概览) / ``#/today`` / ``#/settings`` —— 默认按全部课程
- *            聚合 (设置页则与课程无关), 顶栏选择器在前两页上只作**本页筛选**
- *            (state.scope), 不改 course context;
- *   课程页   其余全部 —— 数据跟随 state.courseId。
- *
- * switchCourse() 用它来决定换课后要不要把 scope 归位; renderCourseSwitcher()
- * 用它来决定选择器的语义 (课程上下文 vs 本页筛选)。
- */
-function isGlobalRoute() {
-  if (__activeRoute === null) return false;
-  const parts = hashParts(__activeRoute);
-  return parts.length === 0 || parts[0] === 'today' || parts[0] === 'settings';
-}
-
-/** parseHash() 的纯函数版: 解析任意 hash 字符串, 不读 window。 */
-function hashParts(raw) {
-  return String(raw || '')
-    .replace(/^#/, '')
-    .split('/')
-    .filter((part) => part.length > 0)
-    .map(decodeURIComponent);
-}
-
-/** 当前页实际生效的"查看范围": 全局页用 state.scope, 课程页恒为当前课程。 */
-function currentScope() {
-  if (!isGlobalRoute()) return state.courseId;
-  return state.scope === 'all' ? null : state.scope;
-}
-
-/**
- * 全局页的查看范围。唯一写入口 (与 setCourse / setStudent 同一条收口规则)。
- * 只改内存 —— 刻意不持久化, 见 state.scope 上的注释。
- */
-function setScope(courseId) {
-  state.scope = courseId || 'all';
+function syncSettingsChrome(on) {
+  if (!document.body || !document.body.classList) return;
+  document.body.classList.toggle('settings-page', Boolean(on));
 }
 
 // ---------------------------------------------------------------- 界面语言
@@ -886,10 +842,10 @@ function setCourse(courseId) {
  *
  * 路由里的 id 是**请求**, 不是既成事实: 手输错、失效的书签、课程被删之后的
  * 深链都会给出一个不存在的 id。直接 setCourse() 把它写进 state 与 localStorage
- * 的后果是三重的, 而且都属于"选中的课和高亮的课不是同一门"这一类:
+ * 的后果是双重的 (2026-10-16 前还有一条"顶栏切换器退回显示第一项", 随该控件
+ * 全站删除), 而且都属于"选中的课和高亮的课不是同一门"这一类:
  *   1. 侧边栏**没有任何**高亮;
- *   2. 顶栏切换器找不到匹配项, 退回显示第一项 —— 显示的和"当前课程"不是同一门;
- *   3. 此后每个页面 (概览 / 知识点 / 材料 …) 都拿着这个脏 id 去请求, 全部 404,
+ *   2. 此后每个页面 (概览 / 知识点 / 材料 …) 都拿着这个脏 id 去请求, 全部 404,
  *      用户被卡在错误页上直到他重新点一门课。
  *
  * 判断不花任何请求: 课程列表刚由 loadSidebar() 放进 __courseCache, 而列表在
@@ -910,10 +866,11 @@ function setRouteCourse(courseId) {
  * 课程上下文切换的**唯一**入口 (2026-09-22): 只换 ``currentCourseId``,
  * 不碰 ``currentRoute``。
  *
- * 根因: 侧边栏原来是直链 ``#/courses/<id>``, 顶栏切换器原来是
- * ``setCourse()`` + ``location.hash = '#/courses/<id>'`` —— 于是"换一门课"
- * 恒等于"进入课程详情", 用户在概览/今日/材料等 11 个顶层功能页换课后都
- * 被踢到课程详情, 还得再点一次顶部导航。
+ * 根因: 侧边栏原来是直链 ``#/courses/<id>``, 而当时的顶栏切换器 (2026-10-16
+ * 全站删除) 也只做 ``setCourse()`` + ``location.hash = '#/courses/<id>'`` ——
+ * 于是"换一门课"恒等于"进入课程详情", 用户在概览/今日/材料等 11 个顶层功能页
+ * 换课后都被踢到课程详情, 还得再点一次顶部导航。删除顶栏切换器后, 本函数
+ * 的实际调用者只剩侧边栏课程项的点击委托 (a[data-course-switch])。
  *
  * 规则 (顶层功能页的 courseId 只活在全局 state 里, 不在 URL 里):
  *   - 顶层功能页 (``#/`` / ``#/today`` / ``#/materials`` … / ``#/courses``):
@@ -933,15 +890,6 @@ async function switchCourse(courseId) {
   if (!courseId) return;
   if (courseId === state.courseId) return;
   setCourse(courseId);
-  // scope 筛选**不跟着换课走**: 课程页换课 = 换上下文 (本页没有筛选);
-  // 全局页换课 = 只换上下文、视图回"全部课程" —— 任务书 §5: "当前课程 =
-  // Gestió de Projectes 不应该导致概览 = 只显示 Gestió de Projectes"。
-  // 要单课程视图, 用顶栏的查看范围选择器 (state.scope)。
-  setScope('all');
-  if (isGlobalRoute()) {
-    await route();
-    return;
-  }
   const parts = parseHash();
   if (parts[0] === 'courses' && parts.length >= 2) {
     const target = '#/courses/' + encodeURIComponent(courseId);
@@ -1087,7 +1035,7 @@ function courseListHtml(courses) {
 }
 
 /**
- * 把"当前课程"的两处显示同步到 state.courseId (侧边栏高亮 + 顶栏切换器)。
+ * 把"当前课程"的高亮显示同步到 state.courseId (侧边栏课程列表)。
  *
  * 只改显示, 不碰任何数据, 也不发任何请求 —— 课程列表已经在 __courseCache 里。
  * 缓存为空 (列表还没加载 / 加载失败) 时什么都不做: 这时候没有任何可同步的显示,
@@ -1097,7 +1045,6 @@ function syncCourseChrome() {
   if (!__courseCache.length) return;
   const list = document.getElementById('course-list');
   if (list) list.innerHTML = courseListHtml(__courseCache);
-  renderCourseSwitcher(__courseCache);
   // 列表刚被重绘 (换课 / 路由刷新), 搜索框里的过滤条件必须重新套上 ——
   // 否则"输入了关键词 -> 切到别的页再切回来"会看到全量列表, 像是过滤丢了。
   applyCourseFilter();
@@ -1285,7 +1232,6 @@ async function loadSidebar() {
   } catch (err) {
     __courseCache = [];
     list.innerHTML = '<li class="muted small">' + t('课程列表加载失败') + '</li>';
-    renderCourseSwitcher([]);
     // 服务不可用时 ``loadChrome`` 已经报了「无法访问本机 API」—— 这里不再叠
     // 一条同因的横幅 (横幅只有一条, 重复只会挤掉别的话)。
     return null;
@@ -1294,7 +1240,6 @@ async function loadSidebar() {
   __courseCache = courses;
   if (!courses.length) {
     list.innerHTML = '<li class="muted small">' + t('暂无课程') + '</li>';
-    renderCourseSwitcher([]);
     return null;
   }
   // Task 68: "该看哪门课"由**后端规则**判定 (preferred / preferred_missing /
@@ -1317,64 +1262,6 @@ async function loadSidebar() {
   }
   syncCourseChrome();
   return note;
-}
-
-// Task 68: 顶栏课程切换器。
-//
-// 用户更常见的动作是"我现在想换一门课看", 这时候要一个不离开当前页结构
-// 就能换的控件。选中即 ``switchCourse()`` (2026-09-22 前是 ``setCourse()``
-// + 跳课程详情, 见 switchCourse 上面的根因) —— 与侧边栏点击走的是同一个
-// 上下文入口, 持久化仍收口在 ``setCourse()`` 里, 所以刷新/重启之后的选择
-// 是一致的 (数据来源是 localStorage, 且由 /api/course-selection
-// 判定这个偏好是否还成立)。
-let __courseSwitchWired = false;
-
-function renderCourseSwitcher(courses) {
-  const picker = document.getElementById('course-switch');
-  if (!picker) return;
-  // 选择器的语义随页面而变 (2026-09-22):
-  //   全局页 (概览/今日) —— 它是**本页的查看范围**。第一项是「全部课程」
-  //     (value='') 且是默认选中项; 选一门课只把这一页筛成那门课
-  //     (setScope + route), 不改 course context。
-  //   其余页面 —— 它仍是**课程上下文**切换器, 行为与 2026-09-22 解耦修复
-  //     后一致: 选中即 switchCourse()。
-  // 全局页与课程页共用同一个 <select> (index.html 里只有一个), 选项与选中项
-  // 每次重绘都按当前页面重建; 只接一次线 (同 switchCourse 的理由)。
-  const globalMode = isGlobalRoute();
-  const selectedId = globalMode ? (state.scope === 'all' ? '' : state.scope) : state.courseId;
-  picker.innerHTML = (globalMode
-    ? [{ id: '', label: t('scope.all') }]
-    : []).concat(courses.map((course) => ({
-      id: course.course_id,
-      // 名称缺失时退回代码 —— 绝不显示内容寻址的 course_id。转义在这里做
-      // 一次 (option 文案位置), 内层 map 只拼壳, 不再出现第二次来源。
-      label: esc(course.name || course.code || ''),
-    })))
-    .map((item) => (
-      '<option value="' + esc(item.id) + '"' +
-      (item.id === selectedId ? ' selected' : '') + '>' +
-      item.label + '</option>'
-    ))
-    .join('');
-  // 只接一次线。每次重绘都 addEventListener 的话, 一次切换会触发 N 次跳转。
-  if (!__courseSwitchWired) {
-    __courseSwitchWired = true;
-    picker.addEventListener('change', () => {
-      const courseId = picker.value || null;
-      if (isGlobalRoute()) {
-        // 查看范围: 只筛本页, 不碰课程上下文, 也不写 localStorage ——
-        // 筛选不持久化, 回到概览默认仍是"全部课程" (任务书 §11)。
-        if (state.scope === (courseId || 'all')) return;
-        setScope(courseId);
-        route();
-        return;
-      }
-      if (!courseId) return;
-      // 只换课程上下文, 不强制进课程详情 —— 去留由 switchCourse 按当前
-      // 路由决定 (顶层功能页原地重渲染, 课程详情族才换 URL)。
-      switchCourse(courseId);
-    });
-  }
 }
 
 /**
@@ -1581,6 +1468,9 @@ document.addEventListener('click', (event) => {
   else if (action === 'review-reject') actionReview(courseId, knowledgeId, 'reject', target);
   else if (action === 'review-keep') actionReview(courseId, knowledgeId, 'keep', target);
   else if (action === 'review-resolve') actionReview(courseId, knowledgeId, 'resolve', target);
+  // 右下角更新通知弹窗 (2026-10-16): Ignore / Install Now。
+  else if (action === 'update-ignore') actionUpdateIgnore();
+  else if (action === 'update-install') actionUpdateInstall();
   else if (action === 'kp-translate') {
     // TASK-79: 按需翻译。幂等 (后端命中缓存不再调 LLM), 失败可重试, 且
     // 无论成败都不改原文与证据 —— 所以这里不做任何本地回滚。
@@ -1601,9 +1491,9 @@ function parseHash() {
 
 async function route() {
   const parts = parseHash();
-  // 先声明"现在渲染的是这一页" —— 顶栏选择器的全局/课程语义、以及页面函数
-  // 里的 currentScope() 都以这份声明为准 (见 __activeRoute 上的注释)。
-  declareRoute(window.location.hash || '#/');
+  // 设置页的侧栏开关 —— 侧栏课程面板在这一页没有意义, 由 CSS 按
+  // body.settings-page 隐藏 (实现与守护见 syncSettingsChrome)。
+  syncSettingsChrome(parts[0] === 'settings');
   // 横幅的生命周期跟着**路由**走。
   //
   // 曾经从不被清空: 只要出现过一次「课程选择判定失败，已按列表顺序显示。」,
@@ -1694,19 +1584,98 @@ async function route() {
   }
 }
 
+// ------------------------------------------------------------ 更新通知弹窗
+//
+// 启动时自动检查更新；右下角弹窗给出 Ignore / Install Now。
+// Ignore 抑制到下次进程重启 (sessionStorage 标记，进程退出即失效)。
+// Install Now 调用 /api/settings/update-install：在冻结版 Windows 上静默
+// 下载 + 启动安装程序，然后旧进程自退；开发模式 / 非冻结版下前端只给
+// 提示，由用户手动去 release 页下载。
+
+function checkForUpdateOnStartup() {
+  if (state.updateChecked) return;
+  state.updateChecked = true;
+  // Ignore 标记：上次会话被用户忽略，本次启动不再弹窗，直到进程重启。
+  try {
+    if (window.sessionStorage.getItem('ca.update.dismissed') === '1') return;
+  } catch (e) { /* sessionStorage 不可用时降级：照常检查 */ }
+  api('/api/settings/update-check', { method: 'POST' })
+    .then((result) => {
+      if (result && result.ok && result.update_available) {
+        showUpdateNotification(result);
+      }
+    })
+    .catch(() => {
+      // 网络失败静默忽略：不打断首屏渲染，用户可在设置页手动「立即检查」。
+    });
+}
+
+function showUpdateNotification(result) {
+  const el = document.getElementById('update-notification');
+  if (!el) return;
+  const title = document.getElementById('update-notify-title');
+  const desc = document.getElementById('update-notify-desc');
+  const installBtn = document.getElementById('update-notify-install');
+  const ignoreBtn = document.getElementById('update-notify-ignore');
+  const status = document.getElementById('update-notify-status');
+  if (!title || !desc || !installBtn || !ignoreBtn || !status) return;
+  const latest = esc(result.latest || '?');
+  title.textContent = t('settings.system.updateNotify.title');
+  desc.textContent = t('settings.system.updateNotify.body', { v: latest });
+  installBtn.textContent = t('settings.system.updateNotify.install');
+  ignoreBtn.textContent = t('settings.system.updateNotify.ignore');
+  status.style.display = 'none';
+  status.textContent = '';
+  el.style.display = '';
+  // 焦点放在「立即安装」上，方便键盘操作。
+  installBtn.focus();
+}
+
+function hideUpdateNotification() {
+  const el = document.getElementById('update-notification');
+  if (el) el.style.display = 'none';
+}
+
+function actionUpdateIgnore() {
+  hideUpdateNotification();
+  try {
+    window.sessionStorage.setItem('ca.update.dismissed', '1');
+  } catch (e) { /* 降级：本次会话内不再弹（靠 updateChecked 兜底） */ }
+}
+
+async function actionUpdateInstall() {
+  const installBtn = document.getElementById('update-notify-install');
+  const status = document.getElementById('update-notify-status');
+  const ignoreBtn = document.getElementById('update-notify-ignore');
+  if (installBtn) installBtn.disabled = true;
+  if (ignoreBtn) ignoreBtn.disabled = true;
+  if (status) {
+    status.style.display = '';
+    status.textContent = t('settings.system.updateNotify.installing');
+  }
+  try {
+    const result = await api('/api/settings/update-install', { method: 'POST' });
+    if (result && result.ok) {
+      if (status) status.textContent = t('settings.system.updateNotify.installed');
+    } else {
+      if (status) status.textContent = t('settings.system.checkFailed', { e: String(result && result.error ? result.error : '未知错误') });
+      if (installBtn) installBtn.disabled = false;
+      if (ignoreBtn) ignoreBtn.disabled = false;
+    }
+  } catch (err) {
+    if (status) status.textContent = t('settings.system.checkFailed', { e: String((err && err.message) || err) });
+    if (installBtn) installBtn.disabled = false;
+    if (ignoreBtn) ignoreBtn.disabled = false;
+  }
+}
+
 window.addEventListener('hashchange', () => { route(); });
 // 顶栏折行后的真实高度会变, 侧边栏的 sticky 偏移跟着它走 (见 syncTopbarHeight)。
 window.addEventListener('resize', () => { syncTopbarHeight(); });
 window.addEventListener('DOMContentLoaded', () => {
-  const picker = document.getElementById('ui-language');
-  if (picker) {
-    picker.value = state.lang;
-    picker.addEventListener('change', () => {
-      setLang(picker.value);
-      // 界面语言切换后重绘, 但绝不改动任何 Evidence / 原文。
-      route();
-    });
-  }
+  // 界面语言只有一个入口: 设置页的分段器 (settings.js 的 .lang-seg 按钮经
+  // data-lang 委托调 setLang + route)。顶栏的 #ui-language 选择器于
+  // 2026-10-16 全站删除, 这里不再有第二个接线点。
   // 侧栏课程搜索: 静态元素只接一次线 (loadSidebar 每次重绘的是 #course-list,
   // 不会重建这个输入框)。空输入 = 清空过滤, 由 applyCourseFilter 统一处理。
   const filter = document.getElementById('course-filter');
@@ -1720,5 +1689,7 @@ window.addEventListener('DOMContentLoaded', () => {
   syncTopbarHeight();
   watchTopbarHeight();
   route();
+  // 启动自动检查更新（仅首次，且不被 Ignore 抑制时弹窗）。
+  void checkForUpdateOnStartup();
 });
 

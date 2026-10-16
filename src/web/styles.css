@@ -430,37 +430,12 @@ html {
 .topbar-meta .pill { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 
 /* 顶栏只剩品牌 + 控件组 (2026-10-15 起导航搬到左侧图标栏), 由 .topbar 的
- * flex-wrap 自然产生换行。
+ * flex-wrap 自然产生换行: 一行放不下就整齐地换成两行, 而不是把控件压碎。
+ * 注: 用户数据 (状态文案) 的长度不该被 CSS 猜, 只截断又会让状态变得不可读
+ * (见 AGENTS.md 的证据优先原则)。
  *
- * 曾经试过在宽屏上用 `flex-wrap: nowrap` 把三者压成一行 (看着更紧凑), 实测
- * **适得其反**: 课程选择器的选项文本是数据驱动的 (最长的那门课决定宽度,
- * 实测一个 label 就到 344px), 加上两个状态 pill 的完整文案, 一行放不下 ——
- * nowrap 下浏览器只能反过来**挤压控件组**, 比"控件换到第二行"更局。
- * 所以这里刻意保留 wrap: 一行放不下就整齐地换成两行, 而不是把控件压碎。
- * 注: 用户数据 (课程名 / 状态文案) 的长度不该被 CSS 猜, 只截断又会让状态
- * 变得不可读 (见 AGENTS.md 的证据优先原则)。 */
-
-/* 顶栏那两个 <select> 的标签壳。
- *
- * 它一直在 index.html 里 (class="lang-picker"), 但**样式表里从未定义** ——
- * 审计的"每个 class 都有样式"只扫 app.js 写出的字面量, 而这两个标签写在
- * HTML 骨架里, 于是漏检 (与 .topnav a.active 同一类"看不见的缺失")。
- * 默认渲染下 label 是块级, 标签文字与下拉框各占一行, 控件组被抬高一倍;
- * 这里改成一行式, 并把标签文字降级为次级说明色。 */
-.lang-picker {
-  display: flex; align-items: center; gap: var(--sp-2);
-  font-size: var(--fs-sm); color: var(--text-muted);
-  min-width: 0;
-}
-.lang-picker select {
-  font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-2);
-  /* 下拉框的固有宽度由**最长选项**决定 (课程名可以很长), min-width: 0 +
-   * max-width: 100% 才能让它跟着容器缩, 而不是把页眉撑宽。选项全文在展开的
-   * 下拉列表里仍然完整可见, 侧栏与课程页也照旧显示全名。 */
-  min-width: 0;
-  max-width: 100%;
-}
-.course-picker { max-width: 44vw; }
+ * (2026-10-16: 顶栏的课程/语言两个 <select> 及其 .lang-picker / .course-picker
+ * 标签壳随控件本身全站删除, 相关规则一并移除。) */
 
 .pill {
   display: inline-block; padding: 2px 8px; border-radius: var(--radius-pill);
@@ -581,6 +556,24 @@ html {
 
 /* ---------------------------------------------------------- 设置页 (Freebuff 式) */
 
+/* 设置页隐藏侧栏 (2026-10-16, 用户要求) -------------------------------------
+ *
+ * 侧栏的课程面板在这一页没有意义 —— 设置页自带语言设置 (下面那张卡里的
+ * 分段器), 而"当前课程"不是一个设置项。用户在设置页截图里明确圈出了它。
+ * (顶栏的课程/语言两个选择器原先也在这里隐藏; 它们已于同日**全站删除**,
+ * 不再是"设置页隐藏"的对象。)
+ *
+ * 类由 app.js 的 route() 挂在 <body> 上, 挂上与清除是同一个入口 —— 侧栏
+ * 是 #view 的**兄弟节点**, 挂在 #view 上的类选不到它 (旧实现正是挂在 #view
+ * 上, 只加不清, 且没有任何规则引用, 是个死钩子)。
+ *
+ * 只隐藏控件, 不动任何数据: 课程列表照常由 loadSidebar() 填充, 切回别的
+ * 页面立刻可用; 隐藏的是"这一页不需要的面板", 不是"课程列表功能"。
+ * 网格同步收掉侧栏那一列 —— 主区从图标栏右侧开始 (与 <=900px 断点同版式),
+ * 而不是留一条 250px 的空列。 */
+body.settings-page .sidebar { display: none; }
+body.settings-page .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+
 .settings-layout {
   display: grid; grid-template-columns: 180px minmax(0, 1fr);
   gap: var(--sp-5); align-items: start;
@@ -634,15 +627,36 @@ html {
 .switch input:disabled + .switch-track { opacity: 0.5; }
 .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* 语言分段器 (通用卡): 三个按钮一段, 选中项与导航同一套选中语言。 */
-.lang-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-.lang-seg .lang-btn {
-  padding: 6px 14px; border: none; background: var(--surface);
-  color: var(--text-muted); font-size: var(--fs-sm); cursor: pointer;
+/* 语言分段器 (通用卡): 三个端名一段。
+ *
+ * 2026-10-16 重做: 上一版是三个紧贴的按钮 (相邻边框连成一道排线), 选中态
+ * 只有一层软底, 用户反馈不好看。现在是一块"轨道 + 选中块"的分段控件:
+ *   - 轨道 = --surface-2 凹面 + 细线, 内边距 4px; 三档等宽 (flex: 1 1 0),
+ *     控件宽度不随端名长短摇晃;
+ *   - 未选中 = ghost 按钮 (透明底), 悬停才浮出 --surface-3;
+ *   - 选中 = 全局既有的"选中"语言 (--accent-soft 底 + --accent-line 细线 +
+ *     --accent-ink 文字, 600 字重) —— 与侧栏当前课程 / 课表当前月份 /
+ *     设置页导航同一套取值, 不新造第二套选中样式。
+ * 用到的 token 组合都已在审计的 WCAG 30 对里逐对实算 (--accent-ink /
+ * --accent-soft、--text-muted / --surface-2)。 */
+.lang-seg {
+  display: flex; flex-wrap: wrap; width: 100%; max-width: 420px;
+  gap: 4px; padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
 }
-.lang-seg .lang-btn + .lang-btn { border-left: 1px solid var(--border); }
-.lang-seg .lang-btn:hover { background: var(--surface-2); color: var(--text); }
-.lang-seg .lang-btn.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+.lang-seg .lang-btn {
+  flex: 1 1 0; min-width: 0;
+  padding: 7px var(--sp-3);
+  border: 1px solid transparent; border-radius: var(--radius-xs);
+  background: none; color: var(--text-muted);
+  font-size: var(--fs-sm); cursor: pointer;
+}
+.lang-seg .lang-btn:hover { background: var(--surface-3); color: var(--text); }
+.lang-seg .lang-btn.active {
+  background: var(--accent-soft); border-color: var(--accent-line);
+  color: var(--accent-ink); font-weight: 600;
+}
 
 .update-result { margin-top: var(--sp-2); font-size: var(--fs-sm); }
 .update-result a { font-weight: 600; }
@@ -1356,6 +1370,90 @@ details > summary { cursor: pointer; color: var(--text-muted); margin: 6px 0; }
 .km-view-btn { font-variant-numeric: normal; }
 .km-view-btn[aria-pressed="true"] {
   background: var(--accent-soft); border-color: var(--accent-line);
+
+/* ========================================================================
+   右下角更新通知弹窗 (update notification)
+   启动时自动检查；Ignore 抑制至下次重启；Install Now 触发静默安装。
+   ======================================================================== */
+.update-notification {
+  position: fixed;
+  inset-inline-end: var(--sp-5);
+  inset-block-end: var(--sp-5);
+  z-index: 1200;
+  width: min(340px, 92vw);
+  font-family: inherit;
+}
+.update-notification-card {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  padding: var(--sp-4);
+  color: var(--text);
+}
+.update-notification-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.update-notification-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  color: var(--accent-ink);
+}
+.update-notification-title {
+  margin: 0 0 var(--sp-1) 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+.update-notification-desc {
+  margin: 0 0 var(--sp-4) 0;
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+.update-notification-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.update-notification-btn {
+  flex: 1;
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.update-notification-btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.update-notification-btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.update-notification-btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+.update-notification-btn-secondary:hover {
+  background: var(--surface-2);
+}
+.update-notification-status {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* 深色主题: 同一套 token 已由 :root / [data-theme="dark"] 覆写, 此处无需额外规则 */
   color: var(--accent-ink); font-weight: 600;
 }
 

@@ -1270,11 +1270,18 @@ class TestUiContract:
         assert "data-i18n" in source
         assert "绝不" in source
 
-    def test_index_html_declares_the_language_picker(self):
+    def test_topbar_language_picker_is_gone_and_settings_owns_the_switch(self):
+        """顶栏 ``#ui-language`` 选择器已于 2026-10-16 全站删除。
+
+        语言切换的唯一 UI 是设置页的分段器 (``.lang-seg`` 按钮, 经
+        ``data-lang`` 委托到 ``setLang``)。这里把两侧都钉住: 顶栏没有选择
+        器了, 设置页的分段器还在。
+        """
         html = read_asset("index.html")
-        assert 'id="ui-language"' in html
-        for code in UI_LANGUAGES:
-            assert f'value="{code}"' in html
+        assert 'id="ui-language"' not in html
+        settings = read_asset("views/settings.js")
+        assert "lang-seg" in settings
+        assert "data-lang=" in settings
 
     def test_index_html_does_not_expose_student_pages(self):
         html = read_asset("index.html")
@@ -1433,32 +1440,35 @@ class TestI18nTables:
         for status in PATH_STATUSES:
             assert f"status.{status}" in tables["zh"]
 
-    def test_ui_language_picker_matches_the_service_whitelist(self):
+    def test_ui_language_lists_match_the_service_whitelist(self):
         """界面语言清单在**三个**地方各有一份, 必须逐项一致。
 
-        后端白名单 (``UI_LANGUAGES``) / ``index.html`` 的选择器选项 /
-        ``app.js`` 的 ``UI_LANGUAGES`` —— 三者不一致的后果不是"多一个选项":
+        后端白名单 (``UI_LANGUAGES``) / ``app.js`` 的 ``UI_LANGUAGES`` /
+        设置页分段器的三个语言按钮 (``settings.js`` —— index.html 的顶栏
+        选择器已随控件删除, 2026-10-16)。三者不一致的后果不是"多一个选项":
         前端会接受一种后端不认的语言, 而 ``normalize_language()`` 会抛
         ``InvalidInputError``, 用户看到错误页, 却从没选过那种语言。
 
         原断言只数了 ``<option>`` 的**个数** —— 把某个选项的值从 ``zh`` 改成
-        ``en``（个数不变）也能通过。这里改成比对**取值**, 并把前端那份清单也
-        纳进来 (它此前完全没有守卫)。
+        ``en``（个数不变）也能通过; 这里比对**取值**, 来源从 HTML 换成
+        settings.js 的语言按钮清单 (顶栏选择器删除后, 那三个按钮就是前端
+        唯一的语言 UI 真源)。
         """
         assert tuple(UI_LANGUAGES) == ("es", "ca", "zh")
         expected = set(UI_LANGUAGES)
-
-        html = read_asset("index.html")
-        picker = html[html.index('id="ui-language"'):]
-        picker = picker[: picker.index("</select>")]
-        values = set(re.findall(r'<option value="([^"]*)"', picker))
-        assert values == expected, (values, expected)
 
         js = read_asset("app.js")
         match = re.search(r"const UI_LANGUAGES = \[([^\]]*)\]", js)
         assert match, "app.js 里找不到 UI_LANGUAGES"
         frontend = set(re.findall(r"'([^']*)'", match.group(1)))
         assert frontend == expected, (frontend, expected)
+
+        settings = read_asset("views/settings.js")
+        match = re.search(
+            r"\['([a-z]+)', '([a-z]+)', '([a-z]+)'\]\.map", settings)
+        assert match, "settings.js 里找不到语言按钮清单"
+        buttons = set(match.groups())
+        assert buttons == expected, (buttons, expected)
 
     def test_the_stored_language_is_validated_before_use(self):
         """``ca.lang`` 是**存储值**, 不是既成事实 —— 用之前必须校验。
@@ -1468,8 +1478,8 @@ class TestI18nTables:
         ``state.lang`` 会是一个非法值, 而它会被
         1. 原样发给后端 (``?lang=<非法值>``) —— ``normalize_language()`` 抛
            ``InvalidInputError``, 用户看到一个他从没选过的语言的错误页;
-        2. 原样赋给语言选择器 —— 没有匹配项时浏览器显示第一项, 于是
-           "选择器显示的语言"只是**碰巧**等于 ``t()`` 回落的中文。
+        2. 原样参与设置页分段器的选中判断 —— 没有匹配项时三个按钮都不高亮,
+           于是"分段器显示的语言"只是**碰巧**等于 ``t()`` 回落的中文。
 
         ``setLang()`` 一直有校验, 初始读取此前没有。
         """

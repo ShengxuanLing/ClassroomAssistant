@@ -61,14 +61,16 @@ FIXED_TIME = "2026-01-01T00:00:00+00:00"
 
 #: 仍有课程标题 / 面包屑的页面, 以及它们各自的函数头。
 #: 学生列表 / 详情页面已删除, 不再属于课程标题清单。
-#: 2026-09-22 (任务书 §3): 概览默认是全部课程聚合页, 单课程标题随 scope 筛选
-#: 视图移到了 pageDashboardCourseBody (渲染体与取数分离的同一处拆分)。
+#: 2026-09-22 (任务书 §3): 概览默认是全部课程聚合页; 单课程标题当时在 scope
+#: 筛选视图里 (pageDashboardCourseBody)。
+#: 2026-10-16: 顶栏查看范围选择器与 scope 一并删除, pageDashboardCourseBody
+#: 只作为"课程列表未加载"的兜底渲染体存在, 它已不再渲染任何课程标题 ——
+#: 从清单移除; 概览页 (聚合口径) 本来就没有课程标题。
 #: 2026-10-12 (TASK-105): ``pageKnowledge`` 已薄壳化 —— 它不再自己渲染课程标题,
 #: 而是把 ``requireCourse()`` 的结果交给共享的 ``kmOpenCourse()`` 去开知识地图页。
 #: 课程标题从那页的 ``kmPaint()`` 经 ``courseLabel(KM_STATE.courseId)`` 产出,
 #: 由 ``test_the_knowledge_map_heading_goes_through_the_shared_helper`` 单独盯住。
 COURSE_LABEL_PAGES = (
-    "function pageDashboardCourseBody(",
     "async function pageLearn(",
     "async function pageReview(",
     "async function pageMaterials(",
@@ -419,7 +421,7 @@ class TestCourseNameIsShownInsteadOfItsId:
             assert course_id_text_offenders(shape) == [], shape
 
     def test_every_course_heading_goes_through_the_shared_helper(self):
-        """7 处标题 / 面包屑全部走 ``courseLabel()``, 没有一处漏掉。"""
+        """仍在渲染课程标题的 6 处页面全部走 ``courseLabel()``, 没有一处漏掉。"""
         source = read_asset("app.js")
         for header in COURSE_LABEL_PAGES:
             body = function_body(source, header)
@@ -448,14 +450,16 @@ class TestCourseNameIsShownInsteadOfItsId:
         下限是**实测值**: 2026-09-21 删掉课程复习中心页 (``pageCourseReview``)、
         之后删掉学生列表 / 详情页 —— 课程标题清单剩 7 项。2026-10-12 (TASK-105)
         ``pageKnowledge`` 薄壳化后进 ``#/knowledge`` 就是知识地图页, 它的标题
-        从 ``kmPaint()`` 出 —— 清单因此再少一项, 阈值由 8 实测降为 7, 覆盖由
+        从 ``kmPaint()`` 出 —— 清单因此再少一项 (阈值 8→7), 覆盖由
         ``test_the_knowledge_map_heading_goes_through_the_shared_helper`` 接手。
+        2026-10-16: 概览页的 scope 筛选视图删除, ``pageDashboardCourseBody``
+        不再渲染课程标题 —— 清单再少一项, 阈值实测降为 6。
         这条是 ``test_every_course_heading_goes_through_the_shared_helper``
         之外的冗余网 —— 那个测试只覆盖清单里的页面, 这条盯的是"总数没有悄悄变少"。
         """
         source = strip_js_comments(read_asset("app.js"))
         assert source.count("function courseLabel(") == 1
-        assert source.count("esc(courseLabel(courseId))") >= 7
+        assert source.count("esc(courseLabel(courseId))") >= 6
 
 
     def test_the_course_identity_string_has_exactly_one_producer(self):
@@ -509,8 +513,8 @@ class TestTheSidebarShowsTheCodeNotTheId:
         body = function_body(read_asset("app.js"), "function courseListHtml(courses) {")
         assert "esc(course.code)" in body
         # 2026-09-22 解耦: 哈希多了一个属性位 (data-course-switch, 点击委托的
-        # 取值处) —— 仍不是文案。用与切换器测试同一套属性感知的判据, 而不是
-        # 字面量 "esc(course.course_id) 不出现" (那个一刀切连属性位一起杀)。
+        # 取值处) —— 仍不是文案。用属性感知的判据 (course_id_text_offenders),
+        # 而不是字面量 "esc(course.course_id) 不出现" (那个一刀切连属性位一起杀)。
         assert course_id_text_offenders(body) == []
 
     def test_the_code_line_is_omitted_when_the_course_has_no_code(self):
@@ -530,13 +534,15 @@ class TestTheSidebarShowsTheCodeNotTheId:
         assert "data-course-switch" in body
         assert course_id_text_offenders(body) == []
 
-    def test_the_switcher_falls_back_to_the_code_not_the_id(self):
-        body = function_body(
-            read_asset("app.js"), "function renderCourseSwitcher(courses) {"
-        )
-        assert "esc(course.name || course.code || '')" in body
-        #: 判据直接复用在函数体上: 属性值里的 course_id (value=…) 允许, 文案位置不许。
-        assert course_id_text_offenders(body) == []
+    def test_the_topbar_switcher_no_longer_exists(self):
+        """顶栏切换器 (及其 name/code 兜底选项) 已于 2026-10-16 全站删除。
+
+        覆盖点没有消失: "名称缺失时退回代码、绝不显示哈希" 这条规则现在由
+        侧边栏课程项 (上面三条用例) 与 courseLabel() 的统一兜底承担 ——
+        顶栏那份实现连同控件一起移除, 不再存在第二份渲染路径。
+        """
+        source = read_asset("app.js")
+        assert "renderCourseSwitcher" not in source
 
     def test_the_id_can_only_reach_the_screen_through_the_one_helper(self):
         """全文件只有 ``courseLabel()`` 允许把 id 当最后手段。

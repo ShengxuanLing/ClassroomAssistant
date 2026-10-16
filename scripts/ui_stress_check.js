@@ -51,6 +51,9 @@ const WEB_FILES = [
   'views/exercises.js',
   'views/mistakes.js',
   'views/review-pack.js',
+  // TASK-111 加了设置页, 这里漏了一次 —— 与 index.html 的清单对齐由
+  // tests/test_web_source_manifest.py 机械守着 (它就是这么红起来的)。
+  'views/settings.js',
 ];
 
 const WEB_SOURCES = WEB_FILES.map((rel) => ({

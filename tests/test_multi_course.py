@@ -1107,10 +1107,18 @@ class TestUi:
     def test_shell_has_a_my_courses_nav_entry(self):
         assert 'href="#/courses"' in _index_html()
 
-    def test_shell_has_the_course_switcher(self):
+    def test_shell_no_longer_has_the_topbar_pickers(self):
+        """顶栏课程/语言两个 <select> 已于 2026-10-16 全站删除 (用户要求)。
+
+        课程切换的唯一 UI 是侧栏课程列表 (见 test_sidebar_marks_switch_links),
+        语言切换的唯一 UI 是设置页分段器 (settings.js 的 .lang-seg)。
+        这里把"删掉"本身钉住, 防止回归时又加回来。
+        """
         html = _index_html()
-        assert 'id="course-switch"' in html
-        assert 'data-i18n="mc.switch"' in html
+        assert 'id="course-switch"' not in html
+        assert 'id="ui-language"' not in html
+        assert 'data-i18n="mc.switch"' not in html
+        assert 'data-i18n="ui.language"' not in html
 
     def test_router_handles_the_courses_index(self):
         js = _app_js()
@@ -1127,33 +1135,26 @@ class TestUi:
         """选择规则必须在后端 —— 前端不自己写第二遍。"""
         assert "api('/course-selection'" in _app_js()
 
-    def test_switcher_persists_the_choice(self):
+    def test_topbar_switcher_renderer_is_gone(self):
+        """顶栏切换器的渲染与接线代码已随控件一起删除 (2026-10-16)。"""
         js = _app_js()
-        assert "function renderCourseSwitcher" in js
-        assert "setCourse(courseId)" in js
-        assert "__courseSwitchWired" in js
+        assert "renderCourseSwitcher" not in js
+        assert "__courseSwitchWired" not in js
+        assert "setCourse(courseId)" in js  # 上下文入口本身仍在 (switchCourse 调它)
 
-    def test_switcher_delegates_to_switch_course(self):
-        """切换器只换课程上下文, 不再无条件跳课程详情 (2026-09-22 解耦)。
+    def test_switch_course_stays_the_single_context_entry(self):
+        """课程上下文切换的唯一入口仍是 ``switchCourse()``, 不再无条件跳详情。
 
-        根因: change 处理器原来是 ``setCourse()`` + ``location.hash =
-        '#/courses/<id>'`` —— 在 11 个顶层功能页换课都会被踢到课程详情。
-        现在它只调 ``switchCourse()`` (去留由当前路由决定); 课程详情族的
-        换 URL 收口在 ``switchCourse()`` 内部, 与修复前同为 ``location.hash
-        =`` (push 语义不变)。
+        根因: 侧边栏原来是直链 ``#/courses/<id>``, 顶栏切换器 (2026-10-16 已
+        全站删除) 原来是 ``setCourse()`` + ``location.hash = '#/courses/<id>'``
+        —— 在 11 个顶层功能页换课都会被踢到课程详情。现在它只调
+        ``switchCourse()`` (去留由当前路由决定); 课程详情族的换 URL 收口在
+        ``switchCourse()`` 内部 (``location.hash =`` push 语义不变), 实际
+        调用者只剩侧栏点击委托。
         """
         js = _app_js()
         assert "async function switchCourse(courseId)" in js
         assert "switchCourse(courseId)" in js
-        handler = re.search(
-            r"picker\.addEventListener\('change', \(\) => \{(.*?)\}\);",
-            js, re.S,
-        )
-        assert handler, "顶栏切换器的 change 处理器找不到了"
-        body = handler.group(1)
-        assert "switchCourse(courseId)" in body, body
-        assert "window.location.hash" not in body, body
-        assert "setCourse(courseId)" not in body, body
 
     def test_sidebar_marks_switch_links(self):
         """侧边栏课程项带 ``data-course-switch``, 由文档级委托拦截。
@@ -1174,10 +1175,6 @@ class TestUi:
         tests/test_web_ui_invariants.py 逐条求值守着, 这里只锁住构造点还在。
         """
         assert "'#/courses/' + encodeURIComponent(courseId)" in _app_js()
-
-    def test_switcher_is_cleared_when_there_are_no_courses(self):
-        js = _app_js()
-        assert js.count("renderCourseSwitcher([])") >= 2
 
     def test_page_marks_the_current_course(self):
         js = _app_js()
@@ -1278,14 +1275,14 @@ class TestUi:
         assert "window.localStorage.setItem('ca.course', courseId)" in js
 
     def test_set_course_repaints_the_current_course_chrome(self):
-        """``setCourse()`` 必须重绘侧边栏高亮与顶栏切换器。
+        """``setCourse()`` 必须重绘侧边栏高亮 (2026-10-16 起唯一显示面)。
 
         回归的根因: ``route()`` 的顺序是 ``loadSidebar()`` -> ``pageXxx()``,
         而课程页要到**渲染完之后**才从路由里拿到 course_id 并 ``setCourse()``。
         如果它不重绘, 用户点开 B 课看到的就是"主视图是 B, 左侧高亮的却是 A"。
 
         真实行为由 ``scripts/ui_render_check.js`` 的
-        "当前课程的三处显示必须同源" 一组用例在 Node + DOM 桩里执行验证;
+        "当前课程的显示必须同源" 一组用例在 Node + DOM 桩里执行验证;
         这里只锁住结构, 防止有人把那次重绘删掉。
         """
         js = _app_js()
@@ -1306,8 +1303,9 @@ class TestUi:
         """路由里的 course_id 必须先确认存在, 才认作"当前课程"。
 
         手输错 / 失效书签 / 课程被删之后的深链都会给出不存在的 id。直接提交的
-        后果: 侧边栏没有任何高亮、顶栏切换器退回显示第一项 (显示的又不是"当前
-        课程"), 且脏 id 被持久化, 此后每个页面都 404 —— 用户被卡住。
+        后果: 侧边栏没有任何高亮, 且脏 id 被持久化, 此后每个页面都 404 ——
+        用户被卡住。(2026-10-16: 顶栏切换器已删除, 原来还有一条"切换器退回
+        显示第一项"的后果随之消失。)
 
         真实行为由 ``scripts/ui_render_check.js`` 的
         "路由里的 course_id 不存在时, 不得污染当前课程" 一组用例执行验证;

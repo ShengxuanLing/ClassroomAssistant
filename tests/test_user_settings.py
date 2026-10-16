@@ -33,7 +33,13 @@ from src.application.autostart import (
 )
 from src.application.errors import ConfigurationError
 from src.application.settings import SETTINGS_FILENAME, SettingsStore, UserSettings
-from src.application.update_check import check_for_update, parse_version
+from src.application.update_check import (
+    MAX_INSTALLER_BYTES,
+    check_for_update,
+    install_supported,
+    install_update,
+    parse_version,
+)
 from src.application.workspace import Workspace
 
 
@@ -246,6 +252,160 @@ class TestUpdateCheck:
         assert parse_version("v1.10.0") > parse_version("v1.9.0")
         assert parse_version("1.2.0-beta") == (1, 2, 0)
         assert parse_version("garbage") == ()
+
+
+# ======================================================================
+# install_update (自动安装: 门禁 / 白名单 / https / 体积 / 失败清理)
+# ======================================================================
+
+
+def _release_with_assets(tag="v9.9.9", assets=()):
+    return json.dumps(
+        {
+            "tag_name": tag,
+            "html_url": "https://github.com/x/y/releases/tag/" + tag,
+            "assets": list(assets),
+        }
+    ).encode("utf-8")
+
+
+class TestInstallUpdate:
+    """``install_update`` 的失败面 —— 全部经注入桩, 绝不真下载 / 真启动 / 真退出。
+
+    成功路径必须注入 ``launcher`` / ``shutdown``: 默认实现会 ``Popen`` 一个
+    安装包并 ``os._exit(0)`` —— 在测试进程里触发等于自杀。
+    """
+
+    @staticmethod
+    def _enabled(monkeypatch):
+        monkeypatch.setattr(
+            "src.application.update_check.install_supported", lambda: True
+        )
+
+    @staticmethod
+    def _assets(name="Loomind-9.9.9-Setup.exe", url=None):
+        return [
+            {
+                "name": name,
+                "browser_download_url": url or ("https://x/" + name),
+            }
+        ]
+
+    def test_rejected_when_not_frozen_windows(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.application.update_check.install_supported", lambda: False
+        )
+        result = install_update("9.9.9", "https://github.com/x/y")
+        assert result["ok"] is False
+        assert "frozen" in result["error"]
+
+    def test_picks_whitelisted_https_installer(self, monkeypatch):
+        self._enabled(monkeypatch)
+        assets = self._assets()
+        assets.append(
+            {"name": "source.zip", "browser_download_url": "https://x/source.zip"}
+        )
+        launched, shut = [], []
+        result = install_update(
+            "9.9.9",
+            "https://github.com/x/y",
+            fetch=lambda url, timeout: (
+                _release_with_assets(assets=assets)
+                if url.endswith("/latest")
+                else b"INSTALLER-BYTES"
+            ),
+            launcher=launched.append,
+            shutdown=shut.append,
+        )
+        assert result["ok"] is True
+        assert result["installer"] == "Loomind-9.9.9-Setup.exe"
+        assert launched == [result["path"]]
+        assert len(shut) == 1  # 延迟退出被触发 (桩, 不会真的退出)
+        os.unlink(result["path"])  # 桩不消费安装包, 自行清理临时文件
+
+    def test_no_matching_asset_is_reported(self, monkeypatch):
+        self._enabled(monkeypatch)
+        result = install_update(
+            "9.9.9",
+            "https://github.com/x/y",
+            fetch=lambda url, timeout: _release_with_assets(
+                assets=[{"name": "source.zip", "browser_download_url": "https://x/s.zip"}]
+            ),
+            launcher=lambda p: None,
+            shutdown=lambda d: None,
+        )
+        assert result["ok"] is False
+        assert "no matching installer" in result["error"]
+
+    def test_plain_http_asset_is_ignored(self, monkeypatch):
+        self._enabled(monkeypatch)
+        result = install_update(
+            "9.9.9",
+            "https://github.com/x/y",
+            fetch=lambda url, timeout: _release_with_assets(
+                assets=self._assets(url="http://x/Loomind-9.9.9-Setup.exe")
+            ),
+            launcher=lambda p: None,
+            shutdown=lambda d: None,
+        )
+        assert result["ok"] is False
+        assert "no matching installer" in result["error"]
+
+    def test_oversized_installer_is_rejected(self, monkeypatch):
+        self._enabled(monkeypatch)
+        monkeypatch.setattr("src.application.update_check.MAX_INSTALLER_BYTES", 8)
+        result = install_update(
+            "9.9.9",
+            "https://github.com/x/y",
+            fetch=lambda url, timeout: (
+                _release_with_assets(assets=self._assets())
+                if url.endswith("/latest")
+                else b"WAY-TOO-LONG-PAYLOAD"
+            ),
+            launcher=lambda p: None,
+            shutdown=lambda d: None,
+        )
+        assert result["ok"] is False
+        assert "too large" in result["error"]
+
+    def test_network_failure_never_raises(self, monkeypatch):
+        self._enabled(monkeypatch)
+
+        def boom(url, timeout):
+            raise TimeoutError("slow")
+
+        result = install_update(
+            "9.9.9", "https://github.com/x/y", fetch=boom, launcher=lambda p: None
+        )
+        assert result["ok"] is False
+        assert "slow" in result["error"]
+
+    def test_launcher_failure_reports_and_cleans_up(self, monkeypatch):
+        self._enabled(monkeypatch)
+        paths = []
+
+        def failing_launcher(path):
+            paths.append(path)
+            raise OSError("cannot start installer")
+
+        result = install_update(
+            "9.9.9",
+            "https://github.com/x/y",
+            fetch=lambda url, timeout: (
+                _release_with_assets(assets=self._assets())
+                if url.endswith("/latest")
+                else b"INSTALLER-BYTES"
+            ),
+            launcher=failing_launcher,
+            shutdown=lambda d: None,
+        )
+        assert result["ok"] is False
+        assert "cannot start installer" in result["error"]
+        # 启动失败时临时安装包必须被清掉, 不在 temp 留垃圾。
+        assert paths and not os.path.exists(paths[0])
+
+    def test_max_installer_bytes_is_a_sane_cap(self):
+        assert MAX_INSTALLER_BYTES == 1024 * 1024 * 1024
 
 
 # ======================================================================

@@ -9214,3 +9214,237 @@ Known limitation (explicit, not hidden)
 - 开机自启命令写入的是**当前运行方式**（dev: python 模块；安装版: exe 托盘），
   中途切换运行方式后需要重新开一次开关。
 - 语言设置仍是浏览器侧（localStorage），多浏览器不同步 —— 有意设计。
+
+
+## 顶栏课程/语言选择器全站删除 + 设置页收窄：语言分段器重做 — 2026-10-16
+
+Goal
+----------------------------------------
+用户截图圈出设置页（`#/settings`）两组问题：**红框** —— 顶栏「切换课程」与
+「界面语言」两个下拉框、侧栏课程面板；**绿框** —— 通用卡里 中文 / Español /
+Català 三个按钮「不好看」。指令：红框部分删掉，绿框部分优化。
+
+同日第二次决策（最终口径）：红框**不是"设置页隐藏"而是两个 `<select>` 全站
+删除** —— 控制代码、失效的 scope 机制、相关 i18n key / CSS / 守卫 / 测试一并
+清理；侧栏课程面板保留（仍只做设置页隐藏）。
+
+设计取舍
+----------------------------------------
+- **顶栏两个选择器全站删除**（`index.html` 的 `#course-switch` /
+  `#ui-language` 连同 `renderCourseSwitcher` / `__courseSwitchWired` /
+  `.lang-picker` / `.course-picker` 全部移除）。设置页自带语言设置卡，
+  「界面语言」下拉是重复入口；「当前课程」也不是一个设置项，而侧栏课程列表
+  本来就是课程上下文的入口。**语言切换唯一入口 = 设置页分段器**
+  （`data-lang` → `setLang`），**课程上下文唯一入口 = 侧栏课程列表**
+  （`data-course-switch` 点击委托，保留）。
+- **scope 机制随删**：`state.scope` / `setScope()` / `currentScope()` /
+  `isGlobalRoute()` / `hashParts()` / `declareRoute()` / `__activeRoute` 全部
+  删除 —— 它们存在的全部理由就是那个"查看范围"选择器。`route()` 不再声明
+  路由、`switchCourse()` 不再按 scope 早退（命中路由与 `#/settings` 仍落
+  同一个 else 分支，删除前已逐条验证语义等价）。i18n 三语表删孤儿 key
+  `ui.language` / `mc.switch` / `scope.viewAll` / `scope.label`；保留
+  `scope.all`（概览聚合副标题仍用）。概览页与今日页只剩"全部课程"一种口径
+  （`pageToday` 不再发 `?course_id=`）。
+- **侧栏只在设置页隐藏**（保留上一版结论）：课程列表照常由 `loadSidebar()`
+  填充、`loadChrome()` 照常跑，切回别的页面立刻可用；后端 API 一字未动。
+- **实现是「route() 在 `<body>` 上切类 + CSS 按类隐藏」**，加与清同一入口
+  （离开设置页的窗口期不存在）。类必须挂 `<body>`：顶栏与侧栏是 `#view` 的
+  **兄弟节点**，旧代码挂在 `#view` 上选不到它们 —— 那是 TASK-111 留下的
+  **死钩子**（只加不清、且 styles.css 从无规则引用，本轮删除）。
+- **`syncSettingsChrome(on)` 是独立顶层函数，不是 route() 里内联的 if**：
+  `tests/test_web_ui_invariants.py` 把 route() 的 if/else-if 条件链逐条解析
+  成路由谓词，一个非路由 if 会被当成分支。第一版内联写法让
+  `test_every_built_hash_is_routable` / `test_every_static_nav_link_is_routable`
+  当场报红（该解析器「看不懂就报错而不是跳过」正是设计意图）；重构为
+  `route()` 只留一行调用后恢复全绿。**这条失败是被守卫按设计抓出来的，
+  不是守卫写错。**
+- **`.shell` 网格同步收掉侧栏列**（`var(--rail-w) minmax(0, 1fr)`，与
+  ≤900px 断点同版式）—— 只藏 `.sidebar` 会留一条 250px 空列。
+- **语言分段器重做为目标语言的一个已知语法**（轨道 + 选中块），不新造
+  第二套选中样式：选中态沿用全项目既有取值 `--accent-soft` 底 +
+  `--accent-line` 细线 + `--accent-ink` 文字 + 600 字重（侧栏当前课程 /
+  课表当前月份 / 设置页导航同一套）。上一版三个紧贴按钮的缺陷：相邻边框连
+  成一道排线、选中只有一层软底，**选中态不够像「选中」**。
+
+交付文件
+----------------------------------------
+- `src/web/index.html` —— 删两个 `<label>`（`#course-switch` /
+  `#ui-language`）及旧注释；`topbar-meta` 只剩三个状态 pill。
+- `src/web/app.js` —— 删 `state.scope`；删 `__activeRoute` / `declareRoute`
+  + `isGlobalRoute` / `hashParts` / `currentScope` / `setScope` 整块；删
+  Task 68 整块（`renderCourseSwitcher` + `__courseSwitchWired`）；`route()`
+  去 `declareRoute(...)` 调用；`switchCourse` 去 scope 早退并更新两个
+  docstring（setRouteCourse 三重后果→双重、switchCourse 根因）；`loadSidebar`
+  两处 `renderCourseSwitcher([])` 删除；DOMContentLoaded 去 `#ui-language`
+  接线。新增 `syncSettingsChrome(on)`；`route()` 开头
+  `syncSettingsChrome(parts[0] === 'settings')`。点击委托
+  `a[data-course-switch]` 保留（课程上下文的唯一入口）。
+- `src/web/i18n.js` —— `applyI18n` 的 picker sync 删除；`setLang` 补
+  docstring（唯一入口=设置页分段器）；三表删 `ui.language` / `mc.switch` /
+  `scope.viewAll` / `scope.label`（保留 `scope.all`）。
+- `src/web/views/dashboard.js` —— 全局页唯一"全部课程"口径；`pageToday`
+  去掉 scope 校验与 `?course_id=` 查询；`pageDashboardCourseBody` 去
+  `currentScope()` 副标题分支（`loadCourseDashboard` 作为兜底路径保留）。
+- `src/web/styles.css` —— 删 `.lang-picker` / `.course-picker` 整块；
+  `body.settings-page` 隐藏 `.sidebar` + `.shell` 收列规则保留；
+  `.lang-seg` / `.lang-btn` 分段控件重写（token 组合都已在审计
+  WCAG 对比度表逐对实算内）。
+- `src/web/views/settings.js` —— 删除旧死钩子（`#view` 加类那行）；注释更新。
+- `scripts/ui_audit.js` —— `makeTrackedBody()`（`<body>` 的 classList 从
+  no-op 升为记账 Set）；沙箱 `body` 换用它；新增 7 条断言（4 行为 + 3 CSS
+  前提）；选择器存在性断言替换为删除守卫（骨架 / app.js / CSS / 运行时
+  各一条）；`--preview` 对设置页给 `<body>` 打 `class="settings-page"`。
+- `scripts/ui_render_check.js` —— 沙箱补 `document.body`（记账 classList）；
+  新增 4 条行为断言；scope 筛选块整删，替换为静态删除守卫 + 运行时 guard。
+- `scripts/ui_mutation_check.py` —— +4 变异（侧栏规则丢前提、网格收列、
+  route() 不切类等）；+3 删除守卫变异（回插 `<select id="course-switch">` /
+  回插 `renderCourseSwitcher` 函数 / 回插 `.lang-picker` CSS）；修 3 条失配
+  陈旧变异（见下）。新增 `INDEX` 目标（"html"）。
+- `tests/test_multi_course.py` —— 4 条 switcher 用例改写/删除；`TestUi` 的
+  两个用例改为"顶栏不再有两个选择器"的删除断言。
+- `tests/test_learning_view.py` —— 语言清单三处一致用例改为
+  app.js + settings.js（`.lang-seg` 按钮）比对；index.html 用例改为
+  "无 `#ui-language` + 设置页分段器在"。
+- `tests/test_student_ui.py` —— switcher 兜底用例改为删除守卫；
+  `COURSE_LABEL_PAGES` 移除 `pageDashboardCourseBody`（阈值 7→6）。
+- `scripts/ui_stress_check.js` —— `WEB_FILES` 补 `views/settings.js`
+  （TASK-111 遗留，见下）。
+
+发现并修复的真实缺陷
+----------------------------------------
+1. **预览快照把 `<body>` 替换进了 CSS 注释**：`--preview` 注入横幅用裸
+   `'<body>'` 做 `replace`，而内联 CSS 排在骨架前面、注释里恰好写了
+   `<body>` 字样 —— 横幅注入进 `<style>` 里，body 上什么都不会打（实测
+   踩到）。改为锚定正则 `/(\n\s*)<body>/`。
+2. **`ui_mutation_check.py` 三条陈旧变异让整个脚本永远 exit 1（守卫生锈）**：
+   `.topnav a.active` 早已改名 `.rail-link.active`、深色 `--topbar-bg` 已换成
+   品牌海军蓝、`top: var(--sticky-top)` 从 1 处涨到 3 处 —— 三条补丁全部
+   count=0/3 打偏。修好后 22/22 精准命中。**「守卫生锈」本身就是无声发生的：
+   没人看门禁输出时，一个永远红的守门脚本和没有守门脚本没有区别。**
+3. **`ui_stress_check.js` 的 `WEB_FILES` 漏了 `views/settings.js`**：TASK-111
+   往 index.html 加了 15 个 script，此清单没跟上，`test_web_source_manifest`
+   因此一直是红（本轮 stash 对照实验证明为既有红）。补上后 8 条全绿。
+4. **旧设置页死钩子**：`views/settings.js` 给 `#view` 加 `settings-page` 类，
+   只加不清、且从无 CSS 规则引用 —— 顶栏/侧栏是兄弟节点，选不到。删除。
+
+测试清单（N tests）
+----------------------------------------
+- `ui_audit.js`：716 → **723**（设置页 +7）→ **721 全过**（选择器删除守卫
+  替换存在性断言后净 −2）。
+- `ui_render_check.js`：**317/319**（scope 筛选块整删、替换为删除守卫 +
+  运行时 guard；2 条失败为 2026-09 起记录的既有红，见 Known limitation）。
+- `ui_mutation_check.py`：**24/24 精准报红**（+4 设置页新变异；再 +3 删除
+  守卫变异；3 条陈旧变异修复）。
+- pytest 前端相关子集：`test_web_ui_invariants` + `test_web_ui` +
+  `test_web_source_manifest` **94 passed / 0 failed**；`test_multi_course` +
+  `test_learning_view` + `test_student_ui` **344 passed / 1 failed**（失败 =
+  e2e session picker 既有环境红，见下）；`test_knowledge_density` +
+  `test_course_review` + `test_persistence_layering` **110 passed**；
+  `test_exercise_ui` + `test_review_mode` + `test_task_dock` **265 passed /
+  1 failed + 1 skipped**（失败 = render harness 包装的 2 条既有红）；
+  `test_stress_semester` **61 passed / 1 failed**（失败 = 硬编码
+  `.workbuddy-ai` node 路径环境红；设 `LOOMIND_NODE` 后
+  `TestUiStress` 2 passed —— live server 十页渲染正常）。
+
+真实浏览器验证（开发态服务 + 无头 Edge）
+----------------------------------------
+- 本机 8765 被**安装版 Loomind** 占用并监听（`launcher start` 见到端口占用会
+  deferred 到既有实例 —— 拿它验证会验到旧冻结副本，`app.js` 里查不到本轮
+  新函数；改用 `python -m src.application.cli --port 8790` 起开发态）。
+- `--dump-dom`：`#/settings` → `<body class="settings-page">`（且
+  `settings-layout` / `lang-seg` 均在、无「未找到页面」/「加载中」残留）；
+  `#/` → `<body>`（无类）。两跳均出自真实 HTTP 服务。
+- live 截图 1400px 深色 + 520px：顶栏两个下拉框与侧栏均消失、主区从图标栏
+  右侧开始；分段控件三档等宽铺满卡片、520px 无横向溢出。
+- **删除复核（同日补测）**：两个真实 DOM 快照（`#/` 与 `#/settings`）里
+  **真实 `<select>` 元素 0 个**（`<select` 字样只存在于 HTML 注释）、
+  `id="ui-language"` / `id="course-switch"` 均不存在；`#/` h1=概览、
+  `#/settings` h1=设置；侧栏 5 条 `data-course-switch` 课程链接保留；
+  设置页 `data-lang` 3 个按钮且恰 1 个 `aria-pressed="true"`。
+
+Known limitation (explicit, not hidden)
+----------------------------------------
+- `ui_render_check.js` 2 条既有红不变（`#/students` / `#/courses/<c>/students/<s>`
+  期望重定向、实际「未找到页面」），与 TASK-111 记录同名同位。
+- `test_student_ui.py::TestTheLiveSessionPickerEndToEnd::test_the_live_script_passes`
+  既有环境红不变（e2e 脚本硬编码 `Python/pythoncore-3.14-64/python.exe`，
+  本机该便携解释器目录不存在 → spawn ENOENT）。本机 `python` 由
+  Windows Store 版提供，`run_tests.cmd` 的回落分支可用。
+- 顶栏两个选择器已**彻底删除**（DOM 里不再存在，不存在"隐藏"残留）；
+  剩下的「设置页隐藏」只有侧栏一项，是纯 CSS 的：DOM 里侧栏仍在、
+  `loadSidebar()` 照常填充（有意 —— 不改数据、离开设置页立即恢复；代价是
+  屏幕阅读器仍能摸到被隐藏控件，`display: none` 已使它们不可聚焦，
+  出无障碍树）。
+- `syncSettingsChrome` 依赖 `document.body`（脚本在 body 末尾加载，真实运行
+  必然存在）；审计桩原本没有 `body`，本轮在 `ui_render_check.js` 沙箱补上，
+  并为极旧浏览器路径保留函数内守卫。
+
+
+## Loomind 1.3.1 发布 — 2026-10-16
+
+Goal
+----------------------------------------
+本阶段两块改动收尾发版：① **更新自动安装**（启动时自动检查 → 右下角弹窗 →
+一键静默安装，闭合 2026-10-16 外部审查报告 P1-2「`auto_update_check` 未接线
+启动检查」）；② **顶栏课程/语言选择器全站删除 + 语言分段器重做**（见上一区块）。
+版本 1.3.0 → **1.3.1**。
+
+交付
+----------------------------------------
+- 版本号 14 处：`src/application/workspace.py` / `src/__init__.py` / `tests/__init__.py`
+  / `packaging/installer.iss` / `tests/test_production_gate.py`（2 处）/
+  `tests/test_release_gate.py`（3 处）/ `tests/test_tray.py` / `README.md` /
+  `docs/final_report.md` / `docs/final_persistence_report.md` /
+  `docs/installer-windows.md`；`release-notes.md` 重写为 v1.3.1。
+- 产物 `dist/installer/Loomind-1.3.1-Setup.exe`，**111,271,821 字节 (106.1 MB)**，
+  构建 4m41s。
+- SHA-256 `ba1b97e25fc27b54e7ce8e2ef4dbba93a2830274a343ef89a34c50dfae28e51c`。
+- 冻结常量核对：`CArchiveReader` → `PYZ.pyz` → `ZlibArchiveReader` →
+  `extract("src.application.workspace").co_consts` 含 `'Loomind'` / `'1.3.1'`；
+  `extract("src")` → `'1.3.1'` ✓。
+
+发现并修复的真实缺陷（本轮）
+----------------------------------------
+1. **`/api/settings/update-install` 调用不存在的 `error()` 函数**
+   （`src/api/endpoints.py`）：全仓只有这一处用 `error(...)`，`responses.py` 只
+   导出 `success` / `failure` ⇒ 开发模式（非 frozen）下点「立即安装」必然
+   `NameError` → HTTP **500**。该端点此前从未被真正调用过。修法：与同函数内
+   "no update available" 分支同口径，返回 200 + `{"ok": false, "error": ...}`
+   （「不支持自动安装」是正常状态，不是客户端输入错误）。**被
+   `test_release_gate.py::TestApiContractGate::
+   test_every_write_route_rejects_a_malformed_body_without_a_500` 抓住** ——
+   该门禁扫的是**路由表**，新端点自动进入射程，不依赖有人记得给它写用例。
+2. **`update_check.py` 的 `__all__` 列了不存在的 `select_installer_asset`** ——
+   `from ... import *` 会直接 `AttributeError`；另 `import sys` / `Mapping` 是
+   未使用导入。已清（`__all__` 7 项全部有定义）。
+3. **docstring 声称 `fetch` / `launcher` / `shutdown` 全部可注入，实现只做了
+   `fetch`** —— 补上 `launcher` / `shutdown` 可注入参数（默认实现
+   `_default_launcher` / `_default_shutdown`）。这不是洁癖：默认实现会
+   `Popen` 安装包并 `os._exit(0)`，不注入就无法测试成功路径（在测试进程里
+   触发等于自杀）。
+
+测试
+----------------------------------------
+- `tests/test_user_settings.py` 新增 8 条 `TestInstallUpdate`（43 → **51 passed**）：
+  门禁拒绝 / 白名单命中 / 无匹配附件 / 非 https 拒绝 / 超体积拒收 / 网络失败不抛 /
+  启动失败清理临时文件 / 上限值。全部经注入桩，**绝不真下载 / 真启动 / 真退出**。
+- `test_release_gate` + `test_production_gate` + `test_tray` + `test_user_settings`：
+  **171 passed / 1 failed**（失败 = 既有红，见下）。
+- 前端子集 `test_multi_course` + `test_learning_view` + `test_student_ui` +
+  `test_web_ui_invariants` + `test_web_ui`：**430 passed / 1 failed**（失败 = 既有
+  e2e 环境红，见下）。
+- `ui_audit.js` **721 全过**；`ui_render_check.js` **317/319**（2 条既有红）。
+
+Known limitation (explicit, not hidden)
+----------------------------------------
+- `test_production_gate.py::TestBuildHygiene::test_no_stray_python_file_outside_src_and_tests`
+  既有红：`fix_ex.py`（2026-10-13 误提交）+ `temp_appjs.py`（另一 agent 未跟踪）。
+  本轮未动 —— 前者是已提交的历史遗留（移除属"删除原有死代码"，需用户拍板），
+  后者是别人的在制品。
+- `test_student_ui.py::TestTheLiveSessionPickerEndToEnd::test_the_live_script_passes`
+  既有环境红（e2e 脚本硬编码便携解释器路径 → spawn ENOENT）。
+- `ui_render_check.js` 2 条既有红（`#/students` / `#/courses/<c>/students/<s>`
+  期望重定向、实际「未找到页面」）。
+- 自动安装的**端到端**路径（真的下载 100MB 安装包 → 静默安装 → 自退）未在真机
+  跑过 —— 单测覆盖的是注入桩下的逻辑分支。真机验证需要一份「比当前版本更新」
+  的 release 存在，而本版刚发布时 `releases/latest` 就是它自己。

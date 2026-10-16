@@ -34,12 +34,17 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CSS = ROOT / "src" / "web" / "styles.css"
 APP = ROOT / "src" / "web" / "app.js"
+INDEX = ROOT / "src" / "web" / "index.html"
 
 #: (说明, 目标 "css"/"app", 正则, 替换, 预期报红的断言名片段)
 MUTATIONS: list[tuple[str, str, str, str, str]] = [
-    ("删掉顶栏当前分区样式", "css",
-     r"\.topnav a\.active \{[\s\S]*?\n\}\n", "",
-     "css styles the active top-nav item"),
+    # (2026-10-16 修: 前三版重构把选择器/配色换过名字与取值, 此三条已失配 ——
+    #  `.topnav a.active` 改名 `.rail-link.active` (`topnav` 改成图标栏)、深色
+    #  --topbar-bg 换成品牌海军蓝、`top: var(--sticky-top)` 从 1 处涨到 3 处。
+    #  失配会把整个脚本拖成永远 exit 1, "守卫生锈"本身就是这样无声发生的。)
+    ("删掉图标栏当前分区高亮", "css",
+     r"\.rail-link\.active \{ background: var\(--accent-soft\); color: var\(--accent-ink\); \}\n\.rail-link\.active:hover \{ background: var\(--accent-soft\); color: var\(--accent-ink\); \}\n", "",
+     "css styles the active rail item"),
     ("给卡片加回投影", "css",
      r"(\.card \{\n  background: var\(--surface\);\n  border: 1px solid var\(--border\);\n  border-radius: var\(--radius\);\n)",
      r"\1  box-shadow: var(--shadow-1);\n",
@@ -64,7 +69,7 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
      "table headers render as a tinted band"),
     ("删掉一个动效 token", "css", r"  --dur-2: 180ms;\n", "",
      "css defines the design-token layer"),
-    ("深色主题漏掉顶栏底色", "css", r"    --topbar-bg: rgba\(16, 19, 23, 0\.84\);\n", "",
+    ("深色主题漏掉顶栏底色", "css", r"    --topbar-bg: rgba\(10, 15, 30, 0\.84\);\n", "",
      "css keeps a full dark-theme token block"),
     ("引用一个拼错的变量", "css",
      r"(\.muted \{ color: var\(--text-muted\); \})",
@@ -77,10 +82,42 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
     ("弹窗撤掉最高层级投影", "css",
      r"(\.modal \{[\s\S]*?)  box-shadow: var\(--shadow-3\);\n", r"\1",
      "overlays carry the top elevation token"),
-    ("CSS 侧把 sticky 偏移写死", "css", r"top: var\(--sticky-top\);", "top: 72px;",
+    ("CSS 侧把 sticky 偏移写死", "css",
+     r"(\.sidebar \{\n  background: var\(--surface\);\n  border: 1px solid var\(--border\);\n  border-radius: var\(--radius\);\n  padding: var\(--sp-4\);\n  position: sticky; )top: var\(--sticky-top\);",
+     r"\1top: 72px;",
      "css drives the sticky sidebar offset"),
     ("app.js 不再写 --topbar-h", "app", r"setProperty\('--topbar-h'", "setProperty('--topbar-height'",
      "app.js writes the measured header height"),
+    # 设置页隐藏侧栏 (2026-10-16): route() 切类 + CSS 规则, 删任何一半都必须
+    # 是红灯 —— 只删 CSS 是静默无效 (类挂上没人引用), 只删 JS 则规则永不匹配。
+    # 第二条变异的重点是把"前提"去掉 (规则仍在, 但不再限定设置页) —— 那会把
+    # 所有页面的侧栏一起删掉, 而"存在 display:none 规则"这类宽松断言照样绿。
+    #
+    # 顶栏课程/语言选择器同日**全站删除**: 三条"删除守卫"变异 —— 把删掉的
+    # 任何一件放回源码 (HTML 控件 / JS 渲染器 / CSS 标签壳), 对应守卫必须各自
+    # 报红。原"设置页隐藏选择器规则"变异随规则本身删除而退役。
+    ("重新加回课程切换器控件", "html",
+     r'(<span id="pill-health")',
+     r'<select id="course-switch"></select>\n\1',
+     "course switcher is gone from index.html"),
+    ("重新加回切换器渲染函数", "app",
+     r"(function courseListHtml\(courses\) \{)",
+     r"function renderCourseSwitcher(courses) {}\n\1",
+     "course switcher renderer is gone from app.js"),
+    ("重新加回选择器标签壳样式", "css",
+     r"(\.topbar-meta \.pill \{[^}]*\})",
+     r"\1\n.lang-picker { display: flex; }",
+     "the picker label-shell CSS rules are gone"),
+    ("设置页侧栏隐藏规则丢掉前提", "css",
+     r"body\.settings-page \.sidebar \{ display: none; \}", ".sidebar { display: none; }",
+     "css hides the course sidebar on the settings page"),
+    ("设置页网格不再收列", "css",
+     r"body\.settings-page \.shell \{ grid-template-columns: var\(--rail-w\) minmax\(0, 1fr\); \}",
+     "body.settings-page .shell { }",
+     "css collapses the shell to rail + main"),
+    ("route() 不再挂 settings-page 类", "app",
+     r"document\.body\.classList\.toggle\('settings-page', Boolean\(on\)\);", "void 0;",
+     "route() stamps body.settings-page on the settings page"),
     # 对比度: 两张主题表必须**各自**求值 —— 只改浅色值却让深色也报红, 就说明
     # 深色表读到的是浅色的 token (写第一版时真的出现过这个缺陷)。
     ("浅色 accent-ink 退回原值", "css", r"  --accent-ink: #245ac7;", "  --accent-ink: #2c68df;",
@@ -110,7 +147,7 @@ def failures_of(out: str) -> list[str]:
 
 
 def main() -> int:
-    targets = {"css": CSS, "app": APP}
+    targets = {"css": CSS, "app": APP, "html": INDEX}
     originals = {key: path.read_text(encoding="utf-8") for key, path in targets.items()}
 
     out, code = run_audit()

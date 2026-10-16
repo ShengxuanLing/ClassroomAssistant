@@ -70,6 +70,12 @@ const I18N = {
     'settings.system.updateAvailable': '有新版本：{v}',
     'settings.system.gotoDownload': '前往下载',
     'settings.system.checkFailed': '检查失败：{e}',
+    'settings.system.updateNotify.title': '发现新版本',
+    'settings.system.updateNotify.body': 'Loomind 有新版本 {v}，是否立即安装？',
+    'settings.system.updateNotify.install': '立即安装',
+    'settings.system.updateNotify.ignore': '忽略（下次重启前不再提醒）',
+    'settings.system.updateNotify.installing': '正在下载安装程序，稍后将自动重启…',
+    'settings.system.updateNotify.installed': '安装完成，请重启应用以使用新版本。',
     'settings.saveFailed': '设置保存失败',
     'nav.exercises': '练习',
     'nav.reviewPack': '复习包',
@@ -91,7 +97,6 @@ const I18N = {
     'pack.digestFor': '材料摘要',
     'sidebar.note': '数据来源：本机 /api。所有原文（西语 / 加泰语 / 中文）按原样显示，不做改写。',
     'footer.trace': 'Evidence-first · 所有知识点均可追溯至原始材料',
-    'ui.language': '界面语言',
     'common.none': '无', 'common.actions': '操作', 'common.status': '状态',
     'common.score': '分数', 'common.answer': '作答', 'common.exercise': '练习',
     'common.knowledgePoint': '知识点', 'common.evidence': '证据',
@@ -444,7 +449,6 @@ const I18N = {
     'mc.subtitle': '每门课单独统计后并列展示，不做合并、不做排序推荐',
     'mc.noRanking': '课程顺序是 course_id 的字典序，只是为了让结果稳定；它不是“该先学哪门”。',
     'mc.empty': '还没有任何课程。',
-    'mc.switch': '切换课程',
     'mc.current': '当前课程',
     'mc.open': '打开这门课',
     'mc.totals': '全部课程合计',
@@ -466,9 +470,8 @@ const I18N = {
     'mc.count.exercises': '练习',
     'mc.count.answers': '作答',
     // ---- 2026-09-22: 全局页 (概览/今日 = 全部课程口径) ----
-    'scope.label': '查看范围',
+    // (scope.label / scope.viewAll 随顶栏查看范围选择器的删除一并移除, 2026-10-16)
     'scope.all': '全部课程',
-    'scope.viewAll': '查看全部课程',
     'ov.coursesUnit': '门课程',
     'ov.overview': '课程概况',
     'ov.summaryNote': '每个数字都来自各课程单独查询后的真实汇总，不做估计、不做抽查。',
@@ -698,6 +701,12 @@ const I18N = {
     'settings.system.updateAvailable': 'Hay una versión nueva: {v}',
     'settings.system.gotoDownload': 'Ir a la descarga',
     'settings.system.checkFailed': 'Error al comprobar: {e}',
+    'settings.system.updateNotify.title': 'Nueva versión disponible',
+    'settings.system.updateNotify.body': 'Hay una versión nueva de Loomind: {v}. ¿Instalarla ahora?',
+    'settings.system.updateNotify.install': 'Instalar ahora',
+    'settings.system.updateNotify.ignore': 'Ignorar (no volver a avisar hasta reiniciar)',
+    'settings.system.updateNotify.installing': 'Descargando el instalador; se reiniciará automáticamente…',
+    'settings.system.updateNotify.installed': 'Instalación completa. Reinicie la aplicación para usar la nueva versión.',
     'settings.saveFailed': 'No se pudo guardar el ajuste',
     'nav.exercises': 'Ejercicios',
     'nav.reviewPack': 'Paquete de repaso',
@@ -719,7 +728,6 @@ const I18N = {
     'pack.digestFor': 'Resumen del material',
     'sidebar.note': 'Datos del /api local. Todo el texto original (español / catalán / chino) se muestra tal cual, sin reescribir.',
     'footer.trace': 'Evidence-first · cada punto de conocimiento es trazable a su material original',
-    'ui.language': 'Idioma de la interfaz',
     'common.none': 'ninguno', 'common.actions': 'Acciones', 'common.status': 'Estado',
     'common.score': 'Puntuación', 'common.answer': 'Respuesta', 'common.exercise': 'Ejercicio',
     'common.knowledgePoint': 'Punto de conocimiento', 'common.evidence': 'Evidencia',
@@ -1068,7 +1076,6 @@ const I18N = {
     'mc.subtitle': 'Cada asignatura se cuenta por separado y se muestra en paralelo; los datos nunca se fusionan entre asignaturas',
     'mc.noRanking': 'El orden es alfabético por course_id, solo para que el resultado sea estable; no indica qué estudiar primero.',
     'mc.empty': 'Todavía no hay asignaturas.',
-    'mc.switch': 'Cambiar de asignatura',
     'mc.current': 'Asignatura actual',
     'mc.open': 'Abrir esta asignatura',
     'mc.totals': 'Total de todas las asignaturas',
@@ -1090,9 +1097,8 @@ const I18N = {
     'mc.count.exercises': 'Ejercicios',
     'mc.count.answers': 'Respuestas',
     // ---- 2026-09-22: páginas globales (Resumen / Hoy = todas las asignaturas) ----
-    'scope.label': 'Ámbito de vista',
+    // (scope.label / scope.viewAll se eliminan junto con el selector de ámbito, 2026-10-16)
     'scope.all': 'Todas las asignaturas',
-    'scope.viewAll': 'Ver todas las asignaturas',
     'ov.coursesUnit': 'asignaturas',
     'ov.overview': 'Panorama de las asignaturas',
     'ov.summaryNote': 'Cada número suma consultas reales por asignatura; nada estimado, nada inventado.',
@@ -1307,12 +1313,17 @@ const I18N = {
     'settings.system.updateAvailable': 'Hi ha una versió nova: {v}',
     'settings.system.gotoDownload': 'Anar a la descàrrega',
     'settings.system.checkFailed': 'Error en comprovar: {e}',
+    'settings.system.updateNotify.title': 'Nova versió disponible',
+    'settings.system.updateNotify.body': "Hi ha una versió nova de Loomind: {v}. ¿Instal·lar-la ara?",
+    'settings.system.updateNotify.install': 'Instal·lar ara',
+    'settings.system.updateNotify.ignore': 'Ignorar (no tornar a avisar fins a reiniciar)',
+    'settings.system.updateNotify.installing': 'Descarregant l\'instal·lador; es reiniciarà automàticament…',
+    'settings.system.updateNotify.installed': 'Instal·lació completa. Reinicia l\'aplicació per usar la nova versió.',
     'settings.saveFailed': "No s'ha pogut desar l'ajust",
     'nav.exercises': 'Exercicis',
     'nav.reviewPack': 'Paquet de repàs',
     'sidebar.note': 'Dades de l\'/api local. Tot el text original (castellà / català / xinès) es mostra tal com és, sense reescriure.',
     'footer.trace': 'Evidence-first · cada punt de coneixement és traçable al material original',
-    'ui.language': 'Idioma de la interfície',
     'common.none': 'cap', 'common.actions': 'Accions', 'common.status': 'Estat',
     'common.score': 'Puntuació', 'common.answer': 'Resposta', 'common.exercise': 'Exercici',
     'common.knowledgePoint': 'Punt de coneixement', 'common.evidence': 'Evidència',
@@ -1661,7 +1672,6 @@ const I18N = {
     'mc.subtitle': 'Cada assignatura es compta per separat i es mostra en paral·lel; les dades mai es fusionen entre assignatures',
     'mc.noRanking': 'L\'ordre és alfabètic per course_id, només perquè el resultat sigui estable; no indica què estudiar primer.',
     'mc.empty': 'Encara no hi ha assignatures.',
-    'mc.switch': 'Canvia d\'assignatura',
     'mc.current': 'Assignatura actual',
     'mc.open': 'Obre aquesta assignatura',
     'mc.totals': 'Total de totes les assignatures',
@@ -1683,9 +1693,8 @@ const I18N = {
     'mc.count.exercises': 'Exercicis',
     'mc.count.answers': 'Respostes',
     // ---- 2026-09-22: pàgines globals (Resum / Avui = totes les assignatures) ----
-    'scope.label': 'Àmbit de vista',
+    // (scope.label / scope.viewAll s'eliminen amb el selector d'àmbit, 2026-10-16)
     'scope.all': 'Totes les assignatures',
-    'scope.viewAll': 'Veure totes les assignatures',
     'ov.coursesUnit': 'assignatures',
     'ov.overview': 'Panorama de les assignatures',
     'ov.summaryNote': 'Cada nombre suma consultes reals per assignatura; res estimat, res inventat.',
@@ -2337,11 +2346,13 @@ function applyI18n() {
     node.setAttribute('aria-label', t(node.getAttribute('data-i18n-aria-label')));
   });
   document.documentElement.lang = state.lang === 'zh' ? 'zh-CN' : state.lang;
-  const picker = document.getElementById('ui-language');
-  if (picker && picker.value !== state.lang) picker.value = state.lang;
 }
 
-
+/**
+ * 界面语言。**唯一**入口是设置页的分段器 (settings.js 的 .lang-seg 经
+ * data-lang 委托到这里 + route() 重绘); 顶栏的 #ui-language 选择器于
+ * 2026-10-16 全站删除。
+ */
 function setLang(lang) {
   state.lang = UI_LANGUAGES.indexOf(lang) >= 0 ? lang : 'zh';
   window.localStorage.setItem('ca.lang', state.lang);
@@ -2353,7 +2364,7 @@ function setLang(lang) {
  * 它同时负责三件事, 缺一就会出现"选中的课和高亮的课不是同一门":
  *   1. 内存状态 state.courseId
  *   2. 持久化 ca.course (刷新 / 重启后由 /api/course-selection 判定是否还成立)
- *   3. 重绘"当前课程"的两处显示 (侧边栏高亮 + 顶栏切换器)
+ *   3. 重绘"当前课程"的显示 (侧边栏高亮)
  *
  * 第 3 条不是装饰。route() 的顺序是 loadSidebar() -> pageXxx(), 而课程页 /
  * 课堂页这些页面函数会在**渲染完之后**才拿到路由里的 course_id 并调用

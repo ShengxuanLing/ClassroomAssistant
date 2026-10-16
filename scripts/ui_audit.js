@@ -1822,6 +1822,29 @@ function makeElement(id) {
   };
 }
 
+/**
+ * `<body>` 专用桩: makeElement 的 classList 是 no-op, 用来断言"这个类有没有
+ * 被加上"永远成立。设置页的 body.settings-page 是本审计里唯一一个**由 route()
+ * 动态挂到 body 上**的状态类, 所以只给 body 升级为记账实现 (`__classes` 是
+ * 可观察的 Set)。其余元素的 no-op 桩维持原样 —— 本审计不依赖它们的类状态。
+ */
+function makeTrackedBody() {
+  const classes = new Set();
+  const body = makeElement('body');
+  body.__classes = classes;
+  body.classList = {
+    add: (name) => classes.add(name),
+    remove: (name) => classes.delete(name),
+    contains: (name) => classes.has(name),
+    toggle: (name, force) => {
+      const on = force === undefined ? !classes.has(name) : Boolean(force);
+      if (on) classes.add(name); else classes.delete(name);
+      return on;
+    },
+  };
+  return body;
+}
+
 function makeSandbox(routeTable, lang) {
   const elements = new Map();
   const storage = new Map();
@@ -1846,7 +1869,10 @@ function makeSandbox(routeTable, lang) {
     documentElement: makeElement('html'),
     // TASK-80: toast() 往 document.body 挂节点。没有 body 时任何**失败路径**
     // (点翻译失败 toast) 在审计里直接抛 TypeError —— 等于失败路径根本没法测。
-    body: makeElement('body'),
+    // 2026-10-16: body 的 classList 从 no-op 升为**记账桩** —— route() 在
+    // <body> 上切 settings-page (设置页隐藏课程上下文), no-op 会让这条行为
+    // 的断言永远"成立", 等于没测。
+    body: makeTrackedBody(),
   };
 
   const window = {
@@ -2088,9 +2114,19 @@ async function preview(lang, outfile, pageName) {
     '<main id="view" class="view" tabindex="-1">' + viewHtml + '</main>'
   );
   // 顶部标注: 这是快照, 不是运行中的应用。
+  //
+  // 设置页的快照必须带上 <body class="settings-page"> —— 真实运行时这个类由
+  // app.js 的 route() 挂上 (隐藏侧栏课程面板), 而预览只调页面函数、不跑
+  // route()。不带的话快照会把用户已经看不到的控件画出来, 视觉复审会对着
+  // 错版式改 CSS。
+  const isSettings = String(named.name || '').indexOf('settings') === 0;
+  // 必须锚定**真的 body 标签** (前面必须换行 + 缩进), 不能用裸 '<body>':
+  // 上面的 CSS 注释里也写了 "<body>" 这个词, 而内联 CSS 排在骨架前面 ——
+  // 裸匹配会把横幅注入到 <style> 的注释里, body 上什么都不会变 (实测踩到)。
   shell = shell.replace(
-    '<body>',
-    '<body>\n  <div class="banner" style="background:var(--info-soft);color:var(--info)">' +
+    /(\n\s*)<body>/,
+    '$1<body' + (isSettings ? ' class="settings-page"' : '') + '>\n' +
+    '  <div class="banner" style="background:var(--info-soft);color:var(--info)">' +
     '静态渲染快照（非实时应用）· 页面：' + named.name + ' · 语言：' + lang +
     ' · 由 scripts/ui_audit.js --preview 生成</div>'
   );
@@ -2140,9 +2176,8 @@ async function audit() {
       check('page ' + page.name + ' renders in ' + lang, out.length > 0);
       if (lang !== 'zh') {
         // 语言分段器 (.lang-seg) 里的端名 (中文 / Español / Català) 是**专有
-        // 名词**: 每种语言用其自己的名字显示, 三语界面下都一样, 不做翻译 ——
-        // 与 index.html 里 #ui-language 的 <option> 同口径 (那三个 <option>
-        // 写在静态骨架里, 本来就不在这条检查的视野内)。扫描前先摘掉这一段,
+        // 名词**: 每种语言用其自己的名字显示, 三语界面下都一样, 不做翻译
+        // (与已删除的顶栏 #ui-language <option> 同口径)。扫描前先摘掉这一段,
         // 否则"中文"这个端名会被误报成未翻译文案。
         const scanned = out.replace(/<div class="lang-seg">[\s\S]*?<\/div>/g, '');
         const leaked = firstCjk(scanned);
@@ -2613,7 +2648,14 @@ async function audit() {
       !/Traceback|at Object\.|File "/.test(emptyOut)
     );
 
-    // 63.15: 单课程过滤时不再重复显示课程名 (course_id 已固定), 但仍成卡。
+    // 2026-10-16: 今日页的单课程筛选随顶栏查看范围选择器一并删除 —— 现在只有
+    // "全部课程"一种口径, 请求**不带** course_id。把这两点钉住:
+    //   * 静态: pageToday 的 /student-today 调用没有 query 参数;
+    //   * 行为: 即使响应里带着 course_id (旧快照), 页面也照常渲染课堂卡,
+    //     且不再出现已删除的"查看全部课程"出口。
+    check('today page requests all courses with no course_id filter',
+      viewSource('views/dashboard.js').indexOf("api('/student-today')") >= 0 &&
+      viewSource('views/dashboard.js').indexOf("api('/student-today', { query") < 0);
     const single = routes();
     single['/api/student-today'] = Object.assign(studentToday(), {
       course_id: COURSE_ID,
@@ -2624,21 +2666,13 @@ async function audit() {
     });
     const singleSandbox = await renderPage(pageByName('today'), single, 'zh');
     const singleOut = html(singleSandbox);
-    const singleRegion = (() => {
-      const at = singleOut.indexOf('<h2>今天的课程</h2>');
-      const to = singleOut.indexOf('<h2>待审核</h2>', at);
-      return at >= 0 && to > at ? singleOut.slice(at, to) : '';
-    })();
-    check('single-course today renders', singleOut.length > 0);
-    check('single-course today uses the same card row without a group heading',
-      singleRegion.includes('<div class="session-day-card">')
-        && singleRegion.includes('<div class="session-row">')
-        && !singleRegion.includes('today-group'),
-      singleRegion.slice(0, 200));
-    check('single-course today keeps its process-session button',
-      singleRegion.includes('data-action="process-session"')
-        && singleRegion.includes('data-course="' + COURSE_ID + '"')
-        && singleRegion.includes('data-session="' + SESSION_ID + '"'));
+    check('today still renders the class cards regardless of payload course_id',
+      singleOut.includes('<div class="session-day-card">')
+        && singleOut.includes('<div class="session-row">')
+        && singleOut.includes('data-action="process-session"'),
+      singleOut.slice(0, 200));
+    check('today no longer renders the removed view-all escape link',
+      !singleOut.includes('查看全部课程') && !singleOut.includes('scope.viewAll'));
 
     // es/ca 的今日课程输出不得泄漏中文界面文案；夹具标题/教师/教室均 ASCII。
     for (const lang of ['es', 'ca']) {
@@ -2907,19 +2941,28 @@ async function audit() {
         !/[\u4e00-\u9fff]/.test(localizedOut), 'CJK leaked: ' + firstCjk(localizedOut));
     }
 
-    // 顶栏课程切换器: 必须存在, 且切换后写入 localStorage (重启后一致)
+    // 顶栏课程/语言选择器已于 2026-10-16 全站删除 (用户要求): 把"删掉"本身
+    // 钉住 —— 骨架里不再有 #course-switch / #ui-language, app.js 里不再有
+    // 渲染 / 接线它们的代码。课程切换的入口是侧栏课程列表 (上面那节),
+    // 界面语言的入口是设置页分段器 (settings.js)。
     {
-      const table = routes();
-      const switchSandbox = await loadApp(table, 'zh');
+      check('course switcher is gone from index.html',
+        INDEX_HTML.indexOf('course-switch') < 0);
+      check('language picker is gone from index.html',
+        INDEX_HTML.indexOf('ui-language') < 0);
+      check('course switcher renderer is gone from app.js',
+        APP_JS.indexOf('renderCourseSwitcher') < 0);
+      check('course switcher wiring is gone from app.js',
+        APP_JS.indexOf('__courseSwitchWired') < 0);
+      // 注释里允许保留历史说明, 但**规则**必须真的没有了 (剥注释再扫)。
+      const cssCode = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+      check('the picker label-shell CSS rules are gone',
+        cssCode.indexOf('.lang-picker') < 0 && cssCode.indexOf('.course-picker') < 0,
+        'lang-picker/course-picker 规则残留');
+      const switchSandbox = await loadApp(routes(), 'zh');
       await switchSandbox.loadSidebar();
-      const picker = switchSandbox.__elements.get('course-switch');
-      check('course switcher exists in the chrome', picker !== undefined);
-      if (picker) {
-        check('course switcher lists the courses',
-          picker.innerHTML.includes(COURSE_ID), picker.innerHTML.slice(0, 120));
-        check('course switcher marks the selected course',
-          picker.innerHTML.includes('selected'));
-      }
+      check('no course-switch element is created at runtime',
+        switchSandbox.__elements.get('course-switch') === undefined);
     }
   }
 
@@ -3555,6 +3598,43 @@ async function audit() {
       APP_JS.includes("addEventListener('resize'"));
   }
 
+  // ---- 设置页隐藏侧栏 (2026-10-16) ---------------------------------------
+  //
+  // 需求 (用户截图红框): 设置页不显示侧栏的课程面板。实现横跨两侧 —— route()
+  // 在 <body> 上切 settings-page, CSS 按这个类隐藏 —— 少写一侧就是**静默无效**:
+  //   * 只加 JS 不改 CSS: 类挂上了, 但没有任何规则引用它, 界面一字不变
+  //     (旧实现恰是这个失效方式: 类加在 #view 上、只加不清, 且从无规则引用);
+  //   * 只改 CSS 不切类: 选择器永远不匹配, 同样一字不变。
+  // 所以: 一次真实 route() 的行为断言 (走 settings 加、离开清) + CSS 侧逐条
+  // 静态断言, 且每条规则都必须以 body.settings-page 为前提 —— 写成无条件规则
+  // 会把所有页面的顶栏/侧栏一起删掉, 同一条断言把两边都钉住。
+  {
+    const sandbox = await loadApp(routes(), 'zh');
+    await sandbox.route();               // 初始 '#/' —— 非设置页
+    check('non-settings route has no body.settings-page',
+      !sandbox.document.body.classList.contains('settings-page'));
+
+    sandbox.window.location.hash = '#/settings';
+    await sandbox.route();
+    check('route() stamps body.settings-page on the settings page',
+      sandbox.document.body.classList.contains('settings-page'));
+
+    sandbox.window.location.hash = '#/settings/ai';
+    await sandbox.route();
+    check('settings sub-sections keep body.settings-page',
+      sandbox.document.body.classList.contains('settings-page'));
+
+    sandbox.window.location.hash = '#/knowledge';
+    await sandbox.route();
+    check('leaving settings clears body.settings-page',
+      !sandbox.document.body.classList.contains('settings-page'));
+
+    check('css hides the course sidebar on the settings page',
+      /body\.settings-page\s+\.sidebar\s*\{[^}]*display:\s*none/.test(CSS));
+    check('css collapses the shell to rail + main on the settings page',
+      /body\.settings-page\s+\.shell\s*\{[^}]*grid-template-columns:\s*var\(--rail-w\)\s+minmax\(0,\s*1fr\)/.test(CSS));
+  }
+
   // ---- 静态检查: app.js 写出的每个 class 都在 styles.css 里有定义 ----
   //
   // 用例来源: 一处真实的欠账。Task 41 的 status.md 声明 ".path-chain /
@@ -3689,12 +3769,14 @@ async function audit() {
       helper.courseLabel(null) === '', JSON.stringify(helper.courseLabel(null)));
   }
 
-  // ---- 侧边栏 / 顶栏切换器: 显示课程名与**课程代码**, 不是哈希 ----
+  // ---- 侧边栏: 显示课程名与**课程代码**, 不是哈希 ----
   //
   // 覆盖缺口 (2026-09-20 补上): 上面那节的判据只读 #view, 而侧边栏写在
-  // #course-list、切换器写在 #course-switch —— 两块都在 #view 之外。于是
-  // "侧边栏在每门课下面并列一行 course_id" 在用户眼皮底下活了很久, 却没有任何
-  // 自动化盯它 (docs/status.md 的 Known limitation 里如实记过这个边界)。
+  // #course-list —— 它在 #view 之外。于是"侧边栏在每门课下面并列一行
+  // course_id" 在用户眼皮底下活了很久, 却没有任何自动化盯它
+  // (docs/status.md 的 Known limitation 里如实记过这个边界)。
+  // (2026-10-16: 顶栏 #course-switch 选择器全站删除, 本节原先并列盯它的
+  // 断言随之移除 —— 侧栏是现在唯一的课程切换 UI。)
   {
     const NO_CODE_ID = 'course-2';
     const COURSE_NAME = course().name; // 上一节的 const 是块作用域, 这里要自己取
@@ -3709,9 +3791,7 @@ async function audit() {
     await sandbox.loadSidebar();
 
     const sidebar = sandbox.__elements.get('course-list').innerHTML;
-    const switcher = sandbox.__elements.get('course-switch').innerHTML;
     const sidebarText = sidebar.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-    const switcherText = switcher.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 
     check('sidebar renders every course name',
       sidebarText.indexOf(COURSE_NAME) >= 0 && sidebarText.indexOf('Calculo') >= 0, sidebarText);
@@ -3731,13 +3811,6 @@ async function audit() {
     check('the course with a code renders it as the second line',
       sidebar.indexOf('tiny muted mono">' + course().code + '<') >= 0, sidebar);
 
-    check('switcher renders course names, never the raw id',
-      switcherText.indexOf(COURSE_NAME) >= 0 &&
-      switcherText.indexOf('Calculo') >= 0 &&
-      switcherText.indexOf(COURSE_ID) === -1, switcherText);
-    check('switcher keeps the course id as the option value',
-      switcher.indexOf('value="' + COURSE_ID + '"') >= 0, switcher);
-
     // 换一门课之后重绘的那条路径同样不许把哈希带出来 (syncCourseChrome 会重画)。
     await sandbox.setCourse(NO_CODE_ID);
     const afterText = sandbox.__elements.get('course-list').innerHTML
@@ -3750,9 +3823,10 @@ async function audit() {
 
   // ---- 课程切换不断路由 (2026-09-22 解耦) --------------------------------
   //
-  // 根因见 app.js switchCourse: 侧边栏原来是直链 `#/courses/<id>`, 顶栏切换器
-  // 原来是 `setCourse() + 跳详情` —— 11 个顶层功能页换课都被踢到课程详情。
-  // 真执行的行为回归在 ui_render_check.js; 这里只锁三处接线 (标记 / 委托 /
+  // 根因见 app.js switchCourse: 侧边栏原来是直链 `#/courses/<id>`, 当时的
+  // 顶栏切换器 (2026-10-16 已全站删除) 原来是 `setCourse() + 跳详情` ——
+  // 11 个顶层功能页换课都被踢到课程详情。
+  // 真执行的行为回归在 ui_render_check.js; 这里只锁接线 (标记 / 委托 /
   // 拦截), 防止有人顺手把 data 属性或委托删掉而切课又跳页。
   {
     const table = routes();
@@ -3763,13 +3837,6 @@ async function audit() {
       sidebar.indexOf('data-course-switch="' + COURSE_ID + '"') >= 0, sidebar.slice(0, 300));
     check('switchCourse is exposed as the single switch entry',
       typeof sandbox.switchCourse === 'function', typeof sandbox.switchCourse);
-    const handler = APP_JS.match(/picker\.addEventListener\('change', \(\) => \{([\s\S]*?)\}\);/);
-    check('the course switcher delegates to switchCourse',
-      !!handler && handler[1].indexOf('switchCourse(courseId)') >= 0,
-      handler ? handler[1].slice(0, 200) : 'handler not found');
-    check('the course switcher never navigates on its own',
-      !!handler && handler[1].indexOf('location.hash') === -1,
-      handler ? handler[1].slice(0, 200) : 'handler not found');
     check('plain left-clicks on switch links are intercepted, not navigated',
       APP_JS.indexOf("closest('a[data-course-switch]')") >= 0 &&
       APP_JS.indexOf('event.preventDefault()') >= 0,

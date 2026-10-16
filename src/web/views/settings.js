@@ -5,7 +5,9 @@
  * 卡片, 每卡一个主题, 开关走右侧的 switch。
  *
  * 三个分区:
- *   general —— 界面语言 (浏览器侧状态, 与顶栏选择器同一个 setLang 入口);
+ *   general —— 界面语言 (浏览器侧状态, 经 setLang 入口; 这里是全站唯一的
+ *              语言切换 UI —— 顶栏的 #ui-language 选择器已于 2026-10-16
+ *              全站删除);
  *   ai      —— 本地 AI 开关 + 生效状态 (provider / mode 来自 /api/settings
  *              的 workspace 快照, 不是设置文件里的愿望值);
  *   system  —— 开机自启 (Windows 注册表) + 自动检查更新 + 版本 + 立即检查。
@@ -52,7 +54,7 @@ function settingsNavHtml(section) {
 
 function settingsGeneralHtml(snap) {
   // 语言按钮: 三个端名 (中文 / Español / Català) 是**专有名词**, 三语界面
-  // 下都一样, 不做翻译 (与 index.html 里 #ui-language 的 <option> 同口径)。
+  // 下都一样, 不做翻译 (与已删除的顶栏 #ui-language <option> 同口径)。
   const buttons = ['zh', 'es', 'ca'].map((lang) => {
     const label = lang === 'zh' ? '中文' : (lang === 'es' ? 'Español' : 'Català');
     // active 并进同一个 class 属性 —— 写成第二个 class="..." 是非法 HTML,
@@ -270,7 +272,5 @@ async function pageSettings(section) {
   }
   const active = SETTINGS_SECTIONS.indexOf(section) >= 0 ? section : 'general';
   setView(settingsPageHtml(active, snap));
-  // 设置页不显示课程切换器：在设置页渲染后给 #view 加 settings-page 类。
-  document.getElementById('view').classList.add('settings-page');
   wireSettingsPage(active, snap);
 }

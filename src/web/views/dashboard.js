@@ -2,9 +2,10 @@
  * 概览页 (``#/``) 与考前复习模式 (``#/today``)。
  *
  * 页面层级 (2026-09-22, 任务书 §2):
- *   概览 / 今日 = **全局页** —— 默认按**全部课程**聚合, 不跟随左侧选中的
- *   当前课程; 顶栏选择器在这两页上只是本页的**查看范围**筛选 (state.scope)。
- *   选一门课时给出单课程视图, 回到「全部课程」时恢复聚合。
+ *   概览 / 今日 = **全局页** —— 按**全部课程**聚合, 不跟随左侧选中的当前课程。
+ *   曾经顶栏选择器在这两页上还能把视图筛成某一门课 (state.scope); 该选择器
+ *   与 scope 机制已于 2026-10-16 全站删除 —— 这两页只有"全部课程"一种口径,
+ *   单课程视图走课程页。
  */
 'use strict';
 
@@ -108,52 +109,36 @@ async function loadGlobalDashboard() {
 }
 
 /**
- * 单课程口径的概览页 (state.scope 指到一门课时的筛选视图, 任务书 §6)。
+ * 单课程口径的概览页。顶栏查看范围选择器删除后 (2026-10-16), 这里只剩一条
+ * 进入路径: 课程列表还没加载成功时 pageDashboard 的**兜底** —— 拿"当前课程"
+ * 口径仍能渲染出有意义的一屏, 而不是空白或报错。
  * 同 loadGlobalDashboard: 取数+渲染子步骤, 不带 ``page`` 前缀。
  */
 async function loadCourseDashboard(courseId) {
   const data = await api('/dashboard', { query: { course_id: courseId } });
-  // 注意: 这里**不**回写 setCourse(data.course_id) —— scope 筛选只是本页的
-  // 查看范围 (任务书 §11), 改写 course context 会让"筛过一次概览"悄悄换掉
-  // 之后所有课程页的上下文。
+  // 注意: 这里**不**回写 setCourse(data.course_id) —— 兜底渲染不改变 course
+  // context (用户没有点过任何课程切换)。
   pageDashboardCourseBody(data);
 }
 
 async function pageDashboard() {
   markActiveNav('#/');
-  // 声明当前渲染页 (与 markActiveNav 同一条声明式契约): 顶栏选择器的
-  // 全局页/课程页语义跟这份声明走, 不反解析 hash。若侧边栏在本函数之前
-  // 已按旧语义画过选择器 (renderPage 式的直接调用), 这里按新声明重画一次。
-  declareRoute('#/');
   syncCourseChrome();
-  // 概览是全局页: 默认 "全部课程"; 顶栏选择器 (state.scope) 可以把它筛成
-  // 单课程。scope 指向的课程必须还在课程列表里, 否则回退到全部 —— 失效的
-  // 筛选不应该是"卡住的页面"。
-  const scope = currentScope();
-  if (scope && __courseCache.length &&
-      !__courseCache.some((c) => c.course_id === scope)) {
-    setScope('all');
-  }
-  const effective = currentScope();
-  if (!effective) {
-    if (!__courseCache.length) {
-      // 课程列表还没加载 (loadSidebar 之前 / 失败): 退回"当前课程"口径的旧
-      // 请求, 仍然能渲染出有意义的一屏, 而不是空白或报错。
-      await loadCourseDashboard(state.courseId);
-      return;
-    }
-    await loadGlobalDashboard();
+  // 概览是全局页 (2026-09-22): 聚合**全部课程**, 不跟随左侧当前课程。
+  if (!__courseCache.length) {
+    // 课程列表还没加载 (loadSidebar 之前 / 失败): 退回"当前课程"口径的旧
+    // 请求, 仍然能渲染出有意义的一屏, 而不是空白或报错。
+    await loadCourseDashboard(state.courseId);
     return;
   }
-  await loadCourseDashboard(effective);
+  await loadGlobalDashboard();
 }
 
 /**
  * 单课程概览的**渲染体** (入参 = ``/api/dashboard`` 的响应)。
  *
- * 与取数分开成两个函数: ``pageDashboardCourse()`` 从 scope 筛选进入时,
- * 课程列表已经加载过; 而 route() 首屏 (loadSidebar 之前的兜底) 也可能直接
- * 拿着当前课程进来 —— 两种入口共用同一个渲染, 只有一次取数。
+ * 与取数分开成两个函数: route() 首屏 (loadSidebar 之前的兜底) 拿着当前课程
+ * 直接进来, 与 loadCourseDashboard 共用同一个渲染, 只有一次取数。
  */
 function pageDashboardCourseBody(data) {
   if (!data.courses.length) {
@@ -229,10 +214,6 @@ function pageDashboardCourseBody(data) {
     '<div class="page-head">' +
     '<h1>' + t('概览') + '</h1>' +
     '<p class="subtitle">' +
-    // scope 筛选视图: 明确这是"某一门课"的概览, 并给出回到全部的出口。
-    (currentScope()
-      ? esc(courseLabel(courseId)) + ' · <a href="#/">' + esc(t('scope.viewAll')) + '</a>'
-      : '') +
     esc(data.courses.length) + t(' 门课程 · v') + esc(data.version) + '</p>' +
     '</div>' +
 
@@ -404,21 +385,11 @@ function pageDashboardCourseBody(data) {
 
 async function pageToday() {
   markActiveNav('#/today');
-  // 声明当前渲染页 —— 同 pageDashboard 的理由。
-  declareRoute('#/today');
   syncCourseChrome();
-  // 今日 = 全局页 (2026-09-22): 默认**不传 course_id** —— 后端按全部课程聚合
-  // (student_today_view.py 的既有能力); state.scope 只作本页筛选 (任务书 §11)。
-  // scope 失效 (课程被删) 时归位到全部, 而不是卡在 404 上。
-  const scope = currentScope();
-  if (scope && __courseCache.length &&
-      !__courseCache.some((c) => c.course_id === scope)) {
-    setScope('all');
-  }
-  const effective = currentScope();
-  const query = {};
-  if (effective) query.course_id = effective;
-  const data = await api('/student-today', { query });
+  // 今日 = 全局页 (2026-09-22): **不传 course_id** —— 后端按全部课程聚合
+  // (student_today_view.py 的既有能力)。顶栏查看范围选择器于 2026-10-16
+  // 全站删除, 这一页不再有单课程筛选。
+  const data = await api('/student-today');
 
   const counts = data.counts || {};
   const stat = (label, value) =>
@@ -434,26 +405,21 @@ async function pageToday() {
   const review = data.review || { items: [], total: 0 };
   const reviewItems = review.items || [];
 
-  // 课程上下文: "All Courses" 时每条都显示课程名, 选了课程就不重复显示。
-  // 名称缺失时留空, **不**退回 course_id —— 投影层保证每行都带 course_name
+  // 课程上下文: 全部课程口径 (唯一口径) 下每条都显示课程名。名称缺失时留空,
+  // **不**退回 course_id —— 投影层保证每行都带 course_name
   // (tests/test_student_today.py 有两条契约盯着), 前端不需要那个哈希。
   const courseTag = (row) =>
-    data.course_id
-      ? ''
-      : ' <span class="tiny muted">' + esc(row.course_name || '') + '</span>';
+    ' <span class="tiny muted">' + esc(row.course_name || '') + '</span>';
 
   const kpHref = (courseId, kpId) =>
     '#/courses/' + encodeURIComponent(courseId) + '/knowledge/' + encodeURIComponent(kpId);
 
   // ---- Today's Classes ------------------------------------------------
   //
-  // 全部课程口径下按课程分组 (任务书 §9): 只显示**今天真的有课**的课程,
-  // 没课的课程不出空卡片; 单课程筛选时课程名已在副标题里, 不再重复组头。
+  // 全部课程口径 (唯一口径, 2026-10-16 起) 下按课程分组 (任务书 §9): 只显示
+  // **今天真的有课**的课程, 没课的课程不出空卡片。
   // 分组是**渲染层**对后端已给数据的重组, 不发第二个请求。
   function groupedClassesHtml() {
-    if (data.course_id) {
-      return todayClassesCard(classes);
-    }
     const byCourse = [];
     const index = {};
     for (const row of classes) {
@@ -648,12 +614,7 @@ async function pageToday() {
   setView(
     '<div class="page-head"><h1>' + t('today.studentTitle') + '</h1>' +
     '<p class="subtitle mono small">' + esc(data.date || '—') + ' · ' +
-    // 全部课程 / 单课程筛选: 与真实请求口径一致 (跟着 data.course_id 走,
-    // 而不是猜)。筛选视图给一个回全部的出口。
-    (data.course_id
-      ? esc(courseLabel(data.course_id)) + ' · <a href="#/today">' +
-        esc(t('scope.viewAll')) + '</a>'
-      : esc(t('today.allCourses'))) +
+    esc(t('today.allCourses')) +
     '</p>' +
     // Task 66: 「开始今天的学习」入口。词条 today.startStudy 早在 Task 56
     // 就写好了三语版本 —— 但**从来没有任何渲染代码用过它**, 于是这条

@@ -1104,6 +1104,23 @@ function makeSandbox(routeTable, initialStorage, initialSession) {
     return elements.get(id);
   };
 
+  // route() 会在 <body> 上切 settings-page (设置页隐藏侧栏课程面板,
+  // 2026-10-16)。桩必须**记账** —— 否则这条行为在整个 harness 里是空转,
+  // 与 RAIL 桩"markActiveNav 高亮没被测过"是同一个失效方式。
+  const bodyClasses = new Set();
+  const body = makeElement('body');
+  body.classList = {
+    add: (name) => bodyClasses.add(name),
+    remove: (name) => bodyClasses.delete(name),
+    contains: (name) => bodyClasses.has(name),
+    toggle: (name, force) => {
+      const on = force === undefined ? !bodyClasses.has(name) : Boolean(force);
+      if (on) bodyClasses.add(name); else bodyClasses.delete(name);
+      return on;
+    },
+  };
+  body.__classes = bodyClasses;
+
   const document = {
     getElementById: getElement,
     querySelector: () => null,
@@ -1111,6 +1128,7 @@ function makeSandbox(routeTable, initialStorage, initialSession) {
     addEventListener() {},
     createElement: (tag) => makeElement(tag),
     documentElement: makeElement('html'),
+    body,
   };
 
   const window = {
@@ -1986,12 +2004,13 @@ async function main() {
       !failed.includes('处理成功，但这份材料没有提取到任何内容'));
   }
 
-  // ---- Task 68.1: "当前课程"的三处显示必须同源 ---------------------------
+  // ---- Task 68.1: "当前课程"的显示必须同源 --------------------------------
   //
   // 回归: 用户从 A 课点进 B 课。route() 的顺序是 loadSidebar() -> pageXxx(),
   // 所以侧边栏是先画的 (那时 state.courseId 还是 A), 而课程页要到之后才从
-  // 路由里拿到 B 并 setCourse(B)。如果 setCourse() 不重绘侧边栏与顶栏切换器,
+  // 路由里拿到 B 并 setCourse(B)。如果 setCourse() 不重绘侧边栏,
   // 用户看到的就是"主视图是 B, 左侧高亮的却是 A" —— 选中的课和高亮的课不一致。
+  // (2026-10-16: 顶栏切换器删除后,"同源"的显示面只剩侧边栏。) 
   {
     const OTHER = 'course-other';
     const routes = Object.assign({}, ROUTES, {
@@ -2029,27 +2048,24 @@ async function main() {
     await pageCourse(OTHER);           // 页面函数后到: setCourse(OTHER)
 
     const sidebar = sandbox.document.getElementById('course-list').innerHTML;
-    const switcher = sandbox.document.getElementById('course-switch').innerHTML;
     const viewHtml = html(sandbox);
 
     check('course page renders the course from the route',
       viewHtml.includes('Calculo'));
     check('sidebar highlight follows the course page (not the stale one)',
       /<a class="active" href="#\/courses\/course-other"/.test(sidebar), sidebar);
-    check('top-bar switcher follows the course page (not the stale one)',
-      /<option value="course-other" selected>/.test(switcher), switcher);
     check('exactly one course stays highlighted',
       (sidebar.match(/class="active"/g) || []).length === 1, sidebar);
     check('no raw i18n key leaks after the course switch',
-      !/>(?:course|common|mc)\.[a-z_]+/.test(sidebar + switcher));
+      !/>(?:course|common|mc)\.[a-z_]+/.test(sidebar));
   }
 
   // ---- 路由里的 course_id 不存在时, 不得污染"当前课程" -------------------
   //
   // 手输错、失效的书签、课程被删之后的深链都会给出一个不存在的 id。
   // 直接 setCourse() 把它写进 state / localStorage 的后果是: 侧边栏没有任何
-  // 高亮、顶栏切换器退回显示第一项 (显示的又不是"当前课程"), 且此后每个页面
-  // 都拿着脏 id 去请求 —— 用户被卡在 404 上, 除非重新点一门课。
+  // 高亮, 且此后每个页面都拿着脏 id 去请求 —— 用户被卡在 404 上, 除非重新
+  // 点一门课。(2026-10-16: 顶栏切换器已删除, 原来的第 2 条后果随之消失。)
   {
     const OTHER = 'course-other';
     const routes = Object.assign({}, ROUTES, {
@@ -2089,11 +2105,8 @@ async function main() {
     check('unknown route course still surfaces the backend error', !!threw);
 
     const sidebar = sandbox.document.getElementById('course-list').innerHTML;
-    const switcher = sandbox.document.getElementById('course-switch').innerHTML;
     check('unknown route course keeps the sidebar highlight on the real course',
       /<a class="active" href="#\/courses\/course-test"/.test(sidebar), sidebar);
-    check('unknown route course keeps the switcher on the real course',
-      /<option value="course-test" selected>/.test(switcher), switcher);
     check('unknown route course is not persisted as the current course',
       sandbox.window.localStorage.getItem('ca.course') === COURSE_ID,
       String(sandbox.window.localStorage.getItem('ca.course')));
@@ -2441,9 +2454,9 @@ async function main() {
 
   // ---- 课程切换保持当前页面 (2026-09-22 解耦) ---------------------------
   //
-  // 根因: 侧边栏原来是直链 `#/courses/<id>`, 顶栏切换器原来是
-  // `setCourse() + location.hash = '#/courses/<id>'` —— 于是 11 个顶层功能页
-  // 换课都会被踢到课程详情。这里用两门课证明统一契约:
+  // 根因: 侧边栏原来是直链 `#/courses/<id>`, 当时的顶栏切换器 (2026-10-16
+  // 已全站删除) 原来是 `setCourse() + location.hash = '#/courses/<id>'` ——
+  // 于是 11 个顶层功能页换课都会被踢到课程详情。这里用两门课证明统一契约:
   //   Page = unchanged (hash 一字不动) / Course = changed / Content = changed。
   //
   // 桩按 pathOnly 路由而忽略 query, 所以"只带 query、不带路径"的端点靠改表
@@ -2720,15 +2733,14 @@ async function main() {
     }
 
     // 概览 / 今日 = **全局页** (2026-09-22 任务书 §5/§11/§13): 左侧换课只换
-    // course context, 视图默认仍是"全部课程"聚合, **绝不**变成单课程内容。
+    // course context, 视图仍是"全部课程"聚合, **绝不**变成单课程内容。
     // 路由不动 / 状态与持久化是 GEO / 顶栏高亮仍是本页 —— 这些与课程页一致;
-    // 差别在"视图内容": 课程页换成 GEO 内容, 全局页换课前后都是聚合视图,
-    // 且选择器保持「全部课程」。
+    // 差别在"视图内容": 课程页换成 GEO 内容, 全局页换课前后都是聚合视图。
     for (const [hash, globalMarker, courseMarker] of [
       // 概览: 聚合行里有 GP 课程名; 单课程标记 = 旧 dashboard 夹具的材料名。
       ['#/', 'Gestio de Projectes', 'FILE-GP-dash.pdf'],
-      // 今日: 全局视图显示夹具备注; 单课程标记 = 副标题里的课程名 + 回全部链接
-      // (pageToday 只有 scope 筛选时才把课程名放进副标题)。
+      // 今日: 全局视图显示夹具备注; 单课程标记 = 旧的"课程名 · 回全部链接"
+      // 副标题 (该版式已随 scope 删除, 这里防回归其重新出现)。
       ['#/today', 'NOTE-GP-today', 'Gestio de Projectes · <a'],
     ]) {
       const table = switchTable();
@@ -2757,70 +2769,27 @@ async function main() {
       check(hash + ' switches the course state on a global page',
         grab(sandbox, 'state').courseId === GEO,
         String(grab(sandbox, 'state').courseId));
-      // 选择器语义 = 查看范围: 保持「全部课程」, 不跟随当前课程。
-      const picker = sandbox.document.getElementById('course-switch').innerHTML;
-      check(hash + ' keeps the switcher on all-courses after a course switch',
-        /<option value="" selected>/.test(picker), picker.slice(0, 200));
     }
 
-    // 全局页的单课程筛选 (任务书 §6/§11): 选器选 GEO 后本页显示 GEO 的数据,
-    // 且**不**碰 course context / localStorage —— 筛选不是课程上下文。
-    // 概览的筛选视图给一个回全部的出口 (scope.viewAll 链接)。
+    // 全局页的单课程筛选 (scope 机制) 随顶栏查看范围选择器一并删除 (2026-10-16):
+    // 概览 / 今日只有"全部课程"一种口径, 没有 state.scope / setScope /
+    // currentScope / declareRoute 可用了。防回归: 源码里这些符号一个都不许
+    // 再出现, 且全局页请求不带 course_id 筛选 (pageToday 的行为断言在
+    // ui_audit.js, 这里钉源码与运行时符号)。
+    const scopeCodeOnly = APP_JS
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    const scopeSymbols = ['state.scope', 'setScope', 'currentScope', 'declareRoute',
+      'isGlobalRoute', 'hashParts', '__activeRoute', 'renderCourseSwitcher'];
+    check('the scope machinery is fully removed from the frontend sources',
+      scopeSymbols.every((symbol) => scopeCodeOnly.indexOf(symbol) < 0),
+      scopeSymbols.filter((symbol) => scopeCodeOnly.indexOf(symbol) >= 0).join(', '));
     {
-      const table = switchTable();
-      const sandbox = await loadApp(table, { 'ca.course': GP });
-      const route = grab(sandbox, 'route');
-      const setScope = grab(sandbox, 'setScope');
-      // 桩的 course-selection 判定钉在 GP: 模拟"用户偏好仍是 GP, 筛选只是
-      // 本页查看范围"。否则桩的判定会把上下文翻成 GEO, 掩盖真正的契约。
-      function pinSelectionToGp() {
-        table['/api/course-selection'] = {
-          data: { preferred: GP, course_id: GP, reason: 'preferred', available: [GP, GEO] },
-        };
-      }
-      sandbox.window.location.hash = '#/today';
-      useCourse(table, GEO);
-      pinSelectionToGp();
-      await route();
-      const fetchedBefore = sandbox.__fetched.length;
-      setScope(GEO);
-      await route();
-      const todayFetched = sandbox.__fetched.slice(fetchedBefore).join(' | ');
-      check('#/today scoped filter re-queries with the scoped course',
-        todayFetched.indexOf('course_id=' + GEO) >= 0, todayFetched.slice(0, 300));
-      const filtered = html(sandbox);
-      check('#/today scoped to GEO renders that course\'s data',
-        filtered.indexOf('NOTE-GEO-today') >= 0 &&
-        filtered.indexOf('NOTE-GP-today') === -1,
-        filtered.slice(0, 200));
-      check('#/today scoping does not touch the course context',
-        grab(sandbox, 'state').courseId === GP &&
-        sandbox.window.localStorage.getItem('ca.course') === GP,
-        String(grab(sandbox, 'state').courseId) + ' / ' +
-        String(sandbox.window.localStorage.getItem('ca.course')));
-      // 概览的筛选视图: 数据走单课程 dashboard 接口 (course_id=GEO), 页面
-      // 给出回全部的出口。
-      sandbox.window.location.hash = '#/';
-      useCourse(table, GEO);
-      pinSelectionToGp();
-      await route();
-      setScope(GEO);
-      sandbox.__fetched.length = 0;
-      await route();
-      const dashFetched = sandbox.__fetched.join(' | ');
-      check('#/ scoped dashboard re-queries with the scoped course',
-        dashFetched.indexOf('course_id=' + GEO) >= 0, dashFetched.slice(0, 300));
-      const dashOut = html(sandbox);
-      check('#/ scoped dashboard renders that course\'s dashboard',
-        dashOut.indexOf('FILE-GEO-dash.pdf') >= 0,
-        dashOut.slice(0, 200));
-      check('#/ scoped dashboard offers a way back to all courses',
-        dashOut.indexOf('查看全部课程') >= 0, dashOut.slice(0, 200));
-      check('#/ scoped dashboard does not touch the course context',
-        grab(sandbox, 'state').courseId === GP &&
-        sandbox.window.localStorage.getItem('ca.course') === GP,
-        String(grab(sandbox, 'state').courseId) + ' / ' +
-        String(sandbox.window.localStorage.getItem('ca.course')));
+      const sandbox = await loadApp(switchTable(), { 'ca.course': GP });
+      check('the removed scope entry points do not exist at runtime',
+        typeof sandbox.setScope !== 'function' &&
+        typeof sandbox.currentScope !== 'function' &&
+        typeof sandbox.declareRoute !== 'function');
     }
 
     // 我的课程 (#/courses): 列表页本身渲染两门课, 断言"当前"标记搬到新课程。
@@ -2895,6 +2864,35 @@ async function main() {
         bar.indexOf('href="#/courses/' + GP + '"') >= 0 &&
         bar.indexOf('href="#/courses/' + GEO + '"') >= 0, bar.slice(0, 300));
     }
+  }
+
+  // ------------------------------------------------------- 设置页隐藏侧栏
+  //
+  // 设置页 (2026-10-16 用户截图): 侧栏的课程面板在此页无意义, 由 route() 在
+  // <body> 上切 settings-page、CSS 按类隐藏。(顶栏的两个选择器原先也在这里
+  // 隐藏, 它们已于同日**全站删除**。) 两侧少一侧就是"静默无效": 类挂上没有
+  // 规则引用界面一字不变, 规则在而没有类则永远不匹配 —— 所以这里真实走一遍
+  // route(), 断言类的加与清。
+  {
+    const sandbox = await loadApp(ROUTES);
+    await grab(sandbox, 'route')();
+    check('non-settings routes do not stamp body.settings-page',
+      !sandbox.document.body.classList.contains('settings-page'));
+
+    sandbox.window.location.hash = '#/settings';
+    await grab(sandbox, 'route')();
+    check('route() stamps body.settings-page on the settings page',
+      sandbox.document.body.classList.contains('settings-page'));
+
+    sandbox.window.location.hash = '#/settings/ai';
+    await grab(sandbox, 'route')();
+    check('settings sub-sections keep body.settings-page',
+      sandbox.document.body.classList.contains('settings-page'));
+
+    sandbox.window.location.hash = '#/knowledge';
+    await grab(sandbox, 'route')();
+    check('leaving settings clears body.settings-page',
+      !sandbox.document.body.classList.contains('settings-page'));
   }
 
   // ------------------------------------------------------------- 汇总

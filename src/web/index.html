@@ -25,7 +25,8 @@
     </a>
     <!-- 全局导航在左侧图标栏 (.rail), 不在顶栏 —— Freebuff 式布局:
          图标栏承担"我在哪个模块", 侧栏 (#sidebar) 承担"我在看哪门课",
-         顶栏只留品牌、课程切换器、界面语言与状态 pill。
+         顶栏只留品牌与状态 pill (课程切换在侧栏、界面语言在设置页 —— 顶栏
+         原有的课程/语言两个 <select> 已于 2026-10-16 全站删除)。
          高亮规则不变: 完全由页面函数的 markActiveNav() 设置 (归属表在
          app.js markActiveNav() 上方, 由 test_multi_course 的归属表测试钉住)。
          四个暂不开发的页面 (考前复习 / 复习包 / 练习 / 错题本) 在图标栏底部
@@ -34,28 +35,6 @@
          解禁时: 把对应的 <span class="rail-link nav-disabled"> 换成 <a href>
          即可, 同时恢复 scripts/ui_audit.js 里"恰好四个禁用项"的期望。 -->
     <div class="topbar-meta">
-      <!-- 两个 <select> 都**不再**写 aria-label。
-           它们各自被包在 <label> 里, 而那个 <label> 的文本就是旁边那个
-           data-i18n 的 <span> —— 浏览器/屏幕阅读器据此算出的可访问名已经是
-           翻译过的界面文案。原先硬编码的 aria-label="Course" /
-           "UI language" 反而**覆盖**掉它, 于是 es / ca 界面下屏幕阅读器读出
-           英文 (2026-09-21 修)。顺带满足 WCAG 2.5.3: 可访问名与可见标签一致。 -->
-      <!-- 2026-09-22: 这个 <select> 有两种语义, 由 renderCourseSwitcher()
-           按页面类型重建选项: 在全局页 (概览/今日) 上它是**查看范围**
-           (第一项 = 全部课程, 默认选中, 只筛本页); 在其余页面上它仍是
-           课程上下文切换器。标签用中性的 mc.switch, 两种语义下都读得通。 -->
-      <label class="lang-picker course-picker">
-        <span data-i18n="mc.switch">切换课程</span>
-        <select id="course-switch"></select>
-      </label>
-      <label class="lang-picker">
-        <span data-i18n="ui.language">界面语言</span>
-        <select id="ui-language">
-          <option value="zh">中文</option>
-          <option value="es">Español</option>
-          <option value="ca">Català</option>
-        </select>
-      </label>
       <span id="pill-health" class="pill pill-muted">连接中…</span>
       <span id="pill-modes" class="pill pill-muted"></span>
       <span id="pill-ai" class="pill pill-muted" title="AI">AI …</span>
@@ -110,9 +89,9 @@
       </a>
       <span class="rail-sep" aria-hidden="true"></span>
       <a href="#/settings" class="rail-link" data-i18n-title="nav.settings">
+        <!-- 设置齿轮：带齿外轮廓 + 中心孔，与图2风格一致 -->
         <svg class="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M12 2.5v2.8M12 18.7v2.8M2.5 12h2.8M18.7 12h2.8M5.3 5.3l2 2M16.7 16.7l2 2M18.7 5.3l-2 2M7.3 16.7l-2 2"/>
+          <path d="M19.2 10.27 L22.26 10.28 L22.26 13.72 L19.2 13.73 L18.31 15.87 L20.47 18.04 L18.04 20.47 L15.87 18.31 L13.73 19.2 L13.72 22.26 L10.28 22.26 L10.27 19.2 L8.13 18.31 L5.96 20.47 L3.53 18.04 L5.69 15.87 L4.8 13.73 L1.74 13.72 L1.74 10.28 L4.8 10.27 L5.69 8.13 L3.53 5.96 L5.96 3.53 L8.13 5.69 L10.27 4.8 L10.28 1.74 L13.72 1.74 L13.73 4.8 L15.87 5.69 L18.04 3.53 L20.47 5.96 L18.31 8.13 Z M15.0 12.0 a3.0 3.0 0 1 0 -6.0 0 a3.0 3.0 0 1 0 6.0 0"/>
         </svg>
       </a>
       <span class="rail-sep" aria-hidden="true"></span>
@@ -201,5 +180,24 @@
   <script src="/views/mistakes.js"></script>
   <script src="/views/review-pack.js"></script>
   <script src="/views/settings.js"></script>
+
+  <!-- 右下角更新通知弹窗 (启动时自动检查更新; Ignore 抑制至下次重启; Install Now 静默安装) -->
+  <div id="update-notification" class="update-notification" role="alertdialog" aria-modal="true"
+       aria-labelledby="update-notify-title" aria-describedby="update-notify-desc" style="display:none;">
+    <div class="update-notification-card">
+      <div class="update-notification-header">
+        <svg class="update-notification-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M13 16h-1v-4h1v4zm1.066-9.034l1.22-1.22c-.47-.47-1.12-.59-1.78-.59-1.16 0-2.26.47-3.06 1.27-.79-.79-1.8-1.27-3.06-1.27s-2.27.48-3.06 1.27c-.48.48-.66 1.12-.59 1.78l1.22 1.22c-.47.47-.59 1.12-.59 1.78 0 1.16.47 2.26 1.27 3.06.79.79 1.8 1.27 3.06 1.27s2.27-.48 3.06-1.27c.8-.79 1.27-1.8 1.27-3.06 0-.66-.12-1.31-.59-1.78zM12 4.5c-4.143 0-7.5 3.357-7.5 7.5s3.357 7.5 7.5 7.5 7.5-3.357 7.5-7.5S16.143 4.5 12 4.5z"/>
+        </svg>
+        <h3 id="update-notify-title" class="update-notification-title"></h3>
+      </div>
+      <p id="update-notify-desc" class="update-notification-desc"></p>
+      <div class="update-notification-actions">
+        <button type="button" id="update-notify-ignore" data-action="update-ignore" class="update-notification-btn update-notification-btn-secondary"></button>
+        <button type="button" id="update-notify-install" data-action="update-install" class="update-notification-btn update-notification-btn-primary"></button>
+      </div>
+      <p id="update-notify-status" class="update-notification-status" style="display:none;"></p>
+    </div>
+  </div>
 </body>
 </html>
