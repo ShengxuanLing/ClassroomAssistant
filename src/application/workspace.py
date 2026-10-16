@@ -83,7 +83,7 @@ from src.models import ClassSession, Course
 __all__ = ["CourseContext", "Workspace", "APPLICATION_NAME", "APPLICATION_VERSION"]
 
 APPLICATION_NAME = "Loomind"
-APPLICATION_VERSION = "1.3.0"
+APPLICATION_VERSION = "1.3.1"
 
 #: update_settings 的哨兵: 区分"没传这个字段"与"传了 None"。
 #: ``local_ai_enabled`` 的 None 是有意义的 (显式跟随环境), 不能用 None 当默认。

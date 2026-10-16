@@ -172,7 +172,7 @@ class TestMenu:
         app = TrayApp(base_config, browser_opener=lambda url: None)
         icon = app.build_icon()
         assert icon.name == ICON_NAME
-        assert "1.3.0" in icon.title
+        assert "1.3.1" in icon.title
 
     def test_menu_actions_are_wired_to_callbacks(
         self, fake_pystray, base_config, browser_calls

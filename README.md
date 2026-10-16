@@ -32,7 +32,7 @@
 
 ### Windows 安装包（普通用户，推荐）
 
-不需要 Python。下载 `Loomind-1.3.0-Setup.exe`（随 Release 发布），双击安装：
+不需要 Python。下载 `Loomind-1.3.1-Setup.exe`（随 Release 发布），双击安装：
 
 - 装到当前用户目录 `%LOCALAPPDATA%\Programs\Loomind`，**不弹 UAC、不需要管理员**；
 - 装完在开始菜单出现「Loomind」，双击启动：托盘图标常驻，界面以**独立窗口**打开

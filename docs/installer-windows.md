@@ -1,6 +1,6 @@
 # Windows 安装包使用说明（TASK-110）
 
-适用版本：**1.3.0**（产物：`Loomind-1.3.0-Setup.exe`，106.1 MB，
+适用版本：**1.3.1**（产物：`Loomind-1.3.1-Setup.exe`，106.1 MB，
 Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物）。
 
 ## 下载与安装
