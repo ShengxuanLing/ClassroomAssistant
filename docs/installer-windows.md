@@ -1,6 +1,6 @@
 # Windows 安装包使用说明（TASK-110）
 
-适用版本：**1.3.1**（产物：`Loomind-1.3.1-Setup.exe`，106.1 MB，
+适用版本：**1.3.2**（产物：`Loomind-1.3.2-Setup.exe`，106.1 MB，
 Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物）。
 
 ## 下载与安装
@@ -22,7 +22,12 @@ Inno Setup / LZMA2 压缩，源码来自 PyInstaller onedir 产物）。
 开始菜单启动后：**托盘图标常驻 + 界面自动打开**。默认用 Edge 的 `--app` 模式开一个
 **无地址栏、无标签栏的独立窗口**（任务栏里是独立条目，观感与桌面应用一致）；找不到
 Edge / Chrome 时回退系统默认浏览器。想强制用浏览器标签页，设
-`CLASSROOM_UI_SHELL=browser`（见 [configuration.md](configuration.md) §3）。
+`LOOMIND_UI_SHELL=browser`（见 [configuration.md](configuration.md) §3）。
+
+界面窗口**只有一个**：再点开始菜单或托盘「打开界面」时，若窗口已经开着，就把它还原
+并置于前台，不会又开一个。窗口的位置、尺寸与是否最大化会被记住（落在数据目录的
+`.run/ui-window.json`），下次打开按上次关闭时的样子恢复 —— 上次最大化，这次就是
+最大化；上次半屏，这次还是半屏。
 
 托盘右键菜单：
 

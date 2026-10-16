@@ -38,6 +38,7 @@ import logging
 import os
 import subprocess
 import sys
+from functools import partial
 from typing import Any, Callable, Optional
 
 from src.application.cli import (
@@ -93,10 +94,14 @@ def default_icon_path() -> str:
 # ----------------------------------------------------------------------
 
 
-def open_in_browser(url: str) -> None:
-    """打开界面 (外壳模式见 ``LOOMIND_UI_SHELL``); 失败只记日志, 绝不杀死托盘。"""
+def open_in_browser(url: str, state_dir: Optional[str] = None) -> None:
+    """打开界面 (外壳模式见 ``LOOMIND_UI_SHELL``); 失败只记日志, 绝不杀死托盘。
+
+    ``state_dir`` 给出时, 窗口几何会被记住并在下次打开时恢复 (见
+    ``src.application.ui_window``); 界面已经开着时一律复用那个窗口。
+    """
     try:
-        open_ui_window(url, shell=resolve_ui_shell())
+        open_ui_window(url, shell=resolve_ui_shell(), state_dir=state_dir)
     except Exception as exc:  # noqa: BLE001 - 打不开界面不该让服务停掉
         log_event(
             get_logger("loomind.tray"),
@@ -187,7 +192,11 @@ class TrayApp:
         icon_path: Optional[str] = None,
     ) -> None:
         self.config = config
-        self.browser_opener = browser_opener if browser_opener is not None else open_in_browser
+        self.browser_opener = (
+            browser_opener
+            if browser_opener is not None
+            else partial(open_in_browser, state_dir=config.data_dir)
+        )
         self.directory_opener = (
             directory_opener if directory_opener is not None else open_directory
         )

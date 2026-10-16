@@ -606,6 +606,8 @@ def test_stop_kills_running_service(tmp_path, free_port, capsys) -> None:
 
 def test_main_start_passes_browser_opener(tmp_path, free_port, monkeypatch) -> None:
     """``start`` 子命令必须把真实 opener 传进去, 而不是只留一个没人用的参数。"""
+    import functools
+
     from src.application import launcher as launcher_mod
 
     captured: dict = {}
@@ -622,7 +624,11 @@ def test_main_start_passes_browser_opener(tmp_path, free_port, monkeypatch) -> N
     monkeypatch.setattr(launcher_mod, "Launcher", FakeLauncher)
     code = launcher_main(["start", "--data-dir", str(tmp_path / "d"), "--port", str(free_port)])
     assert code == 0
-    assert captured["browser_opener"] is launcher_mod._open_browser
+    # TASK-112: opener 还要带上数据目录 (窗口几何记忆的落点), 所以是 partial。
+    opener = captured["browser_opener"]
+    assert isinstance(opener, functools.partial)
+    assert opener.func is launcher_mod._open_browser
+    assert "state_dir" in opener.keywords
     assert captured["block"] is True
 
 
@@ -659,6 +665,8 @@ class TestUiShell:
         monkeypatch.setattr(
             launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
         )
+        # 没有已开窗口 (否则走复用分支, 根本不会启动进程)。
+        monkeypatch.setattr(launcher_mod, "find_existing_window", lambda: None)
         monkeypatch.setattr(launcher_mod.subprocess, "Popen", launched.append)
 
         def forbidden(url):  # noqa: ANN001
@@ -696,6 +704,7 @@ class TestUiShell:
         monkeypatch.setattr(
             launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
         )
+        monkeypatch.setattr(launcher_mod, "find_existing_window", lambda: None)
 
         def boom(argv):  # noqa: ANN001
             raise OSError("cannot start shell")
@@ -733,6 +742,7 @@ class TestUiShell:
         monkeypatch.setattr(
             launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
         )
+        monkeypatch.setattr(launcher_mod, "find_existing_window", lambda: None)
         monkeypatch.setattr(launcher_mod.subprocess, "Popen", launched.append)
         monkeypatch.setattr(tray_mod, "resolve_ui_shell", lambda env=None: "app")
 
@@ -740,3 +750,101 @@ class TestUiShell:
 
         assert len(launched) == 1
         assert "--app=" + self.URL in launched[0]
+
+    # -- TASK-112: 复用已有窗口 + 记住窗口几何 ---------------------------
+
+    def test_an_open_window_is_reused_instead_of_opened_again(self, monkeypatch) -> None:
+        """界面已经开着时: 还原 + 置前, **不**再启动第二个窗口。
+
+        实测 (2026-10-16) 同一参数再跑一次 ``--app=`` 会多出一个顶层窗口,
+        这正是"点一次托盘 / 开始菜单就多一个界面"的成因。
+        """
+        from src.application import launcher as launcher_mod
+
+        focused: list[int] = []
+
+        def forbidden(argv):  # noqa: ANN001
+            raise AssertionError("已经开着窗口时不该再启动一个")
+
+        monkeypatch.setattr(
+            launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
+        )
+        monkeypatch.setattr(launcher_mod, "find_existing_window", lambda: 4242)
+        monkeypatch.setattr(launcher_mod, "focus_window", focused.append)
+        monkeypatch.setattr(launcher_mod.subprocess, "Popen", forbidden)
+
+        launcher_mod.open_ui_window(self.URL, shell="app")
+
+        assert focused == [4242]
+
+    def test_reusing_a_window_refreshes_the_remembered_geometry(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """复用**上个进程**留下的窗口前, 把它的当前几何补记一次。"""
+        from src.application import launcher as launcher_mod
+
+        saved: list[dict] = []
+        geometry = {"x": 10, "y": 20, "width": 800, "height": 600, "maximized": False}
+
+        monkeypatch.setattr(
+            launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
+        )
+        monkeypatch.setattr(launcher_mod, "find_existing_window", lambda: 99)
+        monkeypatch.setattr(launcher_mod, "focus_window", lambda hwnd: None)
+        monkeypatch.setattr(launcher_mod, "read_geometry", lambda hwnd: geometry)
+        monkeypatch.setattr(
+            launcher_mod, "save_geometry", lambda path, geo: saved.append(geo)
+        )
+
+        launcher_mod.open_ui_window(self.URL, shell="app", state_dir=str(tmp_path))
+
+        assert saved == [geometry]
+
+    def test_remembered_geometry_is_applied_when_the_window_opens(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """有记忆就按记忆开窗, 并把记忆交给跟踪线程 (最大化状态靠它恢复)。"""
+        from src.application import launcher as launcher_mod
+
+        launched: list[list[str]] = []
+        watched: list[tuple] = []
+        geometry = {"x": 300, "y": 200, "width": 950, "height": 650, "maximized": True}
+
+        monkeypatch.setattr(
+            launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
+        )
+        monkeypatch.setattr(launcher_mod, "find_existing_window", lambda: None)
+        monkeypatch.setattr(launcher_mod, "load_geometry", lambda path: geometry)
+        monkeypatch.setattr(
+            launcher_mod, "watch_window", lambda path, geo=None: watched.append((path, geo))
+        )
+        monkeypatch.setattr(launcher_mod.subprocess, "Popen", launched.append)
+
+        launcher_mod.open_ui_window(self.URL, shell="app", state_dir=str(tmp_path))
+
+        assert len(launched) == 1
+        assert "--window-position=300,200" in launched[0]
+        assert "--window-size=950,650" in launched[0]
+        assert watched == [(launcher_mod.ui_state_path(str(tmp_path)), geometry)]
+
+    def test_geometry_is_left_alone_when_no_data_dir_is_given(self, monkeypatch) -> None:
+        """没给数据目录时仍用默认尺寸, 也不写任何记忆文件。"""
+        from src.application import launcher as launcher_mod
+
+        launched: list[list[str]] = []
+
+        def forbidden(path, geometry=None):  # noqa: ANN001
+            raise AssertionError("没有数据目录就不该写几何记忆")
+
+        monkeypatch.setattr(
+            launcher_mod, "find_app_shell_browser", lambda: r"C:\fake\msedge.exe"
+        )
+        monkeypatch.setattr(launcher_mod, "find_existing_window", lambda: None)
+        monkeypatch.setattr(launcher_mod, "watch_window", forbidden)
+        monkeypatch.setattr(launcher_mod.subprocess, "Popen", launched.append)
+
+        launcher_mod.open_ui_window(self.URL, shell="app")
+
+        assert len(launched) == 1
+        assert any(part.startswith("--window-size=") for part in launched[0])
+        assert not any(part.startswith("--window-position=") for part in launched[0])

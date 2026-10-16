@@ -35,10 +35,20 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Callable, Optional
 
 from src.application.config import AppConfig, UI_SHELL_APP, resolve_ui_shell
 from src.application.errors import ApplicationError, PortInUseError
+from src.application.ui_window import (
+    STATE_FILENAME as UI_STATE_FILENAME,
+    find_existing_window,
+    focus_window,
+    load_geometry,
+    read_geometry,
+    save_geometry,
+    watch_window,
+)
 from src.application.workspace import APPLICATION_NAME, APPLICATION_VERSION
 
 __all__ = [
@@ -54,6 +64,7 @@ __all__ = [
     "validate_environment",
     "find_app_shell_browser",
     "open_ui_window",
+    "ui_state_path",
     "main",
 ]
 
@@ -151,6 +162,15 @@ def _pid_path(data_dir: str) -> str:
 
 def _port_path(data_dir: str) -> str:
     return os.path.join(_run_dir(data_dir), PORT_FILENAME)
+
+
+def ui_state_path(data_dir: str) -> str:
+    """界面窗口几何的记忆文件。
+
+    与 PID / 端口标记同放 ``.run/`` —— 它是运行期元数据, 不是用户设置
+    (``settings.json`` 的键集合被配置门禁逐键钉死, 不该为客户端偏好加键)。
+    """
+    return os.path.join(_run_dir(data_dir), UI_STATE_FILENAME)
 
 
 def write_runtime_markers(data_dir: str, *, pid: int, port: int) -> None:
@@ -619,27 +639,47 @@ def find_app_shell_browser() -> Optional[str]:
     return None
 
 
-def open_ui_window(url: str, shell: str = UI_SHELL_APP) -> None:
+def open_ui_window(
+    url: str, shell: str = UI_SHELL_APP, *, state_dir: Optional[str] = None
+) -> None:
     """把界面打开给用户 —— 尽力而为, 绝不抛异常。
 
     ``shell="app"``: 优先用 Chromium 系浏览器的 ``--app`` 模式。开出来的窗口
     没有地址栏和标签栏, 在任务栏里是独立条目, 观感与桌面应用一致; 找不到浏览器
     或启动失败时**回退系统默认浏览器**。``shell="browser"``: 直接走默认浏览器。
+
+    **界面已经开着就复用**: 把那个窗口还原并置前, 不再新开 —— 实测同一参数
+    再跑一次 ``--app=`` 会多出一个顶层窗口, 于是点一次托盘 / 开始菜单就多一个
+    界面 (TASK-112)。
+
+    ``state_dir`` 给出时, 窗口几何 (位置 / 尺寸 / 是否最大化) 会被记住并在下次
+    打开时恢复: Chromium 自己不记这些, ``--start-maximized`` 对 ``--app`` 窗口
+    也无效 (详见 ``src.application.ui_window``)。
     """
     if shell == UI_SHELL_APP:
         executable = find_app_shell_browser()
         if executable is not None:
-            try:
-                subprocess.Popen(
-                    [
-                        executable,
-                        "--app=" + url,
-                        "--window-size=" + _APP_SHELL_WINDOW_SIZE,
-                    ]
-                )
+            existing = find_existing_window()
+            if existing is not None:
+                _remember_geometry(existing, state_dir)
+                focus_window(existing)
                 return
+            state_path = ui_state_path(state_dir) if state_dir else None
+            geometry = load_geometry(state_path)
+            argv = [executable, "--app=" + url]
+            if geometry is None:
+                argv.append("--window-size=" + _APP_SHELL_WINDOW_SIZE)
+            else:
+                argv.append("--window-position=%d,%d" % (geometry["x"], geometry["y"]))
+                argv.append("--window-size=%d,%d" % (geometry["width"], geometry["height"]))
+            try:
+                subprocess.Popen(argv)
             except OSError:
                 pass  # 启动外壳失败不该让界面打不开 —— 下面还有浏览器兜底
+            else:
+                if state_path:
+                    watch_window(state_path, geometry)
+                return
     import webbrowser
 
     try:
@@ -648,13 +688,26 @@ def open_ui_window(url: str, shell: str = UI_SHELL_APP) -> None:
         pass
 
 
-def _open_browser(url: str) -> None:
+def _remember_geometry(hwnd: int, state_dir: Optional[str]) -> None:
+    """复用已有窗口之前, 顺手把它当前的几何记下来。
+
+    那个窗口可能是**上一个进程**开的 (它的跟踪线程已随进程结束) —— 不补这
+    一次, "用户调好 → 退出应用 → 再打开"就会丢掉最后的状态。
+    """
+    if not state_dir:
+        return
+    geometry = read_geometry(hwnd)
+    if geometry is not None:
+        save_geometry(ui_state_path(state_dir), geometry)
+
+
+def _open_browser(url: str, state_dir: Optional[str] = None) -> None:
     """``launcher start`` 打开界面 (外壳模式见 ``LOOMIND_UI_SHELL``)。
 
     打不开界面 (无图形环境 / 没有可用浏览器) 不该让服务起不来 —— 此时服务
     已经绑定成功, 用户完全可以手动访问提示的地址。
     """
-    open_ui_window(url, shell=resolve_ui_shell())
+    open_ui_window(url, shell=resolve_ui_shell(), state_dir=state_dir)
 
 
 def _emit_environment(report: EnvironmentReport) -> None:
@@ -711,7 +764,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if command == "start":
         try:
-            Launcher(config, browser_opener=_open_browser).start(block=True)
+            Launcher(
+                config,
+                browser_opener=partial(_open_browser, state_dir=config.data_dir),
+            ).start(block=True)
         except PortInUseError as exc:
             _emit_error(str(exc.message))
             return EXIT_STARTUP_ERROR

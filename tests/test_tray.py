@@ -126,7 +126,9 @@ def fake_pystray(monkeypatch):
 def browser_calls(monkeypatch):
     """默认浏览器替换为记录器 (真实桌面路径绝不在测试里被走到)。"""
     calls: list[str] = []
-    monkeypatch.setattr(tray, "open_in_browser", calls.append)
+    monkeypatch.setattr(
+        tray, "open_in_browser", lambda url, state_dir=None: calls.append(url)
+    )
     return calls
 
 
@@ -172,7 +174,7 @@ class TestMenu:
         app = TrayApp(base_config, browser_opener=lambda url: None)
         icon = app.build_icon()
         assert icon.name == ICON_NAME
-        assert "1.3.1" in icon.title
+        assert "1.3.2" in icon.title
 
     def test_menu_actions_are_wired_to_callbacks(
         self, fake_pystray, base_config, browser_calls
@@ -368,7 +370,9 @@ class TestMain:
     ) -> None:
         monkeypatch.setitem(sys.modules, "pystray", None)  # import 立即抛 ImportError
         browser_calls: list[str] = []
-        monkeypatch.setattr(tray, "open_in_browser", browser_calls.append)
+        monkeypatch.setattr(
+            tray, "open_in_browser", lambda url, state_dir=None: browser_calls.append(url)
+        )
 
         data_dir = tmp_path / "loomind-data"
         code = tray.main(
