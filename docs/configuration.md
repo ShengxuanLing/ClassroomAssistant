@@ -9,7 +9,7 @@
 ## 1. 优先级
 
 ```text
-命令行 (--xxx)  >  环境变量 (CLASSROOM_XXX)  >  配置文件 (JSON)  >  默认值
+命令行 (--xxx)  >  环境变量 (LOOMIND_XXX)  >  配置文件 (JSON)  >  默认值
 ```
 
 想确认**最终生效**的配置以及每个值来自哪一层：
@@ -24,7 +24,7 @@ python -m src.application.cli --print-config --json
 ## 2. 配置文件
 
 默认在 `data_dir` 下查找 `loomind.json`。用 `--config PATH` 或
-`CLASSROOM_CONFIG=PATH` 显式指定时，文件**必须存在**，否则报错（不会静默回落到默认值）。
+`LOOMIND_CONFIG=PATH` 显式指定时，文件**必须存在**，否则报错（不会静默回落到默认值）。
 
 ```json
 {
@@ -50,26 +50,26 @@ python -m src.application.cli --print-config --json
 
 | 配置键 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `data_dir` | `CLASSROOM_DATA_DIR` | `<cwd>/loomind-data` | 数据根目录 |
-| `database_path` | `CLASSROOM_DATABASE_PATH` | `<data_dir>/database/loomind.sqlite` | SQLite 路径，**必须位于 `data_dir` 内** |
-| `host` | `CLASSROOM_HOST` | `127.0.0.1` | 监听地址 |
-| `port` | `CLASSROOM_PORT` | `8765` | 监听端口，`0` = 由系统分配 |
-| `max_upload_size` | `CLASSROOM_MAX_UPLOAD_SIZE` | `209715200`（200 MiB） | 单次上传字节上限 |
-| `whisper_model` | `CLASSROOM_WHISPER_MODEL` | `base` | `tiny` / `base` / `small` / `medium` / `large-v1` / `large-v2` / `large-v3` / `distil-large-v3` |
-| `whisper_device` | `CLASSROOM_WHISPER_DEVICE` | `cpu` | `cpu` 或 `cuda` |
-| `whisper_compute_type` | `CLASSROOM_WHISPER_COMPUTE_TYPE` | `int8` | `int8` / `float16` / `float32` / `int8_float16` |
-| `whisper_language` | `CLASSROOM_WHISPER_LANGUAGE` | `null`（自动识别） | ISO 639-1/639-2 语言码 |
-| `asr_mode` | `CLASSROOM_ASR_MODE` | `auto` | `auto` / `real` / `mock` |
-| `ocr_config` | `CLASSROOM_OCR_CONFIG` | `{"kind": "auto"}` | JSON 对象，`kind` 取 `auto` / `local` / `mock` |
-| `log_level` | `CLASSROOM_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
-| `debug` | `CLASSROOM_DEBUG` | `false` | 是否在错误响应里暴露 debug 细节 |
-| `allow_remote` | `CLASSROOM_ALLOW_REMOTE` | `false` | 允许绑定非回环地址 |
+| `data_dir` | `LOOMIND_DATA_DIR` | `<cwd>/loomind-data` | 数据根目录 |
+| `database_path` | `LOOMIND_DATABASE_PATH` | `<data_dir>/database/loomind.sqlite` | SQLite 路径，**必须位于 `data_dir` 内** |
+| `host` | `LOOMIND_HOST` | `127.0.0.1` | 监听地址 |
+| `port` | `LOOMIND_PORT` | `8765` | 监听端口，`0` = 由系统分配 |
+| `max_upload_size` | `LOOMIND_MAX_UPLOAD_SIZE` | `209715200`（200 MiB） | 单次上传字节上限 |
+| `whisper_model` | `LOOMIND_WHISPER_MODEL` | `base` | `tiny` / `base` / `small` / `medium` / `large-v1` / `large-v2` / `large-v3` / `distil-large-v3` |
+| `whisper_device` | `LOOMIND_WHISPER_DEVICE` | `cpu` | `cpu` 或 `cuda` |
+| `whisper_compute_type` | `LOOMIND_WHISPER_COMPUTE_TYPE` | `int8` | `int8` / `float16` / `float32` / `int8_float16` |
+| `whisper_language` | `LOOMIND_WHISPER_LANGUAGE` | `null`（自动识别） | ISO 639-1/639-2 语言码 |
+| `asr_mode` | `LOOMIND_ASR_MODE` | `auto` | `auto` / `real` / `mock` |
+| `ocr_config` | `LOOMIND_OCR_CONFIG` | `{"kind": "auto"}` | JSON 对象，`kind` 取 `auto` / `local` / `mock` |
+| `log_level` | `LOOMIND_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
+| `debug` | `LOOMIND_DEBUG` | `false` | 是否在错误响应里暴露 debug 细节 |
+| `allow_remote` | `LOOMIND_ALLOW_REMOTE` | `false` | 允许绑定非回环地址 |
 
-### 界面外壳：`CLASSROOM_UI_SHELL`（不是配置项）
+### 界面外壳：`LOOMIND_UI_SHELL`（不是配置项）
 
 | 环境变量 | 取值 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `CLASSROOM_UI_SHELL` | `app` / `browser` | `app` | `app`：用 Chromium 系浏览器的 `--app` 模式打开**无地址栏、无标签栏的独立窗口**；`browser`：交给系统默认浏览器开标签页 |
+| `LOOMIND_UI_SHELL` | `app` / `browser` | `app` | `app`：用 Chromium 系浏览器的 `--app` 模式打开**无地址栏、无标签栏的独立窗口**；`browser`：交给系统默认浏览器开标签页 |
 
 它是**运行时开关，不是配置项**：只从进程环境变量读，不进配置文件、不出现在
 `--print-config` 里，也不参与上面那套「命令行 > 环境变量 > 配置文件 > 默认值」的优先级
@@ -80,8 +80,8 @@ Chromium 系浏览器（Edge / Chrome）时，自动回退系统默认浏览器�
 
 ### 未识别的环境变量
 
-出现未知的 `CLASSROOM_*` **不会报错**，但会被记入诊断信息。这样拼错
-`CLASSROOM_PROT` 就不会再悄无声息——你会在 `--print-config` 的输出里看到它。
+出现未知的 `LOOMIND_*` **不会报错**，但会被记入诊断信息。这样拼错
+`LOOMIND_PROT` 就不会再悄无声息——你会在 `--print-config` 的输出里看到它。
 
 ### `--no-debug` 与「没给这个开关」的区别
 
@@ -187,17 +187,17 @@ AI 管线配置独立于 `AppConfig`（`src/application/ai/config.py::AIConfig`�
 
 | 环境变量 | 含义 | 默认 |
 | --- | --- | --- |
-| `CLASSROOM_AI_ENABLED` | `true` 开启 AI 管线 | `false` |
-| `CLASSROOM_AI_BASE_URL` | OpenAI-compatible API 地址（仅 https；未配时回落 `CLASSROOM_LLM_API_BASE`） | — |
-| `CLASSROOM_AI_API_KEY` | API Key（**只读进程环境**；未配时回落 `CLASSROOM_LLM_API_KEY`；文档/日志/测试一律写 `<YOUR_API_KEY>` 占位） | — |
-| `CLASSROOM_AI_MODEL` / `CLASSROOM_AI_TEXT_MODEL` | 主文本模型（回落 `CLASSROOM_LLM_MODEL`） | — |
-| `CLASSROOM_AI_VISION_MODEL` | 视觉模型（未配时回落主模型；图片默认走 OCR 文本，不发送图片字节） | 回落主模型 |
-| `CLASSROOM_AI_AUDIO_MODEL` | 音频模型（未配时回落主模型；转写默认走本地 Whisper） | 回落主模型 |
-| `CLASSROOM_AI_TIMEOUT_SECONDS` | 单次请求超时 | `60` |
-| `CLASSROOM_AI_MAX_RETRIES` | 失败重试次数 | `1` |
-| `CLASSROOM_AI_JSON_MODE` | 是否发送 `response_format: json_object`（默认 `true`；某些网关对该字段犯病时会 HTTP 200 包错，此时设 `false`，走纯文本 + 严格 schema 校验；非法值直接报错） | `true` |
-| `CLASSROOM_AI_ALLOW_IMAGE_BYTES` | 是否把图片原始字节发给模型走 vision（默认 `false`，只发 OCR 文字；`true` 时图片材料 OCR + 原图一起发送，字节出境，上限 8MB/张，超限/未知格式自动回 OCR；vision 失败记 chunk 失败，绝不静默降级） | `false` |
-| `CLASSROOM_AI_LIVE_TEST` | `true` 且凭证齐全时才跑真实 API 冒烟（`tests/test_live_ai_smoke.py`），否则干净 SKIP | 未设置 |
+| `LOOMIND_AI_ENABLED` | `true` 开启 AI 管线 | `false` |
+| `LOOMIND_AI_BASE_URL` | OpenAI-compatible API 地址（仅 https；未配时回落 `LOOMIND_LLM_API_BASE`） | — |
+| `LOOMIND_AI_API_KEY` | API Key（**只读进程环境**；未配时回落 `LOOMIND_LLM_API_KEY`；文档/日志/测试一律写 `<YOUR_API_KEY>` 占位） | — |
+| `LOOMIND_AI_MODEL` / `LOOMIND_AI_TEXT_MODEL` | 主文本模型（回落 `LOOMIND_LLM_MODEL`） | — |
+| `LOOMIND_AI_VISION_MODEL` | 视觉模型（未配时回落主模型；图片默认走 OCR 文本，不发送图片字节） | 回落主模型 |
+| `LOOMIND_AI_AUDIO_MODEL` | 音频模型（未配时回落主模型；转写默认走本地 Whisper） | 回落主模型 |
+| `LOOMIND_AI_TIMEOUT_SECONDS` | 单次请求超时 | `60` |
+| `LOOMIND_AI_MAX_RETRIES` | 失败重试次数 | `1` |
+| `LOOMIND_AI_JSON_MODE` | 是否发送 `response_format: json_object`（默认 `true`；某些网关对该字段犯病时会 HTTP 200 包错，此时设 `false`，走纯文本 + 严格 schema 校验；非法值直接报错） | `true` |
+| `LOOMIND_AI_ALLOW_IMAGE_BYTES` | 是否把图片原始字节发给模型走 vision（默认 `false`，只发 OCR 文字；`true` 时图片材料 OCR + 原图一起发送，字节出境，上限 8MB/张，超限/未知格式自动回 OCR；vision 失败记 chunk 失败，绝不静默降级） | `false` |
+| `LOOMIND_AI_LIVE_TEST` | `true` 且凭证齐全时才跑真实 API 冒烟（`tests/test_live_ai_smoke.py`），否则干净 SKIP | 未设置 |
 
 ### 本地启动环境
 
@@ -210,20 +210,20 @@ AI 管线配置独立于 `AppConfig`（`src/application/ai/config.py::AIConfig`�
 因此 `scripts\start.bat`、IDE / PyCharm 直接运行
 `src.application.launcher start`、以及 `python -m src.application.cli --check`
 不会出现“同一份配置在不同入口生效不同”的情况。加载器只认
-`CLASSROOM_AI_*` / `CLASSROOM_LLM_*`，不会借本地辅助文件迁移数据目录；它不执行
+`LOOMIND_AI_*` / `LOOMIND_LLM_*`，不会借本地辅助文件迁移数据目录；它不执行
 shell、变量展开或命令替换，也不打印解析值。
 
 ```dotenv
 # .env（已被 .gitignore 排除）
-CLASSROOM_AI_ENABLED=true
-CLASSROOM_AI_BASE_URL=https://<redacted-host>/v1
-CLASSROOM_AI_API_KEY=<YOUR_API_KEY>
-CLASSROOM_AI_MODEL=<YOUR_MODEL>
+LOOMIND_AI_ENABLED=true
+LOOMIND_AI_BASE_URL=https://<redacted-host>/v1
+LOOMIND_AI_API_KEY=<YOUR_API_KEY>
+LOOMIND_AI_MODEL=<YOUR_MODEL>
 ```
 
 密钥规则：Key 只经进程环境注入 provider；`repr` / `to_dict` / exception /
 启动日志 / 操作日志 / HTTP 响应里只有“有/无”两种形状。`--print-config` 同样
-不会打印 Key。真实 API 冒烟只在 `CLASSROOM_AI_LIVE_TEST=true` 且有 Key 时执行，
+不会打印 Key。真实 API 冒烟只在 `LOOMIND_AI_LIVE_TEST=true` 且有 Key 时执行，
 否则干净 SKIP。
 
 ### 运行模式与可观测性

@@ -144,7 +144,7 @@ python -m src.application.cli --check
 ```
 
 `SKIPPED` 表示确定性解析已完成，但 AI 阶段没有运行；这不是 AI 成功。检查仓库根目录
-`.env`（或进程环境）中的 `CLASSROOM_AI_ENABLED=true`，再重启服务。`start.bat`、IDE
+`.env`（或进程环境）中的 `LOOMIND_AI_ENABLED=true`，再重启服务。`start.bat`、IDE
 直启和 `--check` 现在共用同一加载器与优先级：进程环境 > `.env` >
 `scripts/ai-env.bat`。用下面命令确认最终模式，输出不含 Key：
 
@@ -200,7 +200,7 @@ WHERE material_id = '<material-id>';
 | 错误码 | 含义 | 处理 |
 | --- | --- | --- |
 | `UNSUPPORTED_EXTENSION` | 扩展名不在允许集合里 | 看 `docs/user_guide.md` 的支持类型表。常见的 `.ppt`（旧版二进制格式）属于这一类：在 PowerPoint 里**另存为 `.pptx`** 或导出 PDF 再上传 |
-| `OVERSIZED_FILE` | 超过 `max_upload_size`（默认 200 MiB） | 调大 `CLASSROOM_MAX_UPLOAD_SIZE` 或切分文件 |
+| `OVERSIZED_FILE` | 超过 `max_upload_size`（默认 200 MiB） | 调大 `LOOMIND_MAX_UPLOAD_SIZE` 或切分文件 |
 | `ZERO_BYTE_FILE` | 0 字节 | 源文件就是空的，重新导出 |
 
 ### 上传成功但看起来"没有新增"

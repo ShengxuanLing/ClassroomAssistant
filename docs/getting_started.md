@@ -47,10 +47,10 @@ provider 只按 OpenAI 兼容的 `/chat/completions` 契约发请求（标准库
 **2.** 用记事本打开 `scripts\ai-env.bat`，把四处尖括号占位符整个替换掉：
 
 ```bat
-set "CLASSROOM_AI_ENABLED=true"
-set "CLASSROOM_AI_API_KEY=你的key"
-set "CLASSROOM_AI_BASE_URL=https://你的网关地址/v1"
-set "CLASSROOM_AI_MODEL=你的模型名"
+set "LOOMIND_AI_ENABLED=true"
+set "LOOMIND_AI_API_KEY=你的key"
+set "LOOMIND_AI_BASE_URL=https://你的网关地址/v1"
+set "LOOMIND_AI_MODEL=你的模型名"
 ```
 
 - 值**不要**带尖括号（`<YOUR_API_KEY>` 只是占位提示，要整个替换）。
@@ -81,7 +81,7 @@ scripts\start.bat
 脚本做四件事：环境自检 → 建数据目录 → 迁移数据库 → 绑定端口并打开界面。
 界面默认以**独立窗口**打开（Edge 的 `--app` 模式，没有地址栏和标签栏），地址是
 `http://127.0.0.1:8765/`；找不到 Edge / Chrome 时回退系统默认浏览器。想强制用浏览器
-标签页，设 `CLASSROOM_UI_SHELL=browser`。
+标签页，设 `LOOMIND_UI_SHELL=browser`。
 
 不想开浏览器、只想确认环境是否健康：
 

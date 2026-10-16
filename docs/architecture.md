@@ -2351,7 +2351,7 @@ Validation is strict where a wrong value is destructive:
 `src/` or `tests/`; a non-loopback host requires explicit
 `allow_remote`; `max_upload_size` must be ≥ 1 KiB.
 
-Unknown `CLASSROOM_*` environment variables produce a warning (a typo in a
+Unknown `LOOMIND_*` environment variables produce a warning (a typo in a
 variable name otherwise fails silently by falling back to the default).
 
 ### 18.2 `runtime.py` — the only sanctioned non-determinism
@@ -2949,8 +2949,8 @@ Implementation notes (all enforced by `tests/test_ai_understanding.py`):
 - `src/application/ai/` is stdlib-only (real provider = `urllib` to an
   OpenAI-compatible `/chat/completions` with `response_format: json_object`).
   No new third-party dependency, so the release AI-supply-chain gate stays green.
-- API keys come only from the process environment (`CLASSROOM_AI_API_KEY`,
-  falling back to `CLASSROOM_LLM_API_KEY`); `repr` / logs / errors / operation
+- API keys come only from the process environment (`LOOMIND_AI_API_KEY`,
+  falling back to `LOOMIND_LLM_API_KEY`); `repr` / logs / errors / operation
   log carry presence-only shapes.
 - Chunk cache key `(chunk_hash, model, prompt_version)`; retry re-runs only
   failed chunks; `processing_identity = ai-<sha16(material|pipeline|prompt|model)>`
@@ -2958,7 +2958,7 @@ Implementation notes (all enforced by `tests/test_ai_understanding.py`):
   analysis idempotent (no `KnowledgePoint x 3`).
 - **Zero DB migration**: candidates map onto existing `KnowledgePoint` fields;
   summaries live on the analysis report, never stuffed into a TEXT column.
-- Feature flag `CLASSROOM_AI_ENABLED` (default off); AI failures are
+- Feature flag `LOOMIND_AI_ENABLED` (default off); AI failures are
   `PROCESSING_ERROR` (422) with Evidence preserved and retryable.
 - Endpoints `POST /api/materials/{id}/ai-analyze` (explicit trigger, also the
   idempotent AI-retry entry) and `GET .../ai-summary` (cached report, never

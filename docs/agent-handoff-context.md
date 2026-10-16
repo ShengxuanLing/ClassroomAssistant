@@ -21,7 +21,7 @@
 - **领域层 stdlib-only**；运行时依赖见 `requirements.txt`（全本地离线：ASR= faster-whisper、
   OCR= rapidocr-onnxruntime；无 GPU、无云 API）。
 - **前端零构建**：原生 JS 多 `<script>` 按固定顺序引入，无打包器、无 React/Vite、无 npm 依赖。
-- **AI 语义分析可选、默认关闭**（`CLASSROOM_AI_ENABLED`），只按 OpenAI 兼容 `/chat/completions`
+- **AI 语义分析可选、默认关闭**（`LOOMIND_AI_ENABLED`），只按 OpenAI 兼容 `/chat/completions`
   契约发请求，key 只读进程环境，绝不到达浏览器前端。
 
 ## 1. 仓库与环境（真实现状，动手前先核对）
@@ -118,7 +118,7 @@ node scripts/ui_render_check.js
 
 - 分块 `chunks_for_evidence` **按证据（=按页）切块** ⇒ 幻灯 PDF **1 页 = 1 次 LLM 调用**；
   再加收尾 + 逐 KP 中文解释（每条 1 次）。单次 43–200s。
-- **`CLASSROOM_AI_TIMEOUT_SECONDS` 未接线**（已知缺陷）：`analyze` 与 `_translate_kp_once` 都硬编码
+- **`LOOMIND_AI_TIMEOUT_SECONDS` 未接线**（已知缺陷）：`analyze` 与 `_translate_kp_once` 都硬编码
   `timeout_seconds=60` ⇒ 慢而正常的调用被判超时 → chunk 失败 → 整份材料失败。
 - chunk 缓存**不跨尝试**（每次新建 `AIAnalysisService()` ⇒ 重试要重跑全部 chunk）。
 - **同一 `loomind-data` 不能双进程写**（第二个进程秒失败 `StorageError: database is locked`）⇒ 分析**必须串行**。

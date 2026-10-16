@@ -1412,7 +1412,7 @@ class AppConfig:
 
     def describe(self) -> str:
         """人类可读的多行配置说明 (含每个值的来源)。"""
-        lines = ["Classroom Assistant configuration"]
+        lines = ["Loomind configuration"]
         for key in sorted(self.to_dict(include_metadata=False)):
             value = self.to_dict(include_metadata=False)[key]
             origin = self.sources.get(key, "?")

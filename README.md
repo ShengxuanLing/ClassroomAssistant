@@ -26,13 +26,13 @@
 | 学习闭环 | 学生 → 练习 → 作答 → 评估 → 学习状态 → 学习计划 → 学习路径 |
 | 备份恢复 | 一致性快照（SQLite 在线备份 API）+ 归档校验 + 恢复演练 |
 | 溯源链 UI | 知识点详情页把「知识点 → 证据 → 源材料」整条链渲染出来，断链显式报警 |
-| AI 语义分析（可选，默认关闭） | 开启后处理材料自动分析：自动摘要/主题/知识点落库，高置信度自动加入、低置信度与冲突进待审核；失败不污染材料与证据，可重试；无证据支撑不生成；Key 只读进程环境（`CLASSROOM_AI_ENABLED`，详见 `docs/configuration.md` §8） |
+| AI 语义分析（可选，默认关闭） | 开启后处理材料自动分析：自动摘要/主题/知识点落库，高置信度自动加入、低置信度与冲突进待审核；失败不污染材料与证据，可重试；无证据支撑不生成；Key 只读进程环境（`LOOMIND_AI_ENABLED`，详见 `docs/configuration.md` §8） |
 
 ## 怎么安装
 
 ### Windows 安装包（普通用户，推荐）
 
-不需要 Python。下载 `Loomind-1.3.1-Setup.exe`（随 Release 发布），双击安装：
+不需要 Python。下载 `Loomind-1.3.2-Setup.exe`（随 Release 发布），双击安装：
 
 - 装到当前用户目录 `%LOCALAPPDATA%\Programs\Loomind`，**不弹 UAC、不需要管理员**；
 - 装完在开始菜单出现「Loomind」，双击启动：托盘图标常驻，界面以**独立窗口**打开
@@ -77,10 +77,10 @@ pip install -r requirements.txt
 **2. 填上你自己的四行。** 用记事本打开 `scripts\ai-env.bat`，把尖括号占位符整个换掉：
 
 ```bat
-set "CLASSROOM_AI_ENABLED=true"
-set "CLASSROOM_AI_API_KEY=你的key"
-set "CLASSROOM_AI_BASE_URL=https://你的网关地址/v1"
-set "CLASSROOM_AI_MODEL=你的模型名"
+set "LOOMIND_AI_ENABLED=true"
+set "LOOMIND_AI_API_KEY=你的key"
+set "LOOMIND_AI_BASE_URL=https://你的网关地址/v1"
+set "LOOMIND_AI_MODEL=你的模型名"
 ```
 
 - 值**不要**带尖括号 —— 模板里的 `<YOUR_API_KEY>` 只是占位提示，要整个替换。
@@ -108,7 +108,7 @@ JSON 模式等全部可调项见 [docs/configuration.md](docs/configuration.md) 
 把已有界面打开。退出走托盘菜单的「退出」—— 服务与端口标记会一并清理。
 
 界面默认用 Edge 的 `--app` 模式开**独立窗口**（无地址栏、无标签栏）；想改回浏览器
-标签页，设 `CLASSROOM_UI_SHELL=browser`（见 [docs/configuration.md](docs/configuration.md) §3）。
+标签页，设 `LOOMIND_UI_SHELL=browser`（见 [docs/configuration.md](docs/configuration.md) §3）。
 
 **源码版**：Windows 下双击即可：
 
